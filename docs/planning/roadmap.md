@@ -5,8 +5,9 @@ This document describes future work, not current capability.
 ## Next
 
 - Generate versioned Python, C#, C++, and Rust clients from `glr.v1`.
-- Benchmark the Python transition codec and actor queue before adding the Rust
-  data plane.
+- Prototype checksummed codec and multi-actor queue candidates against the
+  recorded Python baseline; retain Rust only when ADR-0004's paired threshold
+  is reproducible.
 - Implement an authenticated local gRPC adapter with deadlines and health.
 - Add bounded asynchronous actor queues and IMPALA backpressure metrics.
 - Add a columnar/checksummed dataset container and deterministic replay.

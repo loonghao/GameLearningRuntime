@@ -162,6 +162,7 @@ receives deployment secrets and only checks out/tests the calling repository.
 - [Architecture](docs/architecture/overview.md)
 - [Protocol and data flow](docs/architecture/data-flow.md)
 - [Local development](docs/runbooks/local-development.md)
+- [Data-plane benchmark baseline](docs/benchmarks/2026-08-31-data-plane-baseline.md)
 - [Release runbook](docs/runbooks/release.md)
 - [Roadmap](docs/planning/roadmap.md)
 - [Architecture decisions](docs/decisions/README.md)

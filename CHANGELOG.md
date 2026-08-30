@@ -15,6 +15,9 @@ All notable changes to this project are documented here. The format follows
 - Optional model-neutral PyTorch objectives for masked behavior cloning,
   PPO/GAE, and IMPALA/V-trace, including explicit termination and truncation
   semantics.
+- A privacy-safe synthetic data-plane benchmark for transition JSON round
+  trips, trajectory construction, bounded actor-queue handoff, and mechanical
+  application of the Rust adoption threshold.
 
 ### Fixed
 

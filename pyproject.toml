@@ -69,6 +69,7 @@ packages = ["src/game_learning_runtime"]
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
   "gymnasium: requires the optional Gymnasium dependency group",
   "torch: requires the optional PyTorch dependency group",
@@ -91,7 +92,7 @@ show_missing = true
 [tool.mypy]
 python_version = "3.10"
 strict = true
-packages = ["game_learning_runtime"]
+files = ["src/game_learning_runtime", "benchmarks"]
 exclude = ["src/game_learning_runtime/integrations/(gymnasium|torch_objectives|torchrl)\\.py"]
 
 [[tool.mypy.overrides]]

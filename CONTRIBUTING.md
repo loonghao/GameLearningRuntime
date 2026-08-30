@@ -43,3 +43,7 @@ uv run --extra gymnasium pytest tests_optional/test_gymnasium.py
 
 Open a pull request only after local checks pass. A maintainer review and green
 required checks are necessary before merge.
+
+Performance claims must use the synthetic benchmark contract in
+[`benchmarks/README.md`](benchmarks/README.md). Do not publish hostnames, user
+paths, process identifiers, or private datasets in benchmark reports.
