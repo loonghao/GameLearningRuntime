@@ -26,6 +26,28 @@ Box and Discrete roots are wrapped as `observation` and `action`. Dict spaces
 retain their semantic field names. Tuple, MultiDiscrete, and MultiBinary spaces
 are also converted to typed GLR trees.
 
+## Attach to a running game
+
+Gymnasium has no standard live-attachment lifecycle. If an authorized runtime
+can observe an already-running world without resetting it, expose that
+operation explicitly and pass it as `attach_provider`:
+
+```python
+adapter = GymnasiumEnvironment(
+    source,
+    environment_id="example.live-runtime-v1",
+    action_mask_provider=source.action_masks,
+    attach_provider=source.attach,
+)
+environment = ContractEnvironment(adapter)
+initial = environment.attach(options={"continuation": "current"})
+```
+
+Providing the hook advertises the `live-attach` capability. Omitting it keeps
+attachment fail-closed. The hook must return the same `(observation, info)`
+shape as Gymnasium `reset()`, but it must not call or impersonate a physical
+reset. Each attachment starts a fresh logical GLR episode at step zero.
+
 ## Metadata and privacy
 
 Gymnasium `info` is empty in GLR by default. This prevents incidental values
