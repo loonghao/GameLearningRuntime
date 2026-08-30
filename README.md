@@ -58,17 +58,20 @@ features claimed by this initial release.
 
 ## Install
 
-Until PyPI trusted publishing is enabled, pin a GitHub release tag:
+Install the core package from PyPI:
 
 ```powershell
-uv add "game-learning-runtime @ git+https://github.com/loonghao/GameLearningRuntime@v0.1.0"
+uv add game-learning-runtime
 ```
 
 Add the TorchRL integration only where training requires it:
 
 ```powershell
-uv add "game-learning-runtime[torchrl] @ git+https://github.com/loonghao/GameLearningRuntime@v0.1.0"
+uv add "game-learning-runtime[torchrl]"
 ```
+
+Pin a PyPI version or immutable GitHub release tag when reproducibility requires
+an exact build.
 
 ## Minimal environment
 

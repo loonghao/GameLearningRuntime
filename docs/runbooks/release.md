@@ -18,19 +18,26 @@
    ```
 
 3. The release workflow verifies the tag against `pyproject.toml`, rebuilds the
-   package, checks distributions, produces provenance attestations, and creates
-   a GitHub Release with wheel and source archive.
-4. Verify the release assets and install from the immutable tag in a clean
-   temporary project.
+   package, checks distributions, and uploads a short-lived workflow artifact.
+4. Separate least-privilege jobs create the immutable GitHub Release and publish
+   the same workflow artifact to PyPI through trusted publishing. No PyPI API
+   token is stored in GitHub.
+5. Verify the GitHub release assets, PyPI project page, and a PyPI installation
+   in a clean temporary project.
 
-## PyPI gate
+## PyPI trusted publishing
 
-PyPI publication is intentionally disabled in v0.1. Enable it only after the
-`game-learning-runtime` project and GitHub trusted publisher are configured.
-Add a separate OIDC publishing job; never add an API token to repository files.
+PyPI trusts `.github/workflows/release.yml` in this repository when its
+`pypi-publish` job runs in the GitHub `pypi` environment. The job receives only
+the `id-token: write` permission and publishes through OIDC.
+
+To publish an existing immutable tag whose GitHub Release already exists, run
+the Release workflow manually from `main` and supply the tag. The workflow
+checks out that tag, verifies its version, rebuilds and checks its distributions,
+skips GitHub Release creation, and publishes to PyPI. PyPI rejects attempts to
+overwrite an existing filename or release.
 
 ## Recovery
 
 Do not move or overwrite a published tag. Fix code/version, create the next
 patch version, and document the superseded release.
-
