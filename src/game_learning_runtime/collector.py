@@ -54,7 +54,15 @@ class SyncCollector:
         steps: int,
         policy_version: int = 0,
         seed: int | None = None,
+        stop_on_done: bool = False,
     ) -> Unroll:
+        """Collect up to ``steps`` transitions.
+
+        By default a terminal transition starts a fresh episode so the result
+        remains fixed length. Set ``stop_on_done`` for long-running live games
+        where an unroll must never mix progression from multiple episodes.
+        """
+
         if steps <= 0:
             raise ValueError("steps must be positive")
         if policy_version < 0:
@@ -85,8 +93,11 @@ class SyncCollector:
                 )
             )
             self._current = following
-            if following.done and len(transitions) < steps:
-                self._current = self._start()
+            if following.done:
+                if stop_on_done:
+                    break
+                if len(transitions) < steps:
+                    self._current = self._start()
 
         unroll = Unroll(
             transitions=tuple(transitions),

@@ -54,6 +54,35 @@ def test_collector_builds_fixed_length_unroll_across_episodes() -> None:
     assert following.sequence_id == 1
 
 
+def test_collector_can_stop_at_first_terminal_without_starting_next_episode() -> None:
+    collector = SyncCollector(
+        ContractEnvironment(CounterEnvironment(target=2)), actor_id="live-player"
+    )
+
+    unroll = collector.collect(
+        always_increment,
+        steps=5,
+        policy_version=11,
+        seed=7,
+        stop_on_done=True,
+    )
+
+    assert len(unroll.transitions) == 2
+    assert unroll.transitions[-1].done is True
+    assert {transition.episode_id for transition in unroll.transitions} == {
+        unroll.transitions[0].episode_id
+    }
+
+    following = collector.collect(
+        always_increment,
+        steps=1,
+        policy_version=12,
+        stop_on_done=True,
+    )
+    assert following.sequence_id == 1
+    assert following.transitions[0].episode_id != unroll.transitions[0].episode_id
+
+
 def test_collector_rejects_invalid_arguments() -> None:
     environment = ContractEnvironment(CounterEnvironment())
     collector = SyncCollector(environment)

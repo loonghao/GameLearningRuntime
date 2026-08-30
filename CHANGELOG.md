@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Optional terminal-bounded synchronous collection with `stop_on_done=True`,
+  preserving the default fixed-length cross-episode behavior.
 - Capability-gated live attach across the core environment, synchronous
   collector, TorchRL adapter, and additive `glr.v1` protocol RPC, without
   aliasing attachment to deterministic reset.
