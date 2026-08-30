@@ -9,9 +9,10 @@ import platform
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from importlib import import_module
 from queue import Queue
 from time import perf_counter_ns
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 import numpy as np
@@ -27,6 +28,12 @@ class _JsonBackend(Protocol):
     def dumps(self, value: Mapping[str, Any]) -> bytes: ...
 
     def loads(self, value: bytes) -> Mapping[str, Any]: ...
+
+
+class _OrjsonModule(Protocol):
+    def dumps(self, value: Any) -> bytes: ...
+
+    def loads(self, value: bytes) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,12 +76,12 @@ class _StdlibJson:
 class _Orjson:
     def __init__(self) -> None:
         try:
-            import orjson
-        except ImportError as error:  # pragma: no cover - depends on benchmark environment
+            module = import_module("orjson")
+        except ModuleNotFoundError as error:  # pragma: no cover - depends on benchmark environment
             raise RuntimeError(
                 "orjson benchmark requires `uv run --with orjson python -m benchmarks.data_plane`"
             ) from error
-        self._orjson = orjson
+        self._orjson = cast(_OrjsonModule, module)
 
     def dumps(self, value: Mapping[str, Any]) -> bytes:
         return self._orjson.dumps(value)
