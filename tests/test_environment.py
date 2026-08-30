@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -68,6 +69,82 @@ class _WrongStepEnvironment(GameEnvironment):
             episode_id=result.episode_id,
             step_id=result.step_id + 1,
         )
+
+
+class _LiveAttachEnvironment(GameEnvironment):
+    def __init__(self) -> None:
+        self._delegate = CounterEnvironment(target=1)
+
+    @property
+    def spec(self) -> EnvironmentSpec:
+        return replace(
+            self._delegate.spec,
+            capabilities=self._delegate.spec.capabilities | {"live-attach"},
+        )
+
+    def reset(
+        self, *, seed: int | None = None, options: Mapping[str, Any] | None = None
+    ) -> TimeStep:
+        raise AssertionError("live attach must not call reset")
+
+    def attach(self, *, options: Mapping[str, Any] | None = None) -> TimeStep:
+        return self._delegate.reset(options=options)
+
+    def step(self, action: TensorTree) -> TimeStep:
+        return self._delegate.step(action)
+
+
+class _ReusedAttachEnvironment(_LiveAttachEnvironment):
+    def __init__(self) -> None:
+        super().__init__()
+        self._attached: TimeStep | None = None
+
+    def attach(self, *, options: Mapping[str, Any] | None = None) -> TimeStep:
+        if self._attached is None:
+            self._attached = super().attach(options=options)
+        return self._attached
+
+
+class _DeclaredButMissingAttachEnvironment(CounterEnvironment):
+    @property
+    def spec(self) -> EnvironmentSpec:
+        return replace(
+            super().spec,
+            capabilities=super().spec.capabilities | {"live-attach"},
+        )
+
+
+def test_contract_environment_can_attach_without_claiming_a_physical_reset() -> None:
+    environment = ContractEnvironment(_LiveAttachEnvironment())
+
+    attached = environment.attach(options={"session": "already-running"})
+    terminal = environment.step(_action())
+
+    assert attached.step_id == 0
+    assert not attached.done
+    assert terminal.done
+
+
+def test_contract_environment_denies_undeclared_live_attach() -> None:
+    environment = ContractEnvironment(CounterEnvironment())
+
+    with pytest.raises(ContractViolation, match="does not declare live-attach"):
+        environment.attach()
+
+
+def test_contract_environment_rejects_reused_attach_episode_identity() -> None:
+    environment = ContractEnvironment(_ReusedAttachEnvironment())
+    environment.attach()
+
+    with pytest.raises(ContractViolation, match="attach reused"):
+        environment.attach()
+
+
+def test_declaring_live_attach_without_implementing_it_fails_closed() -> None:
+    environment = ContractEnvironment(_DeclaredButMissingAttachEnvironment())
+
+    with pytest.raises(ContractViolation, match="does not support live attach"):
+        environment.attach()
 
 
 def test_contract_environment_rejects_non_monotonic_step_id() -> None:

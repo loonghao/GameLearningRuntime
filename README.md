@@ -46,6 +46,8 @@ single implementation language or transport.
 - A `GameEnvironment` port with reset, step, close, action masks, semantic
   events, terminated/truncated signals, episode IDs, and monotonic step IDs.
 - A fail-closed `ContractEnvironment` wrapper that validates every boundary.
+- Capability-gated live attachment for continuing games that cannot claim a
+  physical or deterministic reset.
 - Fixed-length actor `Unroll` collection suitable for custom PPO and IMPALA.
 - Versioned `glr.transition.v1` JSONL records for BC, replay, and offline data.
 - A packaged `glr.v1` Protobuf service with unary and bidirectional streaming
@@ -103,6 +105,18 @@ unroll = collector.collect(always_increment, steps=16, policy_version=0)
 
 print(len(unroll.transitions), unroll.total_reward)
 ```
+
+For an adapter bound to an already-running game, advertise `live-attach` and
+select the lifecycle explicitly:
+
+```python
+environment = ContractEnvironment(authorized_live_adapter)
+collector = SyncCollector(environment, start_mode="attach")
+unroll = collector.collect(policy, steps=128)
+```
+
+Attach creates a fresh logical GLR episode at step zero. It never implies that
+the game world was reset or seeded.
 
 Run the complete example from a clone:
 

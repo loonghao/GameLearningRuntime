@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -83,6 +83,23 @@ class ScriptedProfileEnvironment(GameEnvironment):
             events=events,
             timestamp_ns=self._step_id,
         )
+
+
+class AttachOnlyProfileEnvironment(ScriptedProfileEnvironment):
+    @property
+    def spec(self) -> EnvironmentSpec:
+        return replace(
+            super().spec,
+            capabilities=super().spec.capabilities | {"live-attach"},
+        )
+
+    def reset(
+        self, *, seed: int | None = None, options: Mapping[str, Any] | None = None
+    ) -> TimeStep:
+        raise AssertionError("attach conformance must not call reset")
+
+    def attach(self, *, options: Mapping[str, Any] | None = None) -> TimeStep:
+        return super().reset(options=options)
 
 
 def _turn_based_fixture() -> ProfileFixture:
@@ -303,6 +320,22 @@ def test_cross_game_profile_conforms(fixture: ProfileFixture) -> None:
     assert report.truncated_transition_count == (2 if fixture.boundary == "truncated" else 0)
     assert environment.closed
     assert "environment" not in asdict(report)
+
+
+def test_live_attach_profile_uses_the_same_privacy_safe_conformance_path() -> None:
+    fixture = _real_time_fixture()
+    environment = AttachOnlyProfileEnvironment(fixture)
+
+    report = run_environment_conformance(
+        environment,
+        lambda timestep: fixture.action,
+        steps=3,
+        start_mode="attach",
+    )
+
+    assert report.transition_count == 3
+    assert report.episode_count == 2
+    assert environment.closed
 
 
 def test_conformance_rejects_conflicting_boundaries_and_closes_environment() -> None:

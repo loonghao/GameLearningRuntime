@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -89,12 +89,16 @@ class TorchRLEnvironment(EnvBase):  # type: ignore[misc]
         *,
         device: str | torch.device = "cpu",
         run_type_checks: bool = True,
+        start_mode: Literal["reset", "attach"] = "reset",
     ) -> None:
+        if start_mode not in {"reset", "attach"}:
+            raise ValueError("start_mode must be 'reset' or 'attach'")
         self._glr = (
             environment
             if isinstance(environment, ContractEnvironment)
             else ContractEnvironment(environment)
         )
+        self._start_mode = start_mode
         self._next_seed: int | None = None
         super().__init__(device=device, batch_size=(), run_type_checks=run_type_checks)
         torch_device = torch.device(device)
@@ -123,7 +127,12 @@ class TorchRLEnvironment(EnvBase):  # type: ignore[misc]
 
     def _reset(self, tensordict: TensorDictBase | None = None, **kwargs: Any) -> TensorDictBase:
         del tensordict, kwargs
-        timestep = self._glr.reset(seed=self._next_seed)
+        if self._start_mode == "attach":
+            if self._next_seed is not None:
+                raise ValueError("seed is not supported when start_mode='attach'")
+            timestep = self._glr.attach()
+        else:
+            timestep = self._glr.reset(seed=self._next_seed)
         self._next_seed = None
         return self._from_timestep(timestep, include_reward=False)
 

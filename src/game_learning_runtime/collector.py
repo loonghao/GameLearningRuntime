@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Literal, Protocol
 
 from game_learning_runtime.contracts import TensorTree, TimeStep, Transition, Unroll
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
@@ -19,17 +19,33 @@ class Policy(Protocol):
 class SyncCollector:
     """Collect fixed-length unrolls without coupling to a learner framework."""
 
-    def __init__(self, environment: GameEnvironment, *, actor_id: str = "actor-0") -> None:
+    def __init__(
+        self,
+        environment: GameEnvironment,
+        *,
+        actor_id: str = "actor-0",
+        start_mode: Literal["reset", "attach"] = "reset",
+    ) -> None:
         if not actor_id:
             raise ValueError("actor_id cannot be empty")
+        if start_mode not in {"reset", "attach"}:
+            raise ValueError("start_mode must be 'reset' or 'attach'")
         self._environment = (
             environment
             if isinstance(environment, ContractEnvironment)
             else ContractEnvironment(environment)
         )
         self._actor_id = actor_id
+        self._start_mode = start_mode
         self._current: TimeStep | None = None
         self._sequence_id = 0
+
+    def _start(self, *, seed: int | None = None) -> TimeStep:
+        if self._start_mode == "attach":
+            if seed is not None:
+                raise ValueError("seed is not supported when start_mode='attach'")
+            return self._environment.attach()
+        return self._environment.reset(seed=seed)
 
     def collect(
         self,
@@ -44,7 +60,7 @@ class SyncCollector:
         if policy_version < 0:
             raise ValueError("policy_version cannot be negative")
         if self._current is None or self._current.done:
-            self._current = self._environment.reset(seed=seed)
+            self._current = self._start(seed=seed)
 
         transitions: list[Transition] = []
         for _ in range(steps):
@@ -70,7 +86,7 @@ class SyncCollector:
             )
             self._current = following
             if following.done and len(transitions) < steps:
-                self._current = self._environment.reset()
+                self._current = self._start()
 
         unroll = Unroll(
             transitions=tuple(transitions),

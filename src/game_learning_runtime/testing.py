@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
@@ -29,6 +30,7 @@ def run_environment_conformance(
     *,
     steps: int,
     seed: int | None = None,
+    start_mode: Literal["reset", "attach"] = "reset",
 ) -> EnvironmentConformanceReport:
     """Exercise an adapter through the GLR contract and return aggregate evidence.
 
@@ -45,7 +47,11 @@ def run_environment_conformance(
     try:
         if steps <= 0:
             raise ValueError("steps must be positive")
-        unroll = SyncCollector(contract, actor_id="conformance").collect(
+        unroll = SyncCollector(
+            contract,
+            actor_id="conformance",
+            start_mode=start_mode,
+        ).collect(
             policy,
             steps=steps,
             seed=seed,

@@ -59,6 +59,10 @@ message ResetRequest {
   map<string, string> options = 2;
 }
 
+message AttachRequest {
+  map<string, string> options = 1;
+}
+
 message StepRequest {
   string episode_id = 1;
   uint64 expected_step_id = 2;
@@ -87,6 +91,7 @@ message TimeStep {
 service GameRuntime {
   rpc Describe(DescribeRequest) returns (EnvironmentDescriptor);
   rpc Reset(ResetRequest) returns (TimeStep);
+  rpc Attach(AttachRequest) returns (TimeStep);
   rpc Step(StepRequest) returns (TimeStep);
   rpc Interact(stream StepRequest) returns (stream TimeStep);
 }

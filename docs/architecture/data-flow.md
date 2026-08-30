@@ -24,6 +24,19 @@ Client                         Runtime adapter
 for future high-throughput actor adapters. It does not weaken identity or
 ordering rules.
 
+An adapter advertising `live-attach` may use `Attach` instead of `Reset`:
+
+```text
+Client                         Already-running runtime
+  │──── Describe ────────────────────▶│
+  │◀─── capabilities: live-attach ────│
+  │──── Attach(options) ─────────────▶│
+  │◀─── TimeStep(logical episode, 0) ─│
+```
+
+Attach establishes ordering and a fresh logical episode only. It does not
+assert a physical reset, deterministic checkpoint, or seeded initial state.
+
 ## Learning paths
 
 - PPO consumes fixed-length `Unroll` values; the optional PyTorch integration
