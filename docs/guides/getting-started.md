@@ -17,6 +17,13 @@ uv run pytest -m "not torchrl"
 4. Increment the step ID exactly once for each accepted action.
 5. Wrap the adapter with `ContractEnvironment` in tests and production clients.
 
+If the authorized runtime is already running and cannot provide a truthful
+physical reset, also advertise the `live-attach` capability and implement
+`GameEnvironment.attach()`. Attach must return a fresh logical episode at step
+zero without claiming that the world was reset. Use
+`SyncCollector(..., start_mode="attach")`; seeded starts are intentionally
+rejected in this mode.
+
 See the packaged
 [`game_learning_runtime.examples.counter`](../../src/game_learning_runtime/examples/counter.py)
 module for a complete reference.

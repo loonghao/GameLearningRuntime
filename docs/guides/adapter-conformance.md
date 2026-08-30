@@ -24,6 +24,21 @@ stepping, or report validation fails. Every reset and step passes through
 rejects a participant marked both `terminated` and `truncated` on the same
 transition.
 
+For a continuing runtime that advertises `live-attach`, select the lifecycle
+explicitly and omit the seed:
+
+```python
+report = run_environment_conformance(
+    make_authorized_live_environment(),
+    legal_test_policy,
+    steps=32,
+    start_mode="attach",
+)
+```
+
+This validates a fresh logical episode and ordered steps without claiming a
+physical reset.
+
 ## Report privacy
 
 `EnvironmentConformanceReport` contains only:

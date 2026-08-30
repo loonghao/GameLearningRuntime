@@ -27,6 +27,12 @@ class GameEnvironment(ABC):
     ) -> TimeStep:
         """Start a new episode and return step zero."""
 
+    def attach(self, *, options: Mapping[str, Any] | None = None) -> TimeStep:
+        """Attach to an already-running world as a new logical episode."""
+
+        del options
+        raise ContractViolation("environment does not support live attach")
+
     @abstractmethod
     def step(self, action: TensorTree) -> TimeStep:
         """Apply one structured action and return the resulting time step."""
@@ -65,13 +71,23 @@ class ContractEnvironment(GameEnvironment):
     ) -> TimeStep:
         self._ensure_open()
         timestep = self._environment.reset(seed=seed, options=options)
+        return self._accept_start(timestep, operation="reset")
+
+    def attach(self, *, options: Mapping[str, Any] | None = None) -> TimeStep:
+        self._ensure_open()
+        if "live-attach" not in self.spec.capabilities:
+            raise ContractViolation("environment does not declare live-attach capability")
+        timestep = self._environment.attach(options=options)
+        return self._accept_start(timestep, operation="attach")
+
+    def _accept_start(self, timestep: TimeStep, *, operation: str) -> TimeStep:
         self._validate_timestep(timestep)
         if timestep.step_id != 0:
-            raise ContractViolation(f"reset returned step_id={timestep.step_id}; expected 0")
+            raise ContractViolation(f"{operation} returned step_id={timestep.step_id}; expected 0")
         if timestep.done:
-            raise ContractViolation("reset returned a terminal time step")
+            raise ContractViolation(f"{operation} returned a terminal time step")
         if self._previous_episode_id == timestep.episode_id:
-            raise ContractViolation("reset reused the previous episode_id")
+            raise ContractViolation(f"{operation} reused the previous episode_id")
         self._current = timestep
         self._previous_episode_id = timestep.episode_id
         return timestep
