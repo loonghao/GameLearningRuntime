@@ -43,7 +43,7 @@ jobs:
       - run: uv build
       - run: uv run twine check dist/*
       - name: Attest distributions
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/*"
       - name: Create immutable release
