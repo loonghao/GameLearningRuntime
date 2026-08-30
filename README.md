@@ -53,6 +53,8 @@ single implementation language or transport.
 - An optional TorchRL `EnvBase` adapter tested against TorchRL 0.13.
 - Optional, model-neutral PyTorch objectives for masked BC, PPO/GAE, and
   IMPALA/V-trace custom learners.
+- A privacy-safe adapter conformance runner plus synthetic turn-based,
+  real-time combat, FPS, and ARPG contract profiles.
 
 Game-specific runtime adapters, generated C#/C++/Rust protocol SDKs,
 distributed actor transport, complete trainers, and reference model
@@ -159,6 +161,7 @@ receives deployment secrets and only checks out/tests the calling repository.
 - [Getting started](docs/guides/getting-started.md)
 - [Adapt an existing Gymnasium environment](docs/guides/adapting-gymnasium.md)
 - [Compose custom Torch objectives](docs/guides/using-torch-objectives.md)
+- [Validate an adapter with the conformance runner](docs/guides/adapter-conformance.md)
 - [Architecture](docs/architecture/overview.md)
 - [Protocol and data flow](docs/architecture/data-flow.md)
 - [Local development](docs/runbooks/local-development.md)

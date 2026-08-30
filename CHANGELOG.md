@@ -18,6 +18,9 @@ All notable changes to this project are documented here. The format follows
 - A privacy-safe synthetic data-plane benchmark for transition JSON round
   trips, trajectory construction, bounded actor-queue handoff, and mechanical
   application of the Rust adoption threshold.
+- A reusable environment conformance runner and four synthetic contract
+  profiles covering turn-based masks, real-time hybrid actions, FPS controls,
+  and nested ARPG actions.
 
 ### Fixed
 

@@ -23,6 +23,7 @@ versioning, and low adoption cost for local uv projects.
 │ GLR application layer                                       │
 │ SyncCollector │ recorder/replay │ framework adapters         │
 │ optional BC/PPO/GAE/V-trace objective primitives            │
+│ privacy-safe adapter conformance runner                      │
 ├─────────────────────────────────────────────────────────────┤
 │ GLR domain and ports                                         │
 │ Specs │ TimeStep │ Transition │ GameEnvironment             │
@@ -50,6 +51,10 @@ adapter. Native Rust is reserved for benchmark-proven protocol, storage, and
 actor data-plane work; it does not create a second learner or game-semantics
 layer. Optional PyTorch objectives consume learner-side tensors but contain no
 model, optimizer, collector, reward shaping, or game-specific state.
+
+The testing integration composes the same contract wrapper and collector used
+by production code. It returns aggregate counts only; observations, actions,
+environment IDs, metadata, paths, and timestamps never enter its report.
 
 ## Failure modes
 
