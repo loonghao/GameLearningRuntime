@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
   MultiDiscrete, MultiBinary, Dict, and Tuple spaces.
 - Dedicated Gymnasium conformance CI and architecture decisions for adapter
   reuse, metadata privacy, and benchmark-gated Rust data-plane work.
+- Optional model-neutral PyTorch objectives for masked behavior cloning,
+  PPO/GAE, and IMPALA/V-trace, including explicit termination and truncation
+  semantics.
 
 ### Fixed
 

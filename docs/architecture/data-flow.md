@@ -26,11 +26,15 @@ ordering rules.
 
 ## Learning paths
 
-- PPO consumes fixed-length `Unroll` values and computes returns/advantages.
+- PPO consumes fixed-length `Unroll` values; the optional PyTorch integration
+  provides masked clipped loss and truncation-aware GAE primitives.
 - IMPALA actors attach `actor_id`, `sequence_id`, and `policy_version`; a future
-  distributed queue transports those unrolls to a V-trace learner.
+  distributed queue transports those unrolls to a learner. The optional
+  objective layer already provides detached V-trace targets and IMPALA loss
+  components without prescribing actor or learner topology.
 - BC writes expert actions as ordinary transitions, preserving masks and next
-  observations for later DAgger or offline RL.
+  observations for later DAgger or offline RL; masked cross-entropy is reusable
+  across project-specific policies.
 - TorchRL maps GLR trees to `TensorDict` only at the integration boundary.
 
 ## Compatibility
@@ -38,4 +42,3 @@ ordering rules.
 The Protobuf package is `glr.v1` and the JSONL record schema is
 `glr.transition.v1`. Additive fields may remain within v1. Removing fields,
 changing meaning, or changing tensor encoding requires a new major schema.
-

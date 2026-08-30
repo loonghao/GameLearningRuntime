@@ -21,7 +21,8 @@ versioning, and low adoption cost for local uv projects.
                             │ Tensor trees / Unroll / JSONL
 ┌───────────────────────────▼─────────────────────────────────┐
 │ GLR application layer                                       │
-│ SyncCollector │ recorder/replay │ Gymnasium/TorchRL adapters│
+│ SyncCollector │ recorder/replay │ framework adapters         │
+│ optional BC/PPO/GAE/V-trace objective primitives            │
 ├─────────────────────────────────────────────────────────────┤
 │ GLR domain and ports                                         │
 │ Specs │ TimeStep │ Transition │ GameEnvironment             │
@@ -47,7 +48,8 @@ remain easy to map to NumPy, Torch, C#, C++, or Rust tensors.
 Existing Gymnasium environments enter through a deny-by-default compatibility
 adapter. Native Rust is reserved for benchmark-proven protocol, storage, and
 actor data-plane work; it does not create a second learner or game-semantics
-layer.
+layer. Optional PyTorch objectives consume learner-side tensors but contain no
+model, optimizer, collector, reward shaping, or game-specific state.
 
 ## Failure modes
 

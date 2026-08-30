@@ -1,0 +1,123 @@
+# Compose custom Torch objectives
+
+The optional objective module removes duplicated algorithm mathematics while
+leaving each project in control of its model, optimizer, collector, reward, and
+runtime adapter.
+
+## Install
+
+For a custom PyTorch learner:
+
+```powershell
+uv add "game-learning-runtime[torch]"
+```
+
+For the same objectives plus the `TorchRLEnvironment` adapter:
+
+```powershell
+uv add "game-learning-runtime[torchrl]"
+```
+
+## Boundary
+
+All rollout functions use time-major tensors. Rewards, terminal flags, and log
+probabilities have shape `[time, ...]`; bootstrap values have shape
+`[time + 1, ...]`; categorical policy logits add a final action dimension.
+Action masks must be boolean, exactly match the logits, and keep at least one
+valid action in every row. An expert or sampled action excluded by its mask is
+rejected instead of silently trained.
+
+`terminated` and `truncated` are intentionally separate. A terminated state has
+no bootstrap value. A truncated state bootstraps from the next-state value but
+stops advantage or V-trace recursion at that boundary.
+
+## Behavior cloning
+
+```python
+from game_learning_runtime.integrations.torch_objectives import behavior_cloning_loss
+
+terms = behavior_cloning_loss(
+    policy_logits,
+    expert_actions,
+    action_mask=action_mask,
+    label_smoothing=0.05,
+)
+terms.loss.backward()
+```
+
+The result also exposes negative log-likelihood, entropy, and detached accuracy.
+Label smoothing distributes probability only across valid actions.
+
+## PPO and GAE
+
+```python
+from game_learning_runtime.integrations.torch_objectives import (
+    generalized_advantage_estimate,
+    ppo_loss,
+)
+
+targets = generalized_advantage_estimate(
+    rewards=rewards,
+    values=rollout_values,
+    terminated=terminated,
+    truncated=truncated,
+)
+terms = ppo_loss(
+    policy_logits=policy_logits,
+    actions=actions,
+    old_log_prob=old_log_prob,
+    advantages=targets.advantages,
+    values=rollout_values[:-1],
+    value_targets=targets.value_targets,
+    action_mask=action_mask,
+)
+```
+
+GAE targets are detached. PPO returns the total loss plus policy loss, value
+loss, entropy, approximate KL, and clip fraction. Projects that use value
+clipping can pass both `old_values` and `value_clip_epsilon`; omitting both keeps
+the ordinary value-regression objective.
+
+## IMPALA and V-trace
+
+```python
+from game_learning_runtime.integrations.torch_objectives import impala_loss
+
+terms = impala_loss(
+    policy_logits=learner_logits,
+    actions=actor_actions,
+    behavior_log_prob=actor_log_prob,
+    rewards=rewards,
+    values=learner_values,
+    terminated=terminated,
+    truncated=truncated,
+    action_mask=action_mask,
+)
+```
+
+The returned V-trace value targets and policy advantages are detached, so the
+learner gradient flows through current policy log-probabilities and value
+predictions, not through the correction targets.
+
+These functions are compositional building blocks, not a trainer. Keep model
+construction, optimizer steps, batching, mixed precision, checkpointing, and
+distributed actor queues in the consuming project.
+
+## Migrate an existing project-local stack
+
+Keep the project's encoder and actor-critic module. Replace only the duplicated
+mathematics after the model has produced logits and values:
+
+| Existing responsibility | Shared GLR primitive | Remains project-owned |
+|---|---|---|
+| Mask invalid action logits | `masked_logits` | Action vocabulary and mask construction |
+| Expert-action cross-entropy | `behavior_cloning_loss` | Demonstration loading and filtering |
+| Advantage recursion | `generalized_advantage_estimate` | Rollout assembly and reward definition |
+| PPO minibatch loss | `ppo_loss` | Epochs, optimizer, early stopping, checkpoints |
+| Off-policy correction | `vtrace_targets` / `impala_loss` | Actor queue, policy-version fencing, backpressure |
+
+When an older batch exposes only `done`, split its source signal before calling
+the shared functions. Map a true environment terminal to `terminated`; map a
+time limit or externally interrupted episode to `truncated`. Treating every
+`done` as terminal loses the bootstrap value, while treating it as truncation
+can leak value through a real terminal.

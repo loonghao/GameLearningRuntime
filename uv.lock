@@ -657,6 +657,9 @@ dependencies = [
 gymnasium = [
     { name = "gymnasium" },
 ]
+torch = [
+    { name = "torch" },
+]
 torchrl = [
     { name = "torch" },
     { name = "torchrl" },
@@ -677,10 +680,11 @@ dev = [
 requires-dist = [
     { name = "gymnasium", marker = "extra == 'gymnasium'", specifier = ">=1.2,<2" },
     { name = "numpy", specifier = ">=1.26,<2.3" },
+    { name = "torch", marker = "extra == 'torch'", specifier = ">=2.8" },
     { name = "torch", marker = "extra == 'torchrl'", specifier = ">=2.8" },
     { name = "torchrl", marker = "extra == 'torchrl'", specifier = ">=0.13,<0.14" },
 ]
-provides-extras = ["torchrl", "gymnasium"]
+provides-extras = ["torch", "torchrl", "gymnasium"]
 
 [package.metadata.requires-dev]
 dev = [
