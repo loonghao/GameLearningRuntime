@@ -38,7 +38,7 @@ jobs:
         python-version: ${{ fromJSON(inputs.python-versions) }}
     steps:
       - name: Check out caller repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install uv and Python
         uses: astral-sh/setup-uv@v6
         with:
