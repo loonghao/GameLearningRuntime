@@ -48,7 +48,8 @@ single implementation language or transport.
 - A fail-closed `ContractEnvironment` wrapper that validates every boundary.
 - Capability-gated live attachment for continuing games that cannot claim a
   physical or deterministic reset.
-- Fixed-length actor `Unroll` collection suitable for custom PPO and IMPALA.
+- Fixed-length or terminal-bounded actor `Unroll` collection suitable for
+  custom PPO and IMPALA.
 - Versioned `glr.transition.v1` JSONL records for BC, replay, and offline data.
 - A packaged `glr.v1` Protobuf service with unary and bidirectional streaming
   interaction contracts.
@@ -112,11 +113,13 @@ select the lifecycle explicitly:
 ```python
 environment = ContractEnvironment(authorized_live_adapter)
 collector = SyncCollector(environment, start_mode="attach")
-unroll = collector.collect(policy, steps=128)
+unroll = collector.collect(policy, steps=128, stop_on_done=True)
 ```
 
 Attach creates a fresh logical GLR episode at step zero. It never implies that
-the game world was reset or seeded.
+the game world was reset or seeded. `stop_on_done=True` keeps a long-running
+live-game unroll from silently continuing into a second physical episode; the
+default remains fixed-length collection across resets.
 
 Run the complete example from a clone:
 
