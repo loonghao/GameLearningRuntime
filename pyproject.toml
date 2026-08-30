@@ -36,6 +36,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+torch = [
+  "torch>=2.8",
+]
 torchrl = [
   "torch>=2.8",
   "torchrl>=0.13,<0.14",
@@ -68,6 +71,7 @@ addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
 markers = [
   "gymnasium: requires the optional Gymnasium dependency group",
+  "torch: requires the optional PyTorch dependency group",
   "torchrl: requires the optional TorchRL dependency group",
 ]
 
@@ -76,6 +80,7 @@ branch = true
 source = ["game_learning_runtime"]
 omit = [
   "*/integrations/gymnasium.py",
+  "*/integrations/torch_objectives.py",
   "*/integrations/torchrl.py",
 ]
 
@@ -87,7 +92,7 @@ show_missing = true
 python_version = "3.10"
 strict = true
 packages = ["game_learning_runtime"]
-exclude = ["src/game_learning_runtime/integrations/(gymnasium|torchrl)\\.py"]
+exclude = ["src/game_learning_runtime/integrations/(gymnasium|torch_objectives|torchrl)\\.py"]
 
 [[tool.mypy.overrides]]
 module = [

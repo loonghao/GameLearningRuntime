@@ -35,8 +35,14 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen --all-groups --extra torchrl
-      - run: uv run --extra torchrl mypy src/game_learning_runtime/integrations/torchrl.py
-      - run: uv run --extra torchrl pytest tests_optional/test_torchrl.py
+      - run: >-
+          uv run --extra torchrl mypy
+          src/game_learning_runtime/integrations/torch_objectives.py
+          src/game_learning_runtime/integrations/torchrl.py
+      - run: >-
+          uv run --extra torchrl pytest
+          tests_optional/test_torch_objectives.py
+          tests_optional/test_torchrl.py
 
   gymnasium:
     name: Gymnasium 1.x contract

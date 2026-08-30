@@ -39,7 +39,7 @@ needs to know whether the game is Unity, Unreal, Source, native, or a test
 simulator. The standardized boundary is the data and lifecycle contract, not a
 single implementation language or transport.
 
-## Implemented in v0.1
+## Current capabilities
 
 - Recursive tensor-tree specs for continuous, discrete, multi-discrete, binary,
   hybrid, parameterized, and hierarchical data.
@@ -51,10 +51,12 @@ single implementation language or transport.
 - A packaged `glr.v1` Protobuf service with unary and bidirectional streaming
   interaction contracts.
 - An optional TorchRL `EnvBase` adapter tested against TorchRL 0.13.
+- Optional, model-neutral PyTorch objectives for masked BC, PPO/GAE, and
+  IMPALA/V-trace custom learners.
 
 Game-specific runtime adapters, generated C#/C++/Rust protocol SDKs,
-distributed actor transport, and learner implementations are roadmap items—not
-features claimed by this initial release.
+distributed actor transport, complete trainers, and reference model
+architectures remain roadmap items.
 
 ## Install
 
@@ -68,6 +70,12 @@ Add the TorchRL integration only where training requires it:
 
 ```powershell
 uv add "game-learning-runtime[torchrl]"
+```
+
+Use the reusable objectives in a custom PyTorch learner without TorchRL:
+
+```powershell
+uv add "game-learning-runtime[torch]"
 ```
 
 Reuse an existing Gymnasium environment without writing another TorchRL adapter:
@@ -111,6 +119,23 @@ env = TorchRLEnvironment(CounterEnvironment())
 rollout = env.rollout(max_steps=32)
 ```
 
+For a custom masked PPO update:
+
+```python
+from game_learning_runtime.integrations.torch_objectives import ppo_loss
+
+terms = ppo_loss(
+    policy_logits=logits,
+    actions=actions,
+    old_log_prob=old_log_prob,
+    advantages=advantages,
+    values=values,
+    value_targets=value_targets,
+    action_mask=action_mask,
+)
+terms.loss.backward()
+```
+
 ## Reuse the CI workflow
 
 Any uv-managed Python repository can call the public reusable workflow:
@@ -133,6 +158,7 @@ receives deployment secrets and only checks out/tests the calling repository.
 
 - [Getting started](docs/guides/getting-started.md)
 - [Adapt an existing Gymnasium environment](docs/guides/adapting-gymnasium.md)
+- [Compose custom Torch objectives](docs/guides/using-torch-objectives.md)
 - [Architecture](docs/architecture/overview.md)
 - [Protocol and data flow](docs/architecture/data-flow.md)
 - [Local development](docs/runbooks/local-development.md)
