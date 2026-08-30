@@ -36,11 +36,27 @@ jobs:
           cache-dependency-glob: uv.lock
       - run: uv sync --frozen --all-groups --extra torchrl
       - run: uv run --extra torchrl mypy src/game_learning_runtime/integrations/torchrl.py
-      - run: uv run --extra torchrl pytest tests_optional -m torchrl
+      - run: uv run --extra torchrl pytest tests_optional/test_torchrl.py
+
+  gymnasium:
+    name: Gymnasium 1.x contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.11.19"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen --all-groups --extra gymnasium
+      - run: uv run --extra gymnasium mypy src/game_learning_runtime/integrations/gymnasium.py
+      - run: uv run --extra gymnasium pytest tests_optional/test_gymnasium.py
 
   package:
     name: Build distribution
-    needs: [core, torchrl]
+    needs: [core, gymnasium, torchrl]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

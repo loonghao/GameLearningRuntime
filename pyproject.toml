@@ -40,6 +40,9 @@ torchrl = [
   "torch>=2.8",
   "torchrl>=0.13,<0.14",
 ]
+gymnasium = [
+  "gymnasium>=1.2,<2",
+]
 
 [project.urls]
 Documentation = "https://github.com/loonghao/GameLearningRuntime#readme"
@@ -64,13 +67,17 @@ packages = ["src/game_learning_runtime"]
 addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
 markers = [
+  "gymnasium: requires the optional Gymnasium dependency group",
   "torchrl: requires the optional TorchRL dependency group",
 ]
 
 [tool.coverage.run]
 branch = true
 source = ["game_learning_runtime"]
-omit = ["*/integrations/torchrl.py"]
+omit = [
+  "*/integrations/gymnasium.py",
+  "*/integrations/torchrl.py",
+]
 
 [tool.coverage.report]
 fail_under = 90
@@ -80,10 +87,18 @@ show_missing = true
 python_version = "3.10"
 strict = true
 packages = ["game_learning_runtime"]
-exclude = ["src/game_learning_runtime/integrations/torchrl.py"]
+exclude = ["src/game_learning_runtime/integrations/(gymnasium|torchrl)\\.py"]
 
 [[tool.mypy.overrides]]
-module = ["grpc_tools.*", "torch", "torch.*", "torchrl.*", "tensordict.*"]
+module = [
+  "grpc_tools.*",
+  "gymnasium",
+  "gymnasium.*",
+  "torch",
+  "torch.*",
+  "torchrl.*",
+  "tensordict.*",
+]
 ignore_missing_imports = true
 
 [tool.ruff]

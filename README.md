@@ -70,6 +70,12 @@ Add the TorchRL integration only where training requires it:
 uv add "game-learning-runtime[torchrl]"
 ```
 
+Reuse an existing Gymnasium environment without writing another TorchRL adapter:
+
+```powershell
+uv add "game-learning-runtime[gymnasium,torchrl]"
+```
+
 Pin a PyPI version or immutable GitHub release tag when reproducibility requires
 an exact build.
 
@@ -126,6 +132,7 @@ receives deployment secrets and only checks out/tests the calling repository.
 ## Documentation
 
 - [Getting started](docs/guides/getting-started.md)
+- [Adapt an existing Gymnasium environment](docs/guides/adapting-gymnasium.md)
 - [Architecture](docs/architecture/overview.md)
 - [Protocol and data flow](docs/architecture/data-flow.md)
 - [Local development](docs/runbooks/local-development.md)
