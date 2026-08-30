@@ -1,0 +1,97 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "game-learning-runtime"
+version = "0.1.0"
+description = "A universal runtime for connecting games to learning systems and AI agents."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "loonghao", email = "hal.long@outlook.com" },
+]
+keywords = [
+  "reinforcement-learning",
+  "imitation-learning",
+  "game-ai",
+  "torchrl",
+  "environment",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "numpy>=1.26,<2.3",
+]
+
+[project.optional-dependencies]
+torchrl = [
+  "torch>=2.8",
+  "torchrl>=0.13,<0.14",
+]
+
+[project.urls]
+Documentation = "https://github.com/loonghao/GameLearningRuntime#readme"
+Issues = "https://github.com/loonghao/GameLearningRuntime/issues"
+Repository = "https://github.com/loonghao/GameLearningRuntime"
+
+[dependency-groups]
+dev = [
+  "build>=1.2",
+  "grpcio-tools>=1.70",
+  "mypy>=1.15",
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.11",
+  "twine>=6.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/game_learning_runtime"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "torchrl: requires the optional TorchRL dependency group",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["game_learning_runtime"]
+omit = ["*/integrations/torchrl.py"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+packages = ["game_learning_runtime"]
+exclude = ["src/game_learning_runtime/integrations/torchrl.py"]
+
+[[tool.mypy.overrides]]
+module = ["grpc_tools.*", "torch", "torch.*", "torchrl.*", "tensordict.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]

@@ -1,0 +1,57 @@
+name: Reusable uv Python CI
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: JSON array of Python versions
+        required: false
+        type: string
+        default: '["3.12"]'
+      sync-args:
+        description: Arguments passed to uv sync
+        required: false
+        type: string
+        default: "--frozen --all-groups"
+      lint-command:
+        description: Quality command executed before tests
+        required: false
+        type: string
+        default: "uv run ruff check . && uv run ruff format --check . && uv run mypy"
+      test-command:
+        description: Test command
+        required: false
+        type: string
+        default: "uv run pytest"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.python-versions) }}
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v4
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.19"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Verify lock file
+        run: uv lock --check
+      - name: Install dependencies
+        run: uv sync ${{ inputs.sync-args }}
+      - name: Run quality checks
+        run: ${{ inputs.lint-command }}
+      - name: Run tests
+        run: ${{ inputs.test-command }}
+

@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package glr.v1;
+
+option csharp_namespace = "GameLearningRuntime.Protocol.V1";
+option java_multiple_files = true;
+option java_package = "dev.glr.protocol.v1";
+
+enum DType {
+  DTYPE_UNSPECIFIED = 0;
+  DTYPE_BOOL = 1;
+  DTYPE_UINT8 = 2;
+  DTYPE_INT32 = 3;
+  DTYPE_INT64 = 4;
+  DTYPE_FLOAT32 = 5;
+  DTYPE_FLOAT64 = 6;
+}
+
+enum SpaceKind {
+  SPACE_KIND_UNSPECIFIED = 0;
+  SPACE_KIND_CONTINUOUS = 1;
+  SPACE_KIND_DISCRETE = 2;
+  SPACE_KIND_MULTI_DISCRETE = 3;
+  SPACE_KIND_BINARY = 4;
+}
+
+message TensorSpec {
+  string path = 1;
+  repeated int64 shape = 2; // -1 denotes a dynamic dimension.
+  DType dtype = 3;
+  SpaceKind kind = 4;
+  optional double minimum = 5;
+  optional double maximum = 6;
+  string description = 7;
+}
+
+message Tensor {
+  repeated int64 shape = 1;
+  DType dtype = 2;
+  bytes data = 3;
+}
+
+message EnvironmentDescriptor {
+  string environment_id = 1;
+  string protocol_version = 2;
+  repeated TensorSpec observations = 3;
+  repeated TensorSpec actions = 4;
+  repeated TensorSpec action_masks = 5;
+  TensorSpec reward = 6;
+  TensorSpec done = 7;
+  repeated string capabilities = 8;
+  map<string, string> metadata = 9;
+}
+
+message DescribeRequest {}
+
+message ResetRequest {
+  optional uint64 seed = 1;
+  map<string, string> options = 2;
+}
+
+message StepRequest {
+  string episode_id = 1;
+  uint64 expected_step_id = 2;
+  map<string, Tensor> action = 3;
+}
+
+message RuntimeEvent {
+  string name = 1;
+  uint64 timestamp_ns = 2;
+  bytes json_payload = 3;
+}
+
+message TimeStep {
+  string episode_id = 1;
+  uint64 step_id = 2;
+  uint64 timestamp_ns = 3;
+  map<string, Tensor> observation = 4;
+  Tensor reward = 5;
+  Tensor terminated = 6;
+  Tensor truncated = 7;
+  map<string, Tensor> action_mask = 8;
+  repeated RuntimeEvent events = 9;
+  bytes json_info = 10;
+}
+
+service GameRuntime {
+  rpc Describe(DescribeRequest) returns (EnvironmentDescriptor);
+  rpc Reset(ResetRequest) returns (TimeStep);
+  rpc Step(StepRequest) returns (TimeStep);
+  rpc Interact(stream StepRequest) returns (stream TimeStep);
+}
+

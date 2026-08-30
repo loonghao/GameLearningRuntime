@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    uses: ./.github/workflows/reusable-python-ci.yml
+    with:
+      python-versions: '["3.10", "3.11", "3.12", "3.13"]'
+      sync-args: "--frozen --all-groups"
+      lint-command: "uv run ruff check . && uv run ruff format --check . && uv run mypy"
+      test-command: 'uv run pytest -m "not torchrl" --cov=game_learning_runtime --cov-report=term-missing'
+
+  torchrl:
+    name: TorchRL 0.13 contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.19"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen --all-groups --extra torchrl
+      - run: uv run --extra torchrl mypy src/game_learning_runtime/integrations/torchrl.py
+      - run: uv run --extra torchrl pytest tests_optional -m torchrl
+
+  package:
+    name: Build distribution
+    needs: [core, torchrl]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.19"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen --all-groups
+      - run: uv build
+      - run: uv run twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7

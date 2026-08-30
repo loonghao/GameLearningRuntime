@@ -1,0 +1,137 @@
+# Game Learning Runtime
+
+[![CI](https://github.com/loonghao/GameLearningRuntime/actions/workflows/ci.yml/badge.svg)](https://github.com/loonghao/GameLearningRuntime/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10--3.13-3776AB.svg)](pyproject.toml)
+
+Game Learning Runtime (GLR) is a framework-neutral contract between game
+runtimes and learning systems. A game adapter describes observations, actions,
+action masks, rewards, events, and episode boundaries once; TorchRL, custom PPO
+or IMPALA learners, behavior cloning, offline datasets, evaluators, and QA tools
+can then consume the same interface.
+
+> A universal runtime for connecting games to learning systems and AI agents.
+
+GLR is intended for games and test environments you own or are authorized to
+instrument. It does not include anti-cheat bypasses, stealth injection, or
+game-specific reverse-engineering code.
+
+## Why this boundary
+
+```text
+Game / simulator
+      │
+      ▼
+Runtime adapter (C#, C++, Rust, Python, official API, ...)
+      │
+      ▼
+GLR protocol + environment contract
+      │
+      ├── TorchRL
+      ├── custom PPO / IMPALA
+      ├── BC / DAgger / offline learning
+      ├── recorder / replay
+      └── evaluation / automated QA
+```
+
+Game adapters never import PPO, IMPALA, BC, or TorchRL. Learning code never
+needs to know whether the game is Unity, Unreal, Source, native, or a test
+simulator. The standardized boundary is the data and lifecycle contract, not a
+single implementation language or transport.
+
+## Implemented in v0.1
+
+- Recursive tensor-tree specs for continuous, discrete, multi-discrete, binary,
+  hybrid, parameterized, and hierarchical data.
+- A `GameEnvironment` port with reset, step, close, action masks, semantic
+  events, terminated/truncated signals, episode IDs, and monotonic step IDs.
+- A fail-closed `ContractEnvironment` wrapper that validates every boundary.
+- Fixed-length actor `Unroll` collection suitable for custom PPO and IMPALA.
+- Versioned `glr.transition.v1` JSONL records for BC, replay, and offline data.
+- A packaged `glr.v1` Protobuf service with unary and bidirectional streaming
+  interaction contracts.
+- An optional TorchRL `EnvBase` adapter tested against TorchRL 0.13.
+
+Game-specific runtime adapters, generated C#/C++/Rust protocol SDKs,
+distributed actor transport, and learner implementations are roadmap items—not
+features claimed by this initial release.
+
+## Install
+
+Until PyPI trusted publishing is enabled, pin a GitHub release tag:
+
+```powershell
+uv add "game-learning-runtime @ git+https://github.com/loonghao/GameLearningRuntime@v0.1.0"
+```
+
+Add the TorchRL integration only where training requires it:
+
+```powershell
+uv add "game-learning-runtime[torchrl] @ git+https://github.com/loonghao/GameLearningRuntime@v0.1.0"
+```
+
+## Minimal environment
+
+```python
+import numpy as np
+
+from game_learning_runtime import ContractEnvironment, SyncCollector
+from game_learning_runtime.examples import CounterEnvironment, always_increment
+
+environment = ContractEnvironment(CounterEnvironment(target=3))
+collector = SyncCollector(environment, actor_id="local-actor")
+unroll = collector.collect(always_increment, steps=16, policy_version=0)
+
+print(len(unroll.transitions), unroll.total_reward)
+```
+
+Run the complete example from a clone:
+
+```powershell
+uv sync --frozen
+uv run python -c "from game_learning_runtime import *; from game_learning_runtime.examples import *; print(SyncCollector(ContractEnvironment(make_environment())).collect(always_increment, steps=4).total_reward)"
+```
+
+For TorchRL:
+
+```python
+from game_learning_runtime.examples import CounterEnvironment
+from game_learning_runtime.integrations.torchrl import TorchRLEnvironment
+
+env = TorchRLEnvironment(CounterEnvironment())
+rollout = env.rollout(max_steps=32)
+```
+
+## Reuse the CI workflow
+
+Any uv-managed Python repository can call the public reusable workflow:
+
+```yaml
+jobs:
+  quality:
+    uses: loonghao/GameLearningRuntime/.github/workflows/reusable-python-ci.yml@v0.1.0
+    with:
+      python-versions: '["3.10", "3.12"]'
+      sync-args: "--frozen --all-groups"
+      lint-command: "uv run ruff check . && uv run mypy"
+      test-command: "uv run pytest"
+```
+
+Pin a release tag or commit SHA in production repositories. The workflow never
+receives deployment secrets and only checks out/tests the calling repository.
+
+## Documentation
+
+- [Getting started](docs/guides/getting-started.md)
+- [Architecture](docs/architecture/overview.md)
+- [Protocol and data flow](docs/architecture/data-flow.md)
+- [Local development](docs/runbooks/local-development.md)
+- [Release runbook](docs/runbooks/release.md)
+- [Roadmap](docs/planning/roadmap.md)
+- [Architecture decisions](docs/decisions/README.md)
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development contract and
+[SECURITY.md](SECURITY.md) for private vulnerability reporting. GLR is licensed
+under the [MIT License](LICENSE).

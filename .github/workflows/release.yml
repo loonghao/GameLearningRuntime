@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  verify:
+    uses: ./.github/workflows/reusable-python-ci.yml
+    with:
+      python-versions: '["3.12"]'
+      sync-args: "--frozen --all-groups"
+      lint-command: "uv run ruff check . && uv run ruff format --check . && uv run mypy"
+      test-command: 'uv run pytest -m "not torchrl" --cov=game_learning_runtime --cov-report=term-missing'
+
+  release:
+    name: Build and publish GitHub Release
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.19"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen --all-groups
+      - name: Verify semantic version tag
+        run: uv run python scripts/verify_release.py "${{ github.ref_name }}"
+      - run: uv build
+      - run: uv run twine check dist/*
+      - name: Attest distributions
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*"
+      - name: Create immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --verify-tag --generate-notes --title "${{ github.ref_name }}"
+
