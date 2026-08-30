@@ -27,7 +27,10 @@ world; it does not claim that game state was restored, randomized, or reset.
 identity, and step-zero checks to reset and attach. `SyncCollector` and the
 TorchRL adapter accept an explicit `start_mode` whose default remains
 `"reset"`. Attach mode rejects seeds because it cannot promise seeded world
-initialization. The v1 protocol exposes a distinct additive `Attach` RPC.
+initialization. The Gymnasium compatibility adapter advertises the capability
+only when given an explicit `attach_provider`; it never infers attachment from
+`reset()` or from an incidental method name. The v1 protocol exposes a distinct
+additive `Attach` RPC.
 
 ## Consequences
 

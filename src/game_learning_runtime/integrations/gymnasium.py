@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Any, TypeAlias, cast
+from typing import Any, Protocol, TypeAlias, cast
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -32,6 +32,14 @@ except ImportError as error:  # pragma: no cover - exercised without the optiona
 InfoTransform: TypeAlias = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 ActionMaskProvider: TypeAlias = Callable[[], Any]
 SpecNode: TypeAlias = TensorSpec | CompositeSpec
+
+
+class AttachProvider(Protocol):
+    """Explicit live-attachment hook for a Gymnasium-backed runtime."""
+
+    def __call__(
+        self, *, options: Mapping[str, Any] | None = None
+    ) -> tuple[Any, Mapping[str, Any]]: ...
 
 
 def _unsupported(space: spaces.Space[Any]) -> ValueError:
@@ -219,6 +227,7 @@ class GymnasiumEnvironment(GameEnvironment):
         *,
         environment_id: str,
         action_mask_provider: ActionMaskProvider | None = None,
+        attach_provider: AttachProvider | None = None,
         info_transform: InfoTransform | None = None,
         observation_key: str = "observation",
         action_key: str = "action",
@@ -228,6 +237,7 @@ class GymnasiumEnvironment(GameEnvironment):
         self._observation_key = observation_key
         self._action_key = action_key
         self._action_mask_provider = action_mask_provider
+        self._attach_provider = attach_provider
         self._info_transform = info_transform
         self._episode_id: UUID | None = None
         self._step_id = 0
@@ -239,6 +249,8 @@ class GymnasiumEnvironment(GameEnvironment):
         capabilities = {"gymnasium-adapter", "metadata-deny-by-default"}
         if action_mask is not None:
             capabilities.add("action-mask")
+        if attach_provider is not None:
+            capabilities.add("live-attach")
         self._spec = EnvironmentSpec(
             environment_id=environment_id,
             observation=_root_spec(environment.observation_space, leaf_name=observation_key),
@@ -258,6 +270,15 @@ class GymnasiumEnvironment(GameEnvironment):
         observation, info = self._environment.reset(
             seed=seed, options=None if options is None else dict(options)
         )
+        return self._start_timestep(observation, info)
+
+    def attach(self, *, options: Mapping[str, Any] | None = None) -> TimeStep:
+        if self._attach_provider is None:
+            raise ContractViolation("Gymnasium adapter does not support live attach")
+        observation, info = self._attach_provider(options=options)
+        return self._start_timestep(observation, info)
+
+    def _start_timestep(self, observation: Any, info: Mapping[str, Any]) -> TimeStep:
         self._episode_id = uuid4()
         self._step_id = 0
         return self._timestep(
@@ -325,4 +346,9 @@ class GymnasiumEnvironment(GameEnvironment):
         return {self._action_key: np.array(self._action_mask_provider(), copy=True)}
 
 
-__all__ = ["ActionMaskProvider", "GymnasiumEnvironment", "InfoTransform"]
+__all__ = [
+    "ActionMaskProvider",
+    "AttachProvider",
+    "GymnasiumEnvironment",
+    "InfoTransform",
+]

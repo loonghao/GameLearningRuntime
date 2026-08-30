@@ -76,6 +76,71 @@ def test_discrete_environment_converts_lifecycle_and_masks_without_leaking_info(
     assert source.closed
 
 
+class _AttachableDiscreteEnvironment(_DiscreteEnvironment):
+    def __init__(self) -> None:
+        super().__init__()
+        self.reset_calls = 0
+        self.attach_calls = 0
+        self.attach_options: Mapping[str, Any] | None = None
+
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        self.reset_calls += 1
+        return super().reset(seed=seed, options=options)
+
+    def attach(
+        self, *, options: Mapping[str, Any] | None = None
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        self.attach_calls += 1
+        self.attach_options = options
+        return np.array([0.75, -0.75], dtype=np.float32), {
+            "score": 11,
+            "local_path": "/private/runtime/live.json",
+        }
+
+
+def test_live_attach_provider_is_explicit_and_does_not_alias_reset() -> None:
+    source = _AttachableDiscreteEnvironment()
+    adapter = GymnasiumEnvironment(
+        source,
+        environment_id="example.live-v1",
+        action_mask_provider=source.action_masks,
+        attach_provider=source.attach,
+        info_transform=lambda value: {"score": int(value["score"])},
+    )
+    environment = ContractEnvironment(adapter)
+
+    initial = environment.attach(options={"continuation": "current"})
+
+    assert "live-attach" in adapter.spec.capabilities
+    assert source.attach_calls == 1
+    assert source.reset_calls == 0
+    assert source.attach_options == {"continuation": "current"}
+    assert initial.step_id == 0
+    assert initial.info == {"score": 11}
+    np.testing.assert_array_equal(
+        initial.observation["observation"],
+        np.array([0.75, -0.75], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        initial.action_mask["action"],
+        np.array([True, False, True]),
+    )
+
+
+def test_gymnasium_adapter_without_provider_rejects_live_attach() -> None:
+    adapter = GymnasiumEnvironment(
+        _DiscreteEnvironment(),
+        environment_id="example.reset-only-v1",
+    )
+    environment = ContractEnvironment(adapter)
+
+    assert "live-attach" not in adapter.spec.capabilities
+    with pytest.raises(ContractViolation, match="does not declare live-attach"):
+        environment.attach()
+
+
 def test_info_transform_is_the_only_metadata_export_path() -> None:
     source = _DiscreteEnvironment()
     environment = ContractEnvironment(

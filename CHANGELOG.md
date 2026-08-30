@@ -11,6 +11,8 @@ All notable changes to this project are documented here. The format follows
 - Capability-gated live attach across the core environment, synchronous
   collector, TorchRL adapter, and additive `glr.v1` protocol RPC, without
   aliasing attachment to deterministic reset.
+- Explicit Gymnasium `attach_provider` forwarding for authorized running games,
+  preserving the distinction between logical attachment and physical reset.
 - Optional deny-by-default Gymnasium compatibility adapter for Box, Discrete,
   MultiDiscrete, MultiBinary, Dict, and Tuple spaces.
 - Dedicated Gymnasium conformance CI and architecture decisions for adapter
