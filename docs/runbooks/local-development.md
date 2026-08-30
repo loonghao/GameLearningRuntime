@@ -22,7 +22,10 @@ For the optional integration:
 
 ```powershell
 uv sync --frozen --all-groups --extra torchrl
-uv run --extra torchrl pytest tests_optional -m torchrl
+uv run --extra torchrl pytest tests_optional/test_torchrl.py
+uv sync --frozen --all-groups --extra gymnasium
+uv run --extra gymnasium mypy src/game_learning_runtime/integrations/gymnasium.py
+uv run --extra gymnasium pytest tests_optional/test_gymnasium.py
 ```
 
 ## Verify

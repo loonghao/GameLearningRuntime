@@ -36,8 +36,8 @@ def _leaf_spec(spec: TensorSpec, *, device: torch.device) -> Any:
         return Categorical(n=2, shape=shape, dtype=torch.bool, device=device)
     if spec.minimum is not None and spec.maximum is not None:
         return Bounded(
-            low=torch.as_tensor(spec.minimum, dtype=dtype, device=device),
-            high=torch.as_tensor(spec.maximum, dtype=dtype, device=device),
+            low=torch.as_tensor(np.array(spec.minimum, copy=True), dtype=dtype, device=device),
+            high=torch.as_tensor(np.array(spec.maximum, copy=True), dtype=dtype, device=device),
             shape=shape,
             dtype=dtype,
             device=device,

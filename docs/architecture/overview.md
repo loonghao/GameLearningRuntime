@@ -21,7 +21,7 @@ versioning, and low adoption cost for local uv projects.
                             │ Tensor trees / Unroll / JSONL
 ┌───────────────────────────▼─────────────────────────────────┐
 │ GLR application layer                                       │
-│ SyncCollector │ recorder/replay │ optional integrations     │
+│ SyncCollector │ recorder/replay │ Gymnasium/TorchRL adapters│
 ├─────────────────────────────────────────────────────────────┤
 │ GLR domain and ports                                         │
 │ Specs │ TimeStep │ Transition │ GameEnvironment             │
@@ -44,6 +44,11 @@ Transport adapters implement `GameEnvironment`; learning integrations consume
 it. Composite tensor trees express hybrid and hierarchical spaces while leaves
 remain easy to map to NumPy, Torch, C#, C++, or Rust tensors.
 
+Existing Gymnasium environments enter through a deny-by-default compatibility
+adapter. Native Rust is reserved for benchmark-proven protocol, storage, and
+actor data-plane work; it does not create a second learner or game-semantics
+layer.
+
 ## Failure modes
 
 | Failure | Current behavior | Next scaling step |
@@ -63,4 +68,3 @@ game. Adapters must enforce the operator's legal and technical authorization,
 bind to the intended runtime, avoid secret/proprietary data in records, and
 default to local authenticated transports. Network exposure and remote
 authorization are deferred until a threat model and dedicated ADR exist.
-

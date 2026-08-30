@@ -18,11 +18,13 @@ uv build
 uv run twine check dist/*
 ```
 
-Optional TorchRL contract:
+Optional integration contracts:
 
 ```powershell
 uv sync --frozen --all-groups --extra torchrl
-uv run --extra torchrl pytest tests_optional -m torchrl
+uv run --extra torchrl pytest tests_optional/test_torchrl.py
+uv sync --frozen --all-groups --extra gymnasium
+uv run --extra gymnasium pytest tests_optional/test_gymnasium.py
 ```
 
 ## Change contract
@@ -33,6 +35,8 @@ uv run --extra torchrl pytest tests_optional -m torchrl
 - Add adversarial tests for lifecycle, shapes, dtypes, bounds, masks, and stale
   episode/step identity.
 - Use Conventional Commits in English.
+- Deny incidental metadata by default; never commit local paths, hostnames,
+  process/window identifiers, credentials, or private runtime data.
 - Do not add game instrumentation unless it is legal, authorized, and isolated
   behind an adapter.
 
