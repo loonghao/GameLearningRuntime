@@ -189,7 +189,7 @@ jobs:
           subject-path: "release-assets/*"
       - name: Write deterministic checksums
         working-directory: release-assets
-        run: sha256sum * > SHA256SUMS
+        run: sha256sum ./* > SHA256SUMS
       - name: Attach assets to the immutable release
         env:
           GH_TOKEN: ${{ github.token }}
