@@ -13,8 +13,8 @@
 2. Create an annotated semantic-version tag:
 
    ```powershell
-   git tag -a v0.1.0 -m "release: v0.1.0"
-   git push origin v0.1.0
+   git tag -a v0.2.0 -m "release: v0.2.0"
+   git push origin v0.2.0
    ```
 
 3. The release workflow verifies the tag against `pyproject.toml`, rebuilds the

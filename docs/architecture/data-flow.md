@@ -37,6 +37,43 @@ Client                         Already-running runtime
 Attach establishes ordering and a fresh logical episode only. It does not
 assert a physical reset, deterministic checkpoint, or seeded initial state.
 
+The Python bridge ports implement the same unary lifecycle independently of a
+specific transport:
+
+```text
+ContractEnvironment
+  └─ BridgeEnvironment
+       └─ BridgeDriver (HTTP / framed socket / named pipe / gRPC / native)
+            └─ transport server
+                 └─ EnvironmentBridgeDriver
+                      └─ authorized runtime adapter / main-thread dispatcher
+```
+
+The client does not retry a failed `Step`. A lost mutating response can mean
+the action happened, so a concrete driver must reconcile through an
+authoritative readback or report an unknown outcome. Read-only health and
+observation requests may use a separate retry policy.
+
+## Knowledge and reward flow
+
+```text
+Public rules / guides ── paraphrased, cited ──▶ advisory research manifest
+                                                     │
+Authoritative runtime telemetry ─────────────────────┼──▶ adapter signals
+                                                     │
+glr.training.v1 ── source authority / weights / clips┘
+                                                     ▼
+                                               RewardComposer
+                                                     ▼
+                                      total + immutable breakdown
+```
+
+Research suggests observations, actions, masks, and reward hypotheses. It does
+not become runtime truth. The adapter emits named scalar signals from reviewed
+code; the composer rejects undeclared, missing, non-finite, or wrong-source
+signals. Reward terms require an authoritative source unless configuration
+deliberately lowers that individual term to advisory authority.
+
 ## Learning paths
 
 - PPO consumes fixed-length `Unroll` values; the optional PyTorch integration
@@ -55,3 +92,7 @@ assert a physical reset, deterministic checkpoint, or seeded initial state.
 The Protobuf package is `glr.v1` and the JSONL record schema is
 `glr.transition.v1`. Additive fields may remain within v1. Removing fields,
 changing meaning, or changing tensor encoding requires a new major schema.
+Training policy uses `glr.training.v1`. Unknown fields fail closed so spelling
+mistakes do not silently change reward behavior. Gameplay research uses a
+separate `glr.knowledge-research.v1` design manifest and is never loaded as an
+executable runtime configuration.

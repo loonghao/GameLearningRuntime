@@ -8,18 +8,23 @@ This document describes future work, not current capability.
 - Prototype checksummed codec and multi-actor queue candidates against the
   recorded Python baseline; retain Rust only when ADR-0004's paired threshold
   is reproducible.
-- Implement an authenticated local gRPC adapter with deadlines and health.
+- Implement concrete authenticated local gRPC and framed-stream drivers with
+  deadlines, health, exact runtime binding, and bounded payloads.
 - Add bounded asynchronous actor queues and IMPALA backpressure metrics.
 - Add a columnar/checksummed dataset container and deterministic replay.
 - Define partial reset and multi-agent identity semantics.
 - Add structured Gymnasium action-mask conformance fixtures.
+- Add freshness-aware knowledge snapshot validation and signed configuration
+  bundles after real adapter requirements are measured.
 
 ## Later
 
-- Unity, Unreal, and native adapter SDK templates.
+- Unity, Unreal, and native adapter SDK templates using the shared bridge
+  lifecycle rather than game-specific transport cores.
 - JAX and RLlib integrations.
 - Reference BC, PPO, IMPALA/V-trace, and DAgger examples outside the core.
-- Evaluation suites, curriculum contracts, snapshots, and benchmarks.
+- Evaluation suites, curriculum contracts, reward ablation reports, snapshots,
+  and benchmarks.
 
 Game-specific adapters remain separate packages so their engine/runtime
 dependencies never enter the core distribution.
