@@ -129,6 +129,35 @@ def test_live_attach_provider_is_explicit_and_does_not_alias_reset() -> None:
     )
 
 
+def test_verified_integration_capabilities_are_preserved() -> None:
+    source = _AttachableDiscreteEnvironment()
+
+    adapter = GymnasiumEnvironment(
+        source,
+        environment_id="example.live-v1",
+        attach_provider=source.attach,
+        verified_capabilities={"authenticated", "postcondition-verified", "target-bound"},
+    )
+
+    assert {
+        "authenticated",
+        "gymnasium-adapter",
+        "live-attach",
+        "metadata-deny-by-default",
+        "postcondition-verified",
+        "target-bound",
+    } <= adapter.spec.capabilities
+
+
+def test_verified_integration_capabilities_reject_empty_names() -> None:
+    with pytest.raises(ValueError, match="verified capabilities"):
+        GymnasiumEnvironment(
+            _DiscreteEnvironment(),
+            environment_id="example.invalid-capability-v1",
+            verified_capabilities={""},
+        )
+
+
 def test_gymnasium_adapter_without_provider_rejects_live_attach() -> None:
     adapter = GymnasiumEnvironment(
         _DiscreteEnvironment(),

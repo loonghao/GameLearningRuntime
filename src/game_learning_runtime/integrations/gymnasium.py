@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Protocol, TypeAlias, cast
 from uuid import UUID, uuid4
@@ -232,6 +232,7 @@ class GymnasiumEnvironment(GameEnvironment):
         observation_key: str = "observation",
         action_key: str = "action",
         metadata: Mapping[str, str] | None = None,
+        verified_capabilities: Iterable[str] = (),
     ) -> None:
         self._environment = environment
         self._observation_key = observation_key
@@ -246,7 +247,19 @@ class GymnasiumEnvironment(GameEnvironment):
             if action_mask_provider is not None
             else None
         )
-        capabilities = {"gymnasium-adapter", "metadata-deny-by-default"}
+        integration_capabilities = frozenset(verified_capabilities)
+        if any(
+            not isinstance(capability, str)
+            or not capability
+            or any(character.isspace() for character in capability)
+            for capability in integration_capabilities
+        ):
+            raise ValueError("verified capabilities must be non-empty strings without whitespace")
+        capabilities = {
+            "gymnasium-adapter",
+            "metadata-deny-by-default",
+            *integration_capabilities,
+        }
         if action_mask is not None:
             capabilities.add("action-mask")
         if attach_provider is not None:

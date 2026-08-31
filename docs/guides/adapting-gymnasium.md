@@ -48,6 +48,27 @@ attachment fail-closed. The hook must return the same `(observation, info)`
 shape as Gymnasium `reset()`, but it must not call or impersonate a physical
 reset. Each attachment starts a fresh logical GLR episode at step zero.
 
+If the authorized integration layer enforces additional capabilities, declare
+only those verified at the same boundary:
+
+```python
+adapter = GymnasiumEnvironment(
+    source,
+    environment_id="example.live-runtime-v1",
+    attach_provider=source.attach,
+    verified_capabilities={
+        "authenticated",
+        "postcondition-verified",
+        "target-bound",
+    },
+)
+```
+
+These names are assertions by the caller, not capabilities inferred by the
+Gymnasium wrapper. Do not declare authentication, target binding, reset, or
+postcondition verification unless the underlying runtime and transport fail
+closed when that property is absent.
+
 ## Metadata and privacy
 
 Gymnasium `info` is empty in GLR by default. This prevents incidental values
