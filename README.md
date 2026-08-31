@@ -218,6 +218,10 @@ print(reward.total, reward.contributions)
 Runtime telemetry should be `authoritative`; web guides and strategy priors
 should be `advisory`. Reward terms require authoritative sources by default.
 Configuration is data only: GLR does not evaluate reward expressions as code.
+`KnowledgeInjector` additionally validates bounded `glr.knowledge-snapshot.v1`
+payloads and selects stage/tag-relevant `acquire`, `engage`, `upgrade`, and
+`avoid` advice into an immutable learner context. The learner owns encoding;
+the context never gains action or reward authority.
 The episode guard caps positive shaping per step and episode, requires an
 authoritative terminal outcome, and prevents a failed episode from retaining a
 positive return. `DemonstrationGate` separately rejects policy self-imitation,

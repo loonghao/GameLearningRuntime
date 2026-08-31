@@ -74,6 +74,11 @@ observation requests may use a separate retry policy.
 ```text
 Public rules / guides ── paraphrased, cited ──▶ advisory research manifest
                                                      │
+                                 versioned snapshot ──┼──▶ KnowledgeInjector
+                                                     │        │
+                                                     │        ▼
+                                                     │   bounded KnowledgeContext
+                                                     │        │ learner-owned encoding
 Authoritative runtime telemetry ─────────────────────┼──▶ adapter signals
                                                      │
 glr.training.v1 ── source authority / weights / clips┘
@@ -88,6 +93,12 @@ not become runtime truth. The adapter emits named scalar signals from reviewed
 code; the composer rejects undeclared, missing, non-finite, or wrong-source
 signals. Reward terms require an authoritative source unless configuration
 deliberately lowers that individual term to advisory authority.
+
+The knowledge branch is separate from reward and action authority. A learner
+queries `acquire`, `engage`, `upgrade`, and `avoid` items by stage and tags,
+then encodes the immutable context alongside observations. Snapshot provenance,
+freshness, payload bounds, and digest are checked before selection. The context
+cannot alter adapter masks or acknowledge runtime effects.
 
 ## Learning paths
 

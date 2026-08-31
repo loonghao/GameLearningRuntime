@@ -30,6 +30,15 @@ class KnowledgeAuthority(str, Enum):
     AUTHORITATIVE = "authoritative"
 
 
+class KnowledgeIntent(str, Enum):
+    """Game-neutral decision categories exposed to learner-side knowledge queries."""
+
+    ACQUIRE = "acquire"
+    ENGAGE = "engage"
+    UPGRADE = "upgrade"
+    AVOID = "avoid"
+
+
 _AUTHORITY_RANK = {
     KnowledgeAuthority.ADVISORY: 0,
     KnowledgeAuthority.AUTHORITATIVE: 1,
@@ -151,6 +160,7 @@ class KnowledgeSourceSpec:
     source_id: str
     authority: KnowledgeAuthority
     required: bool = False
+    provides_context: bool = False
     max_age_seconds: float | None = None
     max_payload_bytes: int | None = None
 
@@ -163,6 +173,7 @@ class KnowledgeSourceSpec:
                     "id",
                     "authority",
                     "required",
+                    "provides_context",
                     "max_age_seconds",
                     "max_payload_bytes",
                 }
@@ -184,8 +195,63 @@ class KnowledgeSourceSpec:
             source_id=_identifier(value.get("id"), path="knowledge_sources[].id"),
             authority=_authority(value.get("authority"), path="knowledge_sources[].authority"),
             required=_boolean(value.get("required", False), path="knowledge_sources[].required"),
+            provides_context=_boolean(
+                value.get("provides_context", False),
+                path="knowledge_sources[].provides_context",
+            ),
             max_age_seconds=max_age,
             max_payload_bytes=raw_payload,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeInjectionConfig:
+    """Bounded policy for constructing learner-side advisory contexts."""
+
+    enabled: bool = False
+    allowed_intents: frozenset[KnowledgeIntent] = field(
+        default_factory=lambda: frozenset(KnowledgeIntent)
+    )
+    max_items: int = 8
+    min_confidence: float = 0.0
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> KnowledgeInjectionConfig:
+        _reject_unknown(
+            value,
+            allowed=frozenset({"enabled", "allowed_intents", "max_items", "min_confidence"}),
+            path="knowledge_injection",
+        )
+        raw_intents = _sequence(
+            value.get("allowed_intents", tuple(intent.value for intent in KnowledgeIntent)),
+            path="knowledge_injection.allowed_intents",
+        )
+        try:
+            allowed_intents = frozenset(KnowledgeIntent(item) for item in raw_intents)
+        except (TypeError, ValueError) as error:
+            choices = ", ".join(intent.value for intent in KnowledgeIntent)
+            raise ValueError(
+                f"knowledge_injection.allowed_intents must contain only: {choices}"
+            ) from error
+        if len(allowed_intents) != len(raw_intents):
+            raise ValueError("knowledge_injection.allowed_intents contains duplicates")
+        if not allowed_intents:
+            raise ValueError("knowledge_injection.allowed_intents cannot be empty")
+
+        max_items = value.get("max_items", 8)
+        if not isinstance(max_items, int) or isinstance(max_items, bool) or max_items <= 0:
+            raise ValueError("knowledge_injection.max_items must be a positive integer")
+        min_confidence = _number(
+            value.get("min_confidence", 0.0),
+            path="knowledge_injection.min_confidence",
+        )
+        if not 0.0 <= min_confidence <= 1.0:
+            raise ValueError("knowledge_injection.min_confidence must be between 0 and 1")
+        return cls(
+            enabled=_boolean(value.get("enabled", False), path="knowledge_injection.enabled"),
+            allowed_intents=allowed_intents,
+            max_items=max_items,
+            min_confidence=min_confidence,
         )
 
 
@@ -273,6 +339,7 @@ class TrainingConfig:
     lifecycle: LifecycleConfig
     bridge: BridgeConfig
     knowledge_sources: tuple[KnowledgeSourceSpec, ...]
+    knowledge_injection: KnowledgeInjectionConfig
     reward: RewardConfig
 
     @classmethod
@@ -280,7 +347,14 @@ class TrainingConfig:
         _reject_unknown(
             value,
             allowed=frozenset(
-                {"schema_version", "lifecycle", "bridge", "knowledge_sources", "reward"}
+                {
+                    "schema_version",
+                    "lifecycle",
+                    "bridge",
+                    "knowledge_sources",
+                    "knowledge_injection",
+                    "reward",
+                }
             ),
             path="training",
         )
@@ -304,6 +378,9 @@ class TrainingConfig:
             ),
             bridge=BridgeConfig.from_mapping(_mapping(value.get("bridge", {}), path="bridge")),
             knowledge_sources=knowledge_sources,
+            knowledge_injection=KnowledgeInjectionConfig.from_mapping(
+                _mapping(value.get("knowledge_injection", {}), path="knowledge_injection")
+            ),
             reward=RewardConfig.from_mapping(_mapping(value.get("reward"), path="reward")),
         )
         config._validate_reward_authority()
@@ -424,6 +501,8 @@ __all__ = [
     "TRAINING_SCHEMA_VERSION",
     "BridgeConfig",
     "KnowledgeAuthority",
+    "KnowledgeInjectionConfig",
+    "KnowledgeIntent",
     "KnowledgeSourceSpec",
     "LifecycleConfig",
     "RewardComposer",
