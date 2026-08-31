@@ -11,9 +11,10 @@ to reuse.
 
 ### Runtime adapter developer
 
-Builds an authorized Unity, Unreal, native, emulator, or official-API adapter.
-Source-integrated engine plugins and binary-only external attachments declare
-separate machine-checkable profiles while sharing one environment contract.
+Builds an authorized Unity, Unreal, native, emulator, loader-plugin, or
+official-API adapter. Source-integrated engine plugins, authorized BepInEx/UE4SS
+loader plugins, and external attachments declare separate machine-checkable
+profiles while sharing one environment contract.
 They need one precise lifecycle and tensor contract, independent of training
 code.
 
@@ -38,6 +39,10 @@ capture, and automated gameplay checks without importing learner internals.
 - Package a versioned cross-language runtime protocol.
 - Offer TorchRL as an optional integration, not a core dependency.
 - Provide version-pinned Git and GitHub Release reuse.
+- Stage authorized loader packages without discovering or mutating game paths.
+- Prevent dense shaping from making a terminal failure profitable.
+- Reject policy self-imitation and unknown provenance from BC datasets by default.
+- Bundle trained models with checksummed reproduction inputs and provenance.
 
 ## Non-goals for v0.1
 

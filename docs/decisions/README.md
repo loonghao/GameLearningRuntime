@@ -9,6 +9,8 @@
 - [ADR-0007: Standardize bridge lifecycle, not game transports](0007-standardize-bridge-lifecycle.md)
 - [ADR-0008: Configure knowledge and rewards as strict data](0008-configure-knowledge-and-rewards-as-data.md)
 - [ADR-0009: Profile engine-plugin and external-attach integrations](0009-profile-engine-plugin-and-external-attach.md)
+- [ADR-0010: Add authorized loader plugins and reproducible model bundles](0010-add-authorized-loader-plugins-and-reproducible-model-bundles.md)
+- [ADR-0011: Enforce episode reward and demonstration safety](0011-enforce-episode-reward-and-demonstration-safety.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

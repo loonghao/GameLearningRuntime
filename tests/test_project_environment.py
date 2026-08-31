@@ -31,6 +31,9 @@ def test_vx_and_just_pin_the_local_and_ci_toolchain() -> None:
     }
     assert 'export UV_PROJECT_ENVIRONMENT := ".venv-glr"' in recipes
     assert "vx uv sync --python 3.12.13 --frozen --all-groups" in recipes
+    assert "--no-install-project" in recipes
+    assert "--no-build-isolation" in recipes
+    assert "vx uv run --no-sync python -m build --no-isolation" in recipes
     for recipe in ("check:", "ci:", "ci-core python_version:", "release-check tag:"):
         assert recipe in recipes
 

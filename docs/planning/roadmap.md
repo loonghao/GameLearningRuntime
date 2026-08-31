@@ -17,16 +17,20 @@ This document describes future work, not current capability.
 - Add freshness-aware knowledge snapshot validation and signed configuration
   bundles after real adapter requirements are measured.
 - Generate versioned Unity/C# and Unreal/C++ engine-plugin SDK templates from
-  `glr.runtime-integration.v1` and `glr.v1`.
+  `glr.runtime-integration.v2` and `glr.v1`.
 - Add an authorized external-attach reference driver with bounded rendered
   observations, input leases, exact target binding, and post-state receipts.
+- Add separately tested BepInEx IL2CPP and UE4SS C++ loader templates after
+  upstream compatibility matrices and live acceptance fixtures exist.
+- Add signed model/dataset attestations and platform metadata without weakening
+  the portable `glr.model-bundle.v1` core.
 
 ## Later
 
 - Optional Unity ML-Agents and Unreal Learning Agents interoperability packages.
 - JAX and RLlib integrations.
 - Reference BC, PPO, IMPALA/V-trace, and DAgger examples outside the core.
-- Evaluation suites, curriculum contracts, reward ablation reports, snapshots,
+- Evaluation suites, curriculum contracts, richer reward ablation reports, snapshots,
   and benchmarks.
 
 Game-specific adapters remain separate packages so their engine/runtime

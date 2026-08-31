@@ -35,8 +35,8 @@ file.
     }
   ],
   "reward": {
-    "minimum": -1,
-    "maximum": 1,
+    "minimum": -20,
+    "maximum": 20,
     "terms": [
       {
         "name": "progress",
@@ -45,6 +45,14 @@ file.
         "minimum": -1,
         "maximum": 1,
         "required": true
+      },
+      {
+        "name": "outcome",
+        "source": "runtime",
+        "weight": 10,
+        "minimum": -1,
+        "maximum": 1,
+        "required": false
       }
     ]
   }
@@ -71,6 +79,13 @@ assert result.contributions == {"progress": 1.0}
 The adapter computes scalar signals in reviewed code. The composer performs
 source matching, required-signal checks, finite-number validation, term
 clipping, weighting, total clipping, and immutable breakdown construction.
+
+Per-term clipping is not an episode invariant: repeated local rewards can still
+make a failed episode profitable. Route composed signals through
+`EpisodeRewardGuard`, configure per-step and per-episode positive shaping
+budgets, and require an authoritative terminal outcome. Gate BC demonstrations
+separately by immutable origin and result. See [Training safety: reward budgets
+and BC provenance](training-safety.md).
 
 ## Authority model
 

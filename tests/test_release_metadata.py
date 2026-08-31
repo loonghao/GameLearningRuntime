@@ -27,6 +27,21 @@ def test_release_please_owns_all_version_surfaces() -> None:
     assert ("toml", "pyproject.toml") in extra_files
     assert ("generic", "README.md") in extra_files
     assert ("generic", "README.zh-CN.md") in extra_files
+    assert ("generic", "uv.lock") in extra_files
+
+
+def test_uv_lock_version_matches_manifest_and_has_release_marker() -> None:
+    manifest = json.loads((ROOT / ".release-please-manifest.json").read_text(encoding="utf-8"))
+    lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
+    pattern = re.compile(
+        r'^name = "game-learning-runtime"\n'
+        r'version = "(?P<version>\d+\.\d+\.\d+)" # x-release-please-version$',
+        re.MULTILINE,
+    )
+
+    match = pattern.search(lock)
+    assert match is not None
+    assert match.group("version") == manifest["."]
 
 
 def test_bilingual_readme_release_pins_match_manifest() -> None:

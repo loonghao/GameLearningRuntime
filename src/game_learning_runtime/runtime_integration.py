@@ -1,4 +1,4 @@
-"""Truthful engine integration profiles for source and binary-only runtimes."""
+"""Truthful engine integration profiles for source, loader, and external runtimes."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from game_learning_runtime.bridge import BridgeDriver, BridgeEnvironment
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.specs import EnvironmentSpec
 
-RUNTIME_INTEGRATION_SCHEMA_VERSION = "glr.runtime-integration.v1"
+RUNTIME_INTEGRATION_SCHEMA_VERSION = "glr.runtime-integration.v2"
+LEGACY_RUNTIME_INTEGRATION_SCHEMA_VERSION = "glr.runtime-integration.v1"
 
 
 class EngineFamily(str, Enum):
@@ -29,7 +30,15 @@ class IntegrationMode(str, Enum):
     """Where the authorized GLR adapter executes relative to the game."""
 
     ENGINE_PLUGIN = "engine-plugin"
+    LOADER_PLUGIN = "loader-plugin"
     EXTERNAL_ATTACH = "external-attach"
+
+
+class LoaderFamily(str, Enum):
+    """Authorized third-party loader hosting an in-process adapter."""
+
+    BEPINEX = "bepinex"
+    UE4SS = "ue4ss"
 
 
 class ClockMode(str, Enum):
@@ -53,6 +62,7 @@ class ActionMode(str, Enum):
 
     NATIVE = "native"
     OFFICIAL_API = "official-api"
+    BOUNDED_COMMAND = "bounded-command"
     BOUNDED_INPUT = "bounded-input"
 
 
@@ -64,7 +74,7 @@ class TransportMode(str, Enum):
     OFFICIAL_API = "official-api"
 
 
-_PROFILE_FIELDS = frozenset(
+_PROFILE_FIELDS_V1 = frozenset(
     {
         "schema_version",
         "engine_family",
@@ -77,6 +87,7 @@ _PROFILE_FIELDS = frozenset(
         "seedable",
     }
 )
+_PROFILE_FIELDS_V2 = _PROFILE_FIELDS_V1 | {"loader_family"}
 
 
 _EnumValue = TypeVar("_EnumValue", bound=Enum)
@@ -98,7 +109,7 @@ class RuntimeIntegrationProfile:
 
     The profile does not describe game semantics, endpoints, processes, or
     credentials. It derives the minimum bridge capabilities needed for a
-    source-integrated engine plugin or a binary-only external attachment.
+    source-integrated engine plugin, authorized loader, or external attachment.
     """
 
     engine_family: EngineFamily
@@ -108,6 +119,7 @@ class RuntimeIntegrationProfile:
     observation_mode: ObservationMode
     action_mode: ActionMode
     transport_mode: TransportMode
+    loader_family: LoaderFamily | None = None
     seedable: bool = False
     schema_version: str = RUNTIME_INTEGRATION_SCHEMA_VERSION
 
@@ -123,10 +135,19 @@ class RuntimeIntegrationProfile:
         for field_name, (value, expected_type) in enum_fields.items():
             if not isinstance(value, expected_type):
                 raise TypeError(f"{field_name} must be a {expected_type.__name__}")
-        if self.schema_version != RUNTIME_INTEGRATION_SCHEMA_VERSION:
+        if self.loader_family is not None and not isinstance(self.loader_family, LoaderFamily):
+            raise TypeError("loader_family must be a LoaderFamily or None")
+        if self.schema_version not in {
+            LEGACY_RUNTIME_INTEGRATION_SCHEMA_VERSION,
+            RUNTIME_INTEGRATION_SCHEMA_VERSION,
+        }:
             raise ValueError(
                 f"unsupported runtime integration schema version: {self.schema_version!r}"
             )
+        if self.schema_version == LEGACY_RUNTIME_INTEGRATION_SCHEMA_VERSION and (
+            self.integration_mode is IntegrationMode.LOADER_PLUGIN or self.loader_family is not None
+        ):
+            raise ValueError("glr.runtime-integration.v1 cannot describe loader plugins")
         if self.start_mode not in {"reset", "attach"}:
             raise ValueError("start_mode must be 'reset' or 'attach'")
         if not isinstance(self.seedable, bool):
@@ -135,6 +156,8 @@ class RuntimeIntegrationProfile:
             raise ValueError("seedable profiles require reset start mode")
 
         if self.integration_mode is IntegrationMode.EXTERNAL_ATTACH:
+            if self.loader_family is not None:
+                raise ValueError("external attach cannot declare a loader family")
             if self.start_mode != "attach":
                 raise ValueError("external attach requires start_mode='attach'")
             if self.clock_mode is not ClockMode.REALTIME:
@@ -145,8 +168,33 @@ class RuntimeIntegrationProfile:
                 raise ValueError("external attach cannot claim native actions")
             if self.transport_mode is TransportMode.IN_PROCESS:
                 raise ValueError("external attach cannot use in-process transport")
+        elif self.integration_mode is IntegrationMode.LOADER_PLUGIN:
+            if self.loader_family is None:
+                raise ValueError("loader plugins require loader_family")
+            if self.start_mode != "attach":
+                raise ValueError("loader plugins require start_mode='attach'")
+            if self.clock_mode is not ClockMode.REALTIME:
+                raise ValueError("loader plugins require realtime clock mode")
+            if self.observation_mode is not ObservationMode.ENGINE_STATE:
+                raise ValueError("loader plugins require semantic engine-state observations")
+            if self.action_mode is not ActionMode.BOUNDED_COMMAND:
+                raise ValueError("loader plugins require bounded-command actions")
+            if self.transport_mode is not TransportMode.LOCAL_IPC:
+                raise ValueError("loader plugins require authenticated local-ipc transport")
+            if (
+                self.loader_family is LoaderFamily.BEPINEX
+                and self.engine_family is not EngineFamily.UNITY
+            ):
+                raise ValueError("BepInEx loader profiles require Unity")
+            if (
+                self.loader_family is LoaderFamily.UE4SS
+                and self.engine_family is not EngineFamily.UNREAL
+            ):
+                raise ValueError("UE4SS loader profiles require Unreal")
         elif self.transport_mode is TransportMode.OFFICIAL_API:
             raise ValueError("engine plugins cannot use official-api transport")
+        elif self.loader_family is not None:
+            raise ValueError("engine plugins cannot declare a loader family")
 
     @classmethod
     def for_source(
@@ -192,6 +240,27 @@ class RuntimeIntegrationProfile:
             seedable=False,
         )
 
+    @classmethod
+    def for_loader(
+        cls,
+        engine_family: EngineFamily,
+        *,
+        loader_family: LoaderFamily,
+    ) -> RuntimeIntegrationProfile:
+        """Create an authorized in-process loader with truthful attach semantics."""
+
+        return cls(
+            engine_family=engine_family,
+            integration_mode=IntegrationMode.LOADER_PLUGIN,
+            loader_family=loader_family,
+            start_mode="attach",
+            clock_mode=ClockMode.REALTIME,
+            observation_mode=ObservationMode.ENGINE_STATE,
+            action_mode=ActionMode.BOUNDED_COMMAND,
+            transport_mode=TransportMode.LOCAL_IPC,
+            seedable=False,
+        )
+
     @property
     def required_capabilities(self) -> frozenset[str]:
         """Derive the bridge claims that must be proven before connection."""
@@ -222,14 +291,20 @@ class RuntimeIntegrationProfile:
             {
                 ActionMode.NATIVE: "native-action",
                 ActionMode.OFFICIAL_API: "official-action",
+                ActionMode.BOUNDED_COMMAND: "bounded-command",
                 ActionMode.BOUNDED_INPUT: "bounded-input",
             }[self.action_mode]
         )
 
-        if self.integration_mode is IntegrationMode.ENGINE_PLUGIN:
+        if self.integration_mode in {
+            IntegrationMode.ENGINE_PLUGIN,
+            IntegrationMode.LOADER_PLUGIN,
+        }:
             capabilities.add("main-thread-dispatch")
         else:
             capabilities.add("target-bound")
+        if self.integration_mode is IntegrationMode.LOADER_PLUGIN:
+            capabilities.update({"loader-plugin", "target-bound"})
         if self.transport_mode in {TransportMode.LOCAL_IPC, TransportMode.OFFICIAL_API}:
             capabilities.update({"authenticated", "target-bound"})
         if self.action_mode is ActionMode.BOUNDED_INPUT:
@@ -262,7 +337,7 @@ class RuntimeIntegrationProfile:
     def to_mapping(self) -> dict[str, object]:
         """Return the stable JSON representation without runtime-local data."""
 
-        return {
+        value: dict[str, object] = {
             "schema_version": self.schema_version,
             "engine_family": self.engine_family.value,
             "integration_mode": self.integration_mode.value,
@@ -273,26 +348,42 @@ class RuntimeIntegrationProfile:
             "transport_mode": self.transport_mode.value,
             "seedable": self.seedable,
         }
+        if self.schema_version == RUNTIME_INTEGRATION_SCHEMA_VERSION:
+            value["loader_family"] = (
+                None if self.loader_family is None else self.loader_family.value
+            )
+        return value
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, object]) -> RuntimeIntegrationProfile:
-        """Parse the strict ``glr.runtime-integration.v1`` data contract."""
+        """Parse a strict v1 or v2 runtime integration data contract."""
 
-        unexpected = sorted(set(value) - _PROFILE_FIELDS)
+        schema_version = value.get("schema_version")
+        if schema_version == LEGACY_RUNTIME_INTEGRATION_SCHEMA_VERSION:
+            fields = _PROFILE_FIELDS_V1
+        elif schema_version == RUNTIME_INTEGRATION_SCHEMA_VERSION:
+            fields = _PROFILE_FIELDS_V2
+        else:
+            raise ValueError(f"unsupported runtime integration schema version: {schema_version!r}")
+        unexpected = sorted(set(value) - fields)
         if unexpected:
             raise ValueError(f"runtime integration has unexpected fields: {unexpected}")
-        missing = sorted(_PROFILE_FIELDS - set(value))
+        missing = sorted(fields - set(value))
         if missing:
             raise ValueError(f"runtime integration is missing fields: {missing}")
         seedable = value["seedable"]
         if not isinstance(seedable, bool):
             raise TypeError("seedable must be a bool")
-        schema_version = value["schema_version"]
         if not isinstance(schema_version, str):
             raise TypeError("schema_version must be a string")
         start_mode = value["start_mode"]
         if start_mode not in {"reset", "attach"}:
             raise ValueError("start_mode must be 'reset' or 'attach'")
+        loader_value = value.get("loader_family")
+        if loader_value is None:
+            loader_family = None
+        else:
+            loader_family = _enum_value(LoaderFamily, loader_value, field_name="loader_family")
         return cls(
             engine_family=_enum_value(
                 EngineFamily, value["engine_family"], field_name="engine_family"
@@ -309,6 +400,7 @@ class RuntimeIntegrationProfile:
             transport_mode=_enum_value(
                 TransportMode, value["transport_mode"], field_name="transport_mode"
             ),
+            loader_family=loader_family,
             seedable=seedable,
             schema_version=schema_version,
         )
@@ -329,11 +421,13 @@ def load_runtime_integration(
 
 
 __all__ = [
+    "LEGACY_RUNTIME_INTEGRATION_SCHEMA_VERSION",
     "RUNTIME_INTEGRATION_SCHEMA_VERSION",
     "ActionMode",
     "ClockMode",
     "EngineFamily",
     "IntegrationMode",
+    "LoaderFamily",
     "ObservationMode",
     "RuntimeIntegrationProfile",
     "TransportMode",

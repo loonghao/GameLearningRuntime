@@ -24,7 +24,8 @@ versioning, and low adoption cost for local vx/uv projects.
 │ SyncCollector │ recorder/replay │ framework adapters         │
 │ optional BC/PPO/GAE/V-trace objective primitives            │
 │ TrainingConfig │ RewardComposer │ knowledge source policy     │
-│ RuntimeIntegrationProfile: engine-plugin │ external-attach      │
+│ RuntimeIntegrationProfile: engine │ loader │ external         │
+│ ModelBundleManifest: inputs │ seeds │ artifacts │ SHA-256       │
 │ privacy-safe adapter conformance runner                      │
 │ BridgeEnvironment (client) │ EnvironmentBridgeDriver (server)│
 ├─────────────────────────────────────────────────────────────┤
@@ -38,8 +39,8 @@ versioning, and low adoption cost for local vx/uv projects.
                             │ Adapter-specific transport
 ┌───────────────────────────▼─────────────────────────────────┐
 │ Authorized runtime adapters                                 │
-│ Engine plugin                    │ External attach             │
-│ Unity/C# │ Unreal/C++            │ official API │ rendered I/O │
+│ Engine plugin       │ Loader plugin         │ External attach │
+│ Unity/C# │ Unreal/C++ │ BepInEx │ UE4SS     │ API │ rendered  │
 └───────────────────────────┬─────────────────────────────────┘
                             ▼
                           Game
@@ -61,9 +62,18 @@ engine's main-thread dispatcher.
 `RuntimeIntegrationProfile` selects a truthful deployment boundary before the
 bridge connects. Source-integrated Unity and Unreal plugins normally prove
 physical reset, controllable time, semantic state, native actions, and
-main-thread dispatch. Binary-only adapters normally prove live attach, exact
-target binding, real-time operation, bounded input ownership, and post-action
-readback. Both profiles reuse the same learner-facing environment contract.
+main-thread dispatch. Authorized loader plugins prove live attach, semantic
+state, bounded commands, loader/version provenance, main-thread dispatch, and
+post-action readback without claiming source-owned reset or clock control.
+External adapters normally prove live attach, exact target binding, real-time
+operation, bounded input ownership, and post-action readback. All profiles
+reuse the same learner-facing environment contract.
+
+`ModelBundleManifest` packages model artifacts with copied training/runtime
+configuration, source and lock inputs, seeds, algorithm/framework versions,
+and per-file SHA-256. It contains portable relative paths only and fails closed
+on linked, missing, resized, or modified entries. It captures a reproduction
+environment without claiming hardware-level determinism or model quality.
 
 Existing Gymnasium environments enter through a deny-by-default compatibility
 adapter. Native Rust is reserved for benchmark-proven protocol, storage, and
@@ -78,6 +88,10 @@ declares named reward contributions. Adapters still own data acquisition and
 game semantics. `RewardComposer` accepts scalar signals from reviewed code,
 validates their declared sources, applies clipping and weights, and returns an
 immutable breakdown without evaluating expressions or importing callbacks.
+`EpisodeRewardGuard` then enforces per-step and per-episode positive shaping
+budgets plus terminal failure dominance. `DemonstrationGate` rejects
+unapproved origin/outcome pairs before BC ingestion. Both policies remain
+learner-neutral JSON inputs and are included in model bundles.
 
 The testing integration composes the same contract wrapper and collector used
 by production code. It returns aggregate counts only; observations, actions,
@@ -96,6 +110,10 @@ environment IDs, metadata, paths, and timestamps never enter its report.
 | Transport loss during action | No implicit retry; driver reports/reconciles outcome | Reconnect/resume protocol ADR |
 | Stale or conflicting guide claim | Advisory only; preserve provenance and verify at runtime | Automated source refresh policy |
 | Missing/wrong reward source | Composer fails closed before returning a reward | Multi-agent/vector reward policy |
+| Dense shaping overwhelms failure | Episode budget plus terminal failed-return ceiling | Game-specific reward ablation |
+| Policy output relabelled as expert | BC provenance/outcome allowlist fails closed | Deliberate distillation policy |
+| Loader mismatch or unknown action | Exact loader tag plus empty-deny vocabulary | Version-specific live acceptance matrix |
+| Model/config drift | Bundle verifier identifies the changed relative entry | Signed model and dataset attestations |
 
 ## Security boundary
 

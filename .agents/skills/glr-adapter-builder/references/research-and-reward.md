@@ -52,6 +52,33 @@ produce.
    signals.
 7. Run ablations for each shaping term and inspect behavior, not just return.
 
+## Enforce episode-level reward safety
+
+Term clipping alone does not prevent hundreds of small positive events from
+overwhelming a loss. Load `reward-safety.json` and route every composed step
+through `EpisodeRewardGuard`:
+
+- declare exactly one authoritative, terminal-only outcome signal;
+- cap positive shaping per step and cumulatively per episode;
+- require the outcome signal on every terminal transition;
+- set a failure episode ceiling so a loss cannot retain a positive return; and
+- log accepted and suppressed shaping plus any terminal correction.
+
+Treat the correction as a guardrail, not a substitute for reward design. Audit
+how often it fires and reduce or remove shaping terms that repeatedly consume
+the budget without improving the terminal objective.
+
+## Gate behavioral-cloning data
+
+Every BC trajectory must carry an immutable origin and authoritative episode
+outcome. Load `demonstration-policy.json` and call `DemonstrationGate.validate`
+before adding it to a dataset. The scaffold defaults to successful human or
+scripted-expert trajectories and rejects policy output, failed episodes, and
+unknown provenance. Weighting is explicit data so outcome/origin weighting can
+be reviewed and reproduced. Policy-generated samples may only enter a separate,
+deliberately configured distillation workflow; never silently relabel them as
+expert demonstrations.
+
 Guide-derived recommendations may seed a `reward-hypothesis`, but they remain
 advisory until runtime evidence validates the underlying signal. Even after
 validation, the guide is provenance for the hypothesis; the runtime is the

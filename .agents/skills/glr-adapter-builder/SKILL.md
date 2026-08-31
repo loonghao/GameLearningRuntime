@@ -51,9 +51,32 @@ vx python .agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py `
   --access external
 ```
 
+For an authorized Unity Mono or Unreal runtime that permits third-party mods,
+read [loader-plugins.md](references/loader-plugins.md) completely, verify one
+compatible upstream release, and create a loader-plugin lane:
+
+```powershell
+vx python .agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py `
+  --output adapters/example_loader `
+  --package example_loader `
+  --environment-id example.loader-v1 `
+  --engine unity `
+  --access loader `
+  --loader bepinex `
+  --loader-version v5.4.23.5
+```
+
+Use `--engine unreal --loader ue4ss --loader-version v3.0.1` for the UE4SS
+template. Release numbers are examples, not universal compatibility claims;
+refresh them from official upstream sources before scaffolding.
+
 The generated environment is an explicitly synthetic, trainable seam. Replace
 its semantics through Red-Green-Refactor while keeping its conformance and
 configuration tests green. Never present the synthetic seam as live acceptance.
+Loader lanes additionally emit an empty-deny action vocabulary, bounded
+main-thread host skeleton, exact upstream deployment manifest, staged-package
+command, and Agent instructions. They never install into a discovered game
+directory.
 
 ## Research gameplay before defining the contract
 
@@ -94,6 +117,13 @@ Use `glr.training.v1` in `training.json`.
   `minimum_authority: advisory`, documented, bounded, and ablated in tests.
 - Use named scalar signals and `RewardComposer`; never use `eval`, expressions,
   imports, or callbacks loaded from configuration.
+- Route composed signals through `EpisodeRewardGuard` using
+  `reward-safety.json`. Bound positive shaping per step and episode, require an
+  authoritative terminal outcome, and make failed-episode return non-positive.
+- Validate every BC sample or trajectory with `DemonstrationGate` and
+  `demonstration-policy.json`. Default-deny policy-generated, failed, and
+  unknown-provenance samples; never train BC on the learner's own output as if
+  it were expert data.
 
 ## Implement the adapter contract
 
@@ -125,6 +155,24 @@ Also run adapter-specific synthetic conformance, stale-request tests, malformed
 payload tests, and a bounded authorized runtime trace when available. Publish
 only aggregate conformance evidence. A headless test does not prove live game
 acceptance.
+
+## Package training evidence for reproduction
+
+Run `vx run train` to exercise the generated deterministic synthetic BC smoke
+test, then `vx run reproduce` to verify its `glr.model-bundle.v1` manifest.
+Replace the smoke trainer with PPO, IMPALA, BC, or another learner outside the
+runtime adapter, while continuing to bundle:
+
+- the exact training and runtime-integration configuration;
+- reward-safety and demonstration-provenance policies;
+- source snapshots and dependency lock files;
+- every learner/environment seed;
+- algorithm and framework versions; and
+- checksummed model artifacts and aggregate metrics.
+
+A verified bundle proves artifact integrity and captures a reproduction
+environment. It does not prove equivalent hardware behavior, a live runtime
+integration, or model quality.
 
 ## Rust decision gate
 

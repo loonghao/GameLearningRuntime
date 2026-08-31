@@ -2,21 +2,21 @@
 
 [简体中文](engine-runtime-integration.zh-CN.md)
 
-GLR uses one environment contract and two truthful deployment profiles. Choose
+GLR uses one environment contract and three truthful deployment profiles. Choose
 the profile from the runtime boundary you are authorized to operate, not from
 the learner you plan to use.
 
 ## Choose the integration lane
 
-| Boundary | Engine plugin | External attach |
-| --- | --- | --- |
-| Typical access | Game source or an official extension SDK | Binary-only game with an authorized external seam |
-| Lifecycle | Physical `reset` or checkpoint restore | Truthful `attach` by default |
-| Clock | Manual step or controlled time scale | Real time |
-| Observation | Semantic engine state; optional rendered sensors | Official telemetry/API first, rendered output second |
-| Action | Native gameplay commands | Official action API or bounded input vocabulary |
-| Target safety | Engine instance and session identity | Exact process/window/session binding on every mutation |
-| Throughput | Headless builds, time scaling, parallel isolated instances | Limited by real-time execution and capture latency |
+| Boundary | Engine plugin | Loader plugin | External attach |
+| --- | --- | --- | --- |
+| Typical access | Game source or official extension SDK | Authorized BepInEx/UE4SS mod | Binary-only authorized external seam |
+| Lifecycle | Physical `reset` or checkpoint restore | Truthful `attach` | Truthful `attach` by default |
+| Clock | Manual step or controlled time scale | Real time | Real time |
+| Observation | Semantic engine state; optional rendered sensors | Reviewed semantic engine state | Official telemetry/API first, rendered output second |
+| Action | Native gameplay commands | Empty-deny bounded command vocabulary | Official action API or bounded input vocabulary |
+| Target safety | Engine instance and session identity | Loader/version, episode, step, game thread | Exact process/window/session binding on every mutation |
+| Throughput | Headless builds, time scaling, parallel instances | Limited by real-time game execution | Limited by real-time execution and capture latency |
 
 Both lanes return the same immutable `EnvironmentSpec` and `TimeStep`, use the
 same episode/step fencing, and work with the same collectors and learners.
@@ -49,6 +49,11 @@ The scaffold emits `runtime-integration.json`, `training.json`, a synthetic
 conformance environment, research manifest, tests, `vx.toml`, and `justfile`.
 Replace only the synthetic game semantics first; retain its failing and passing
 contract tests throughout the adapter implementation.
+
+For authorized BepInEx or UE4SS hosting, use `--access loader` and provide an
+exact `--loader` plus `--loader-version`. See the dedicated [loader-plugin
+guide](loader-plugin-integration.md); loader code is in-process but cannot claim
+source-owned reset, seed, or clock control.
 
 ## Source-integrated engine plugin
 

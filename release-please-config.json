@@ -21,6 +21,10 @@
         {
           "type": "generic",
           "path": "README.zh-CN.md"
+        },
+        {
+          "type": "generic",
+          "path": "uv.lock"
         }
       ]
     }

@@ -10,7 +10,8 @@ origin:
 
 # Install the locked project dependencies into the project-owned environment.
 setup:
-    vx uv sync --python 3.12.13 --frozen --all-groups
+    vx uv sync --python 3.12.13 --frozen --all-groups --no-install-project
+    vx uv sync --python 3.12.13 --frozen --all-groups --no-build-isolation
 
 # Prove that dependency resolution has not drifted.
 lock-check:
@@ -37,7 +38,7 @@ core-check:
 check: setup lock-check workflow-check core-check
 
 build:
-    vx uv build
+    vx uv run --no-sync python -m build --no-isolation
     vx uv run python scripts/check_dist.py
 
 # Local pre-push equivalent of the core CI and package gates.
@@ -47,17 +48,21 @@ ci: check build
 # interpreter can safely replace the baseline Python from vx.toml.
 ci-core python_version:
     vx uv lock --check
-    vx uv run --frozen --all-groups --python {{python_version}} python scripts/run_core_checks.py
+    vx uv sync --python {{python_version}} --frozen --all-groups --no-install-project
+    vx uv sync --python {{python_version}} --frozen --all-groups --no-build-isolation
+    vx uv run --no-sync python scripts/run_core_checks.py
 
 ci-gymnasium:
-    vx uv sync --python 3.12.13 --frozen --all-groups --extra gymnasium
-    vx uv run --extra gymnasium python -m mypy src/game_learning_runtime/integrations/gymnasium.py
-    vx uv run --extra gymnasium python -m pytest tests_optional/test_gymnasium.py
+    vx uv sync --python 3.12.13 --frozen --all-groups --extra gymnasium --no-install-project
+    vx uv sync --python 3.12.13 --frozen --all-groups --extra gymnasium --no-build-isolation
+    vx uv run --no-sync python -m mypy src/game_learning_runtime/integrations/gymnasium.py
+    vx uv run --no-sync python -m pytest tests_optional/test_gymnasium.py
 
 ci-torchrl:
-    vx uv sync --python 3.12.13 --frozen --all-groups --extra torchrl
-    vx uv run --extra torchrl python -m mypy src/game_learning_runtime/integrations/torch_objectives.py src/game_learning_runtime/integrations/torchrl.py
-    vx uv run --extra torchrl python -m pytest tests_optional/test_torch_objectives.py tests_optional/test_torchrl.py
+    vx uv sync --python 3.12.13 --frozen --all-groups --extra torchrl --no-install-project
+    vx uv sync --python 3.12.13 --frozen --all-groups --extra torchrl --no-build-isolation
+    vx uv run --no-sync python -m mypy src/game_learning_runtime/integrations/torch_objectives.py src/game_learning_runtime/integrations/torchrl.py
+    vx uv run --no-sync python -m pytest tests_optional/test_torch_objectives.py tests_optional/test_torchrl.py
 
 ci-package: setup workflow-check build
 

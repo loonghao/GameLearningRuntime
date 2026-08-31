@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["editables>=0.5", "hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -55,7 +55,9 @@ Repository = "https://github.com/loonghao/GameLearningRuntime"
 [dependency-groups]
 dev = [
   "build>=1.2",
+  "editables>=0.5",
   "grpcio-tools>=1.70",
+  "hatchling>=1.27",
   "mypy>=1.15",
   "pytest>=8.3",
   "pytest-cov>=6.0",
