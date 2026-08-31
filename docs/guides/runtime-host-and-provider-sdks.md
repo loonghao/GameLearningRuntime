@@ -1,0 +1,103 @@
+# Runtime Host and provider SDKs
+
+The GLR Runtime Host removes repeated transport and lifecycle code from game
+adapters without pretending that one framework can bootstrap every engine.
+
+```text
+Python learner / collector
+  -> BridgeEnvironment
+  -> HostBridgeDriver
+  -> glr-hostd (Rust: frame + lifecycle + fencing)
+  -> engine provider (C# or C++: semantics + main thread + post-state)
+  -> official plugin / BepInEx / UE4SS / official mod SDK
+  -> authorized runtime
+```
+
+## Run the conformance host
+
+Build and exercise the real subprocess boundary:
+
+```powershell
+vx setup
+vx just rust-check
+vx just host-smoke
+```
+
+Or launch it from Python with an explicit downloaded or locally built binary:
+
+```python
+from pathlib import Path
+
+from game_learning_runtime import (
+    BridgeEnvironment,
+    ContractEnvironment,
+    HostBridgeDriver,
+    HostProcessConfig,
+)
+
+config = HostProcessConfig(executable=Path("C:/tools/glr-hostd.exe"))
+driver = HostBridgeDriver.from_process(config)
+environment = ContractEnvironment(
+    BridgeEnvironment(
+        driver,
+        required_capabilities={"host-stdio", "reset", "step"},
+    )
+)
+```
+
+`HostProcessConfig` rejects a relative or missing executable. It never invokes a
+shell or searches for a game. The current host supports only the
+`synthetic-counter` provider and serialized stdio. This is a real end-to-end
+contract test, not live Unity/Unreal acceptance. A response timeout or malformed
+frame fail-closes that child session; callers must start a fresh host rather
+than risk pairing a late response with another action.
+
+## Implement a Unity provider
+
+Build or download `GameLearningRuntime.Provider`, reference the .NET Standard
+2.0 assembly from the authorized Unity plugin, and implement
+`IRuntimeProvider`. Keep the official Unity or BepInEx plugin as a thin
+bootstrap that:
+
+1. binds the reviewed runtime instance;
+2. dispatches `Reset`, `Attach`, and `Step` on the Unity main thread;
+3. translates semantic state/actions to copied `TensorBuffer` values;
+4. returns authoritative `ProviderTimeStep` post-state; and
+5. releases hooks and owned state in `Dispose`.
+
+The provider must reject physical `Reset` if only live `Attach` is truthful.
+Do not expose arbitrary reflection, method calls, or C# evaluation.
+
+## Implement an Unreal provider
+
+Include `sdk/cpp/include/glr/provider.hpp` in an Unreal runtime module and
+implement `glr::runtime_provider`. The Unreal-facing layer owns Game Thread
+marshalling and UObject lifetime. The contract header has no Unreal dependency,
+so CI can compile it independently before a licensed engine acceptance run.
+
+An authorized UE4SS mod can remain the bootstrap when source is unavailable,
+but the mod policy, exact upstream tag, game version, and game-thread behavior
+still need separate review. GLR does not vendor or silently install UE4SS.
+
+## Training and reproduction
+
+Once a live provider transport is available, the learner still consumes the
+ordinary `GameEnvironment` contract. Use the existing collector, reward safety,
+BC provenance, TorchRL adapter, and model-bundle workflow unchanged. Store the
+Runtime Host version, provider SDK version, runtime-integration profile, reward
+policy, seeds, lock files, model artifacts, and aggregate metrics in the model
+bundle. Never store authentication material or local executable/game paths.
+
+## Current capability boundary
+
+| Capability | Current state |
+| --- | --- |
+| Rust lifecycle/fencing core | Implemented and tested |
+| Bounded stdio client and host | Implemented; serialized, 1 MiB hard bound |
+| Synthetic process smoke | Implemented; aggregate-only evidence |
+| C# Unity/provider contract | Implemented; .NET Standard 2.0 |
+| C++ Unreal/provider contract | Implemented; header-only C++20 |
+| Authenticated target-bound local IPC | Not implemented |
+| Live external C#/C++ provider connection | Not implemented |
+| Shared memory / asynchronous actor queue | Benchmark-gated, not implemented |
+| Universal injection/bootstrap | Intentionally not provided |

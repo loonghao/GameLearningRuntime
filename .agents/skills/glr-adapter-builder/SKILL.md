@@ -142,6 +142,26 @@ For process boundaries, compose `BridgeEnvironment -> BridgeDriver -> transport
 deadlines, framing, bounded payloads, target binding, and queue backpressure.
 GLR owns the environment lifecycle and learner-facing contract.
 
+## Reuse the Runtime Host provider boundary
+
+Read [runtime-host.md](references/runtime-host.md) completely before adding a
+new source, loader, or external runtime bridge. Prefer the shared provider
+vocabulary over inventing another environment envelope:
+
+- Unity/.NET semantic providers implement `IRuntimeProvider` from
+  `sdk/csharp/GameLearningRuntime.Provider`;
+- Unreal/native semantic providers implement `glr::runtime_provider` from
+  `sdk/cpp/include/glr/provider.hpp`;
+- training clients use Python `HostBridgeDriver` behind `BridgeEnvironment`;
+  and
+- engine-specific official/BepInEx/UE4SS code remains a thin reviewed
+  bootstrap and main-thread dispatcher.
+
+The current `glr-hostd` release contains only the synthetic conformance
+provider over bounded stdio. Do not claim that a generated live C#/C++ provider
+is connected, authenticated, or target-bound until the local provider transport
+and a bounded authorized runtime trace prove those capabilities.
+
 ## Validate in increasing-risk order
 
 Read [validation-gates.md](references/validation-gates.md) completely, then run:

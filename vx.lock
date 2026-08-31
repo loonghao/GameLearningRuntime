@@ -4,7 +4,7 @@
 version = 2
 
 [metadata]
-generated_at = "2026-08-31T09:12:16Z"
+generated_at = "2026-08-31T13:39:13Z"
 vx_version = "0.9.31"
 platform = "x86_64-pc-windows-msvc"
 
@@ -22,6 +22,24 @@ linux-arm64 = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/act
 linux-x64 = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz"
 windows-arm64 = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_arm64.zip"
 windows-x64 = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_amd64.zip"
+
+[tools.dotnet]
+version = "10.0.400"
+source = "generic"
+resolved_from = "10.0.400"
+ecosystem = "generic"
+download_url = "https://dotnetcli.azureedge.net/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-win-x64.zip"
+
+[tools.dotnet.platform_urls]
+darwin-arm64 = "https://dotnetcli.azureedge.net/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-osx-arm64.tar.gz"
+darwin-x64 = "https://dotnetcli.azureedge.net/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-osx-x64.tar.gz"
+linux-arm64 = "https://dotnetcli.azureedge.net/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-linux-arm64.tar.gz"
+linux-x64 = "https://dotnetcli.azureedge.net/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-linux-x64.tar.gz"
+windows-arm64 = "https://dotnetcli.azureedge.net/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-win-arm64.zip"
+windows-x64 = "https://dotnetcli.azureedge.net/dotnet/Sdk/10.0.400/dotnet-sdk-10.0.400-win-x64.zip"
+
+[tools.dotnet.metadata]
+lts = "true"
 
 [tools.just]
 version = "1.58.0"
@@ -54,6 +72,20 @@ windows-x64 = "https://github.com/astral-sh/python-build-standalone/releases/dow
 
 [tools.python.metadata]
 lts = "true"
+
+[tools.rust]
+version = "1.29.0"
+source = "provider"
+resolved_from = "1.29.0"
+ecosystem = "generic"
+download_url = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
+
+[tools.rust.platform_urls]
+darwin-arm64 = "https://static.rust-lang.org/rustup/dist/aarch64-apple-darwin/rustup-init"
+darwin-x64 = "https://static.rust-lang.org/rustup/dist/x86_64-apple-darwin/rustup-init"
+linux-arm64 = "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init"
+linux-x64 = "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init"
+windows-x64 = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
 
 [tools.uv]
 version = "0.12.7"

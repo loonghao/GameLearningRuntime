@@ -5,6 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/game-learning-runtime.svg)](https://pypi.org/project/game-learning-runtime/)
 [![CI](https://github.com/loonghao/GameLearningRuntime/actions/workflows/ci.yml/badge.svg)](https://github.com/loonghao/GameLearningRuntime/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.10--3.13-3776AB.svg)](pyproject.toml)
+[![Rust](https://img.shields.io/badge/Rust-1.98.0-000000.svg)](rust-toolchain.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Game Learning Runtime（GLR）是连接游戏运行时与学习系统的学习器中立契约。
@@ -54,6 +55,8 @@ Unity、Unreal、Source、原生程序还是测试模拟器。GLR 标准化的�
 | 环境 | `reset`、真实语义的在线 `attach`、`step`、`close`、终止/截断、episode 与 step 标识 |
 | 数据 | 递归张量规格、混合/参数化动作、掩码、事件、奖励和不可变 transition |
 | 桥接 | 能力协商、reset/step 栅栏、默认拒绝元数据、传输中立的 driver 端口 |
+| Runtime Host | Rust `glr-hostd`、有界 `glr.host.v1` stdio、Python `HostBridgeDriver` 与合成子进程 smoke |
+| Provider SDK | 面向 Unity/BepInEx 的 .NET Standard 2.0 C# 契约，以及面向 Unreal/原生 Provider 的 header-only C++20 契约 |
 | 运行时接入 | 向后兼容的 `glr.runtime-integration.v2`，区分有源码插件、获授权 Loader Plugin 与外部附着 |
 | 训练配置 | 严格的 `glr.training.v1` 知识源、生命周期策略、桥接要求与可审计加权奖励 |
 | 训练安全 | Episode shaping 预算、必需终局结果、失败回报上限与 BC 数据来源门禁 |
@@ -63,7 +66,7 @@ Unity、Unreal、Source、原生程序还是测试模拟器。GLR 标准化的�
 | Agent 工作流 | `glr-adapter-builder` Skill，用于带来源的玩法研究、有界宿主脚手架、部署暂存、训练和验证 |
 | 模型复现 | `glr.model-bundle.v1` 保存配置、源码/锁文件、种子、版本、权重、指标与 SHA-256 溯源 |
 
-具体游戏适配器、具体传输实现、自动生成的 C#/C++/Rust SDK、分布式 actor 传输、
+具体游戏适配器、经过认证且 target-bound 的本地 Provider 传输、分布式 actor 传输、
 生产训练器和参考策略仍属于[路线图](docs/planning/roadmap.md)工作。
 
 ## 快速开始
@@ -145,9 +148,34 @@ vx python .agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py `
 生成的部署命令只暂存带校验和的 payload，不会扫描或修改游戏安装目录。详见
 [Loader Plugin 接入指南](docs/guides/loader-plugin-integration.zh-CN.md)。
 
+## Runtime Host 与引擎 Provider
+
+已实现的 Runtime Host 统一严格帧处理和生命周期 fencing，但不会试图替代引擎启动层：
+
+```text
+TorchRL / PPO / IMPALA / BC
+  -> BridgeEnvironment -> HostBridgeDriver
+  -> glr-hostd（Rust）
+  -> C# Unity Provider / C++ Unreal Provider
+  -> 官方插件、BepInEx、UE4SS 或官方 Mod SDK
+```
+
+执行真实跨进程一致性路径，并编译两套 Provider 契约：
+
+```powershell
+vx just host-smoke
+vx just provider-sdk-check
+```
+
+当前 `glr-hostd` 只发布串行 stdio 的 `synthetic-counter`。它有 1 MiB 硬帧上限，
+不会重试修改动作，但尚未声明认证或 target-bound IPC，也尚不能连接实机外部 C#/C++
+Provider。准确能力边界和 Unity/Unreal 实现路径见
+[Runtime Host 与 Provider SDK 指南](docs/guides/runtime-host-and-provider-sdks.zh-CN.md)。
+
 ## 可复现的本地开发环境
 
-GLR 在 `vx.toml` 中固定 Python、uv 和 just。本地与 GitHub Actions 执行相同 recipes：
+GLR 固定 Python、uv、just、rustup、Rust 与 .NET SDK 输入。本地与 GitHub Actions
+执行相同 recipes：
 
 ```powershell
 vx setup
@@ -282,7 +310,8 @@ jobs:
 
 `main` 上的 Conventional Commits 会创建或更新 Release Please PR。合并经过审阅的
 Release PR 后，工作流会创建 tag 和 GitHub Release，校验并构建 tag 对应源码、附加
-provenance，并通过 Trusted Publishing 把同一份分发包发布到 PyPI。详见
+provenance，通过 Trusted Publishing 发布 Python 包，并附加 Linux、Windows、Intel
+macOS、Apple Silicon 的 Runtime Host 校验和压缩包及 C# Provider 包。详见
 [发布手册](docs/runbooks/release.md)。
 
 ## 文档
@@ -290,6 +319,7 @@ provenance，并通过 Trusted Publishing 把同一份分发包发布到 PyPI。
 - [入门指南](docs/guides/getting-started.md)
 - [构建可复用运行时桥接](docs/guides/runtime-bridges.md)
 - [接入 Unity 与 Unreal 游戏运行时](docs/guides/engine-runtime-integration.zh-CN.md)
+- [使用 Runtime Host 与 C#/C++ Provider SDK](docs/guides/runtime-host-and-provider-sdks.zh-CN.md)
 - [接入获授权的 BepInEx 与 UE4SS Loader](docs/guides/loader-plugin-integration.zh-CN.md)
 - [复现训练模型](docs/guides/reproducible-model-bundles.zh-CN.md)
 - [配置知识源和奖励](docs/guides/knowledge-and-rewards.md)

@@ -4,9 +4,11 @@ description = "Reproducible local and CI toolchain for Game Learning Runtime"
 
 [tools]
 actionlint = "1.7.12"
+dotnet = "10.0.400"
 python = "3.12.13"
 uv = "0.12.7"
 just = "1.58.0"
+rust = "1.29.0"
 
 [env]
 UV_PROJECT_ENVIRONMENT = ".venv-glr"
@@ -20,6 +22,9 @@ typecheck = "vx just typecheck"
 workflow-check = "vx just workflow-check"
 build = "vx just build"
 ci = "vx just ci"
+rust-check = "vx just rust-check"
+provider-sdk-check = "vx just provider-sdk-check"
+host-smoke = "vx just host-smoke"
 
 [settings]
 auto_install = true

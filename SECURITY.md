@@ -18,3 +18,8 @@ report within seven days.
 GLR does not accept features intended to bypass anti-cheat, hide unauthorized
 instrumentation, or access systems without permission.
 
+`glr-hostd` accepts only its compiled provider allowlist and bounded stdio
+envelopes. Reports involving arbitrary provider loading, process discovery,
+frame-bound bypass, stale action execution, or child-process cleanup should be
+treated as security issues. Do not include a real game's memory, binaries,
+account data, or private runtime trace in a report.

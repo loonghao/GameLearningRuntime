@@ -5,6 +5,7 @@ English | [简体中文](README.zh-CN.md)
 [![PyPI](https://img.shields.io/pypi/v/game-learning-runtime.svg)](https://pypi.org/project/game-learning-runtime/)
 [![CI](https://github.com/loonghao/GameLearningRuntime/actions/workflows/ci.yml/badge.svg)](https://github.com/loonghao/GameLearningRuntime/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.10--3.13-3776AB.svg)](pyproject.toml)
+[![Rust](https://img.shields.io/badge/Rust-1.98.0-000000.svg)](rust-toolchain.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Game Learning Runtime (GLR) is a learner-neutral contract between game runtimes
@@ -59,6 +60,8 @@ engine, transport, or algorithm.
 | Environment | `reset`, truthful live `attach`, `step`, `close`, termination, truncation, episode and step identity |
 | Data | Recursive tensor specs, hybrid/parameterized actions, masks, events, rewards, immutable transitions |
 | Bridge | Capability negotiation, reset/step fencing, metadata deny-by-default, transport-neutral driver ports |
+| Runtime Host | Rust `glr-hostd`, bounded `glr.host.v1` stdio, Python `HostBridgeDriver`, synthetic process smoke |
+| Provider SDKs | .NET Standard 2.0 C# contract for Unity/BepInEx and header-only C++20 contract for Unreal/native providers |
 | Runtime integration | Backward-compatible `glr.runtime-integration.v2` profiles for source plugins, authorized loader plugins, and external attachments |
 | Training config | Strict `glr.training.v1` knowledge sources, lifecycle policy, bridge requirements, auditable weighted rewards |
 | Training safety | Episode shaping budgets, mandatory terminal outcomes, failed-return ceilings, and BC provenance gates |
@@ -68,7 +71,7 @@ engine, transport, or algorithm.
 | Agent workflow | `glr-adapter-builder` Skill for provenance-first research, bounded host scaffolding, deployment staging, training, and validation |
 | Model reproduction | `glr.model-bundle.v1` copies config, source/lock inputs, seeds, versions, weights, metrics, and SHA-256 provenance |
 
-Game-specific adapters, concrete transports, generated C#/C++/Rust SDKs,
+Game-specific adapters, authenticated target-bound local provider transport,
 distributed actor transport, production trainers, and reference policies remain
 [roadmap](docs/planning/roadmap.md) work.
 
@@ -159,10 +162,36 @@ The generated deployment command stages a checksummed payload; it never scans
 for or modifies a game installation. See the [loader-plugin integration
 guide](docs/guides/loader-plugin-integration.md).
 
+## Runtime Host and engine providers
+
+The implemented Runtime Host centralizes strict framing and lifecycle fencing
+without trying to replace engine bootstraps:
+
+```text
+TorchRL / PPO / IMPALA / BC
+  -> BridgeEnvironment -> HostBridgeDriver
+  -> glr-hostd (Rust)
+  -> C# Unity provider / C++ Unreal provider
+  -> official plugin, BepInEx, UE4SS, or official mod SDK
+```
+
+Run the real cross-process conformance path and compile both provider contracts:
+
+```powershell
+vx just host-smoke
+vx just provider-sdk-check
+```
+
+`glr-hostd` currently ships only `synthetic-counter` over serialized stdio. It
+has a 1 MiB hard frame bound and never retries a mutating action, but it does
+not yet claim authenticated or target-bound IPC and cannot yet connect a live
+external C#/C++ provider. See the [Runtime Host and provider SDK guide](docs/guides/runtime-host-and-provider-sdks.md)
+for the exact current boundary and Unity/Unreal implementation path.
+
 ## Reproducible local development
 
-GLR pins Python, uv, and just in `vx.toml`. Local development and GLR's GitHub
-Actions execute the same recipes:
+GLR pins Python, uv, just, rustup, Rust, and .NET SDK inputs. Local development
+and GLR's GitHub Actions execute the same recipes:
 
 ```powershell
 vx setup
@@ -311,8 +340,10 @@ deployment secrets and only checks out and tests the calling repository.
 
 Conventional Commits on `main` create or update a Release Please pull request.
 Merging that reviewed PR creates the tag and GitHub Release, verifies and builds
-the tagged source, attaches provenance, and publishes the same distributions to
-PyPI through Trusted Publishing. See the [release
+the tagged source, attaches provenance, publishes the Python distributions to
+PyPI through Trusted Publishing, and attaches checksummed Runtime Host archives
+for Linux, Windows, Intel macOS, and Apple Silicon plus the C# provider package.
+See the [release
 runbook](docs/runbooks/release.md).
 
 ## Documentation
@@ -320,6 +351,7 @@ runbook](docs/runbooks/release.md).
 - [Getting started](docs/guides/getting-started.md)
 - [Build a reusable runtime bridge](docs/guides/runtime-bridges.md)
 - [Connect Unity and Unreal runtimes](docs/guides/engine-runtime-integration.md)
+- [Use the Runtime Host and C#/C++ provider SDKs](docs/guides/runtime-host-and-provider-sdks.md)
 - [Connect authorized BepInEx and UE4SS loaders](docs/guides/loader-plugin-integration.md)
 - [Reproduce trained models](docs/guides/reproducible-model-bundles.md)
 - [Configure knowledge sources and rewards](docs/guides/knowledge-and-rewards.md)

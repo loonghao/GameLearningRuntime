@@ -29,6 +29,12 @@ stays outside through authenticated, target-bound local IPC. The host must:
 5. return authoritative post-state before advancing the GLR step; and
 6. remove hooks and release owned state when closed or reloaded.
 
+Reuse the engine-neutral provider contracts when the selected runtime can load
+them: C# `IRuntimeProvider` for Unity Mono/BepInEx and C++
+`glr::runtime_provider` for a reviewed native Unreal lane. The current
+`glr-hostd` stdio conformance transport is not authenticated or target-bound and
+therefore cannot yet satisfy this loader boundary by itself.
+
 Do not add object dumpers, unrestricted reflection/object search, arbitrary Lua
 or C# evaluation, generic function calls, process scanning, stealth loading,
 anti-cheat bypasses, or credential access. A loader's upstream capabilities do
