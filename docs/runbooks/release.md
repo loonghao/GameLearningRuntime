@@ -1,43 +1,62 @@
 # Release runbook
 
-## Prerequisites
+Game Learning Runtime uses Release Please to turn English Conventional Commits
+on `main` into a reviewed release pull request. Maintainers do not edit the
+version, changelog, or tag by hand.
 
-- Clean `main` at the intended release commit.
-- Green required GitHub Actions checks.
-- Version and changelog updated.
-- `gh` authenticated as a maintainer.
+## Normal release
 
-## Steps
+1. Merge feature and fix pull requests only after all required checks pass.
+2. The `Release` workflow creates or updates a Release Please pull request. Its
+   version, changelog, manifest, package metadata, and README workflow pins must
+   move together.
+3. Review the release pull request like any other change. Verify the proposed
+   semantic version, included commits, generated changelog, and green required
+   checks.
+4. Merge the Release Please pull request. The same workflow creates the
+   immutable tag and GitHub Release, then:
 
-1. Run the complete local development runbook.
-2. Create an annotated semantic-version tag:
+   - checks out the tag rather than mutable `main`;
+   - verifies the tag against `pyproject.toml`;
+   - runs quality checks and core tests;
+   - builds and checks one wheel/sdist pair;
+   - attaches build provenance and the distributions to the GitHub Release;
+   - publishes those same distributions to PyPI through Trusted Publishing.
 
-   ```powershell
-   git tag -a v0.2.0 -m "release: v0.2.0"
-   git push origin v0.2.0
-   ```
+5. Verify the workflow conclusion, tag/commit identity, non-draft GitHub
+   Release, attached assets, PyPI project page, and installation in a clean
+   temporary project.
 
-3. The release workflow verifies the tag against `pyproject.toml`, rebuilds the
-   package, checks distributions, and uploads a short-lived workflow artifact.
-4. Separate least-privilege jobs create the immutable GitHub Release and publish
-   the same workflow artifact to PyPI through trusted publishing. No PyPI API
-   token is stored in GitHub.
-5. Verify the GitHub release assets, PyPI project page, and a PyPI installation
-   in a clean temporary project.
+The release-impacting Conventional Commit types are:
 
-## PyPI trusted publishing
+| Commit | Version impact |
+| --- | --- |
+| `fix: ...` | Patch |
+| `feat: ...` | Minor |
+| `feat!: ...` or a `BREAKING CHANGE:` footer | Minor while the project is pre-1.0 |
+| `docs:`, `test:`, `ci:`, `chore:` | No release by themselves |
+
+## PyPI Trusted Publishing
 
 PyPI trusts `.github/workflows/release.yml` in this repository when its
-`pypi-publish` job runs in the GitHub `pypi` environment. The job receives only
-the `id-token: write` permission and publishes through OIDC.
+`pypi-publish` job runs in the GitHub `pypi` environment. That path and
+environment name are compatibility contracts. The publish job receives only
+`id-token: write`; no PyPI API token is stored in GitHub.
 
-To publish an existing immutable tag whose GitHub Release already exists, run
-the Release workflow manually from `main` and supply the tag. The workflow
-checks out that tag, verifies its version, rebuilds and checks its distributions,
-skips GitHub Release creation, and publishes to PyPI. PyPI rejects attempts to
-overwrite an existing filename or release.
+`PERSONAL_ACCESS_TOKEN` is optional but recommended for the Release Please job.
+GitHub suppresses workflows triggered by pull requests created with the default
+`github.token`; a repository-scoped token lets the generated release pull
+request receive the normal required checks. The publishing jobs never receive
+that token.
 
-## Recovery
+## Recover an existing release
 
-Do not move or overwrite a published tag. Fix code/version, create the next
-patch version, and document the superseded release.
+First rerun failed jobs from the original workflow run. If its artifacts have
+expired, manually run the `Release` workflow from `main` and supply an existing
+immutable tag such as `v0.2.0`. The workflow checks out and verifies that tag,
+rebuilds the distributions, replaces the GitHub Release assets, and attempts
+the same Trusted Publishing path.
+
+Do not use recovery to move a tag, change released source, or overwrite a PyPI
+file. PyPI rejects an existing distribution filename. If released source is
+wrong, fix it on `main` and publish the next patch release.

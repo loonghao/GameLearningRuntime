@@ -36,6 +36,10 @@ uv run --extra gymnasium pytest tests_optional/test_gymnasium.py
 - Add adversarial tests for lifecycle, shapes, dtypes, bounds, masks, and stale
   episode/step identity.
 - Use Conventional Commits in English.
+- Use `fix:` for user-visible corrections, `feat:` for compatible capability
+  additions, and a `!` or `BREAKING CHANGE:` footer for incompatible contracts.
+  Release Please derives versions and changelog entries from this history; do
+  not edit release versions or tags by hand.
 - Deny incidental metadata by default; never commit local paths, hostnames,
   process/window identifiers, credentials, or private runtime data.
 - Do not add game instrumentation unless it is legal, authorized, and isolated
