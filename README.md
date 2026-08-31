@@ -64,7 +64,7 @@ engine, transport, or algorithm.
 | Provider SDKs | .NET Standard 2.0 C# contract for Unity/BepInEx and header-only C++20 contract for Unreal/native providers |
 | Runtime integration | Backward-compatible `glr.runtime-integration.v2` profiles for source plugins, authorized loader plugins, and external attachments |
 | Training config | Strict `glr.training.v1` knowledge sources, lifecycle policy, bridge requirements, auditable weighted rewards |
-| Training safety | Episode shaping budgets, mandatory terminal outcomes, failed-return ceilings, and BC provenance gates |
+| Training safety | Episode shaping budgets, mandatory terminal outcomes, failed-return ceilings, BC provenance gates, and checksummed demonstration artifacts |
 | Collection | Fixed-length or terminal-bounded unrolls for PPO/IMPALA plus `glr.transition.v1` JSONL for BC/offline use |
 | Integrations | Optional Gymnasium, TorchRL 0.13, and model-neutral PyTorch BC/PPO/GAE/V-trace objectives |
 | Validation | Fail-closed contract wrapper and privacy-safe synthetic conformance profiles |

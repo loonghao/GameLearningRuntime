@@ -12,6 +12,7 @@
 - [ADR-0010: Add authorized loader plugins and reproducible model bundles](0010-add-authorized-loader-plugins-and-reproducible-model-bundles.md)
 - [ADR-0011: Enforce episode reward and demonstration safety](0011-enforce-episode-reward-and-demonstration-safety.md)
 - [ADR-0012: Use a Runtime Host and engine provider SDKs](0012-use-a-runtime-host-and-engine-provider-sdks.md)
+- [ADR-0013: Bind demonstration provenance to trajectory bytes](0013-bind-demonstration-provenance-to-trajectory-bytes.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.
