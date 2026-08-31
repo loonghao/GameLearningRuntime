@@ -4,28 +4,21 @@ Thanks for helping make game-learning infrastructure reusable.
 
 ## Development
 
-Prerequisites: Git and [uv](https://docs.astral.sh/uv/).
+Prerequisites: Git and [vx](https://github.com/loonghao/vx). The committed
+`vx.toml` and `vx.lock` select Python, uv, and just for local and CI use.
 
 ```powershell
 git clone https://github.com/loonghao/GameLearningRuntime.git
 cd GameLearningRuntime
-uv sync --frozen --all-groups
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest -m "not torchrl" --cov=game_learning_runtime --cov-report=term-missing
-uv build
-uv run twine check dist/*
+vx setup
+vx just ci
 ```
 
 Optional integration contracts:
 
 ```powershell
-uv sync --frozen --all-groups --extra torchrl
-uv run --extra torchrl mypy src/game_learning_runtime/integrations/torch_objectives.py src/game_learning_runtime/integrations/torchrl.py
-uv run --extra torchrl pytest tests_optional/test_torch_objectives.py tests_optional/test_torchrl.py
-uv sync --frozen --all-groups --extra gymnasium
-uv run --extra gymnasium pytest tests_optional/test_gymnasium.py
+vx just ci-torchrl
+vx just ci-gymnasium
 ```
 
 ## Change contract

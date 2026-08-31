@@ -6,10 +6,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.venv-glr/
 build/
 dist/
 htmlcov/
 .idea/
 .vscode/
 *.log
-

@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from game_learning_runtime import load_training_config
+from game_learning_runtime import (
+    EngineFamily,
+    IntegrationMode,
+    load_runtime_integration,
+    load_training_config,
+)
 from game_learning_runtime.testing import run_environment_conformance
 
 _SKILL = Path(".agents/skills/glr-adapter-builder")
@@ -90,6 +95,58 @@ def test_skill_scaffold_refuses_to_overwrite_nonempty_directory(tmp_path: Path) 
     assert result.returncode != 0
     assert "non-empty" in result.stderr
     assert (output / "owned.txt").read_text(encoding="utf-8") == "preserve"
+
+
+@pytest.mark.parametrize(
+    ("engine", "access", "expected_start", "expected_mode"),
+    [
+        ("unity", "source", "reset", IntegrationMode.ENGINE_PLUGIN),
+        ("unreal", "source", "reset", IntegrationMode.ENGINE_PLUGIN),
+        ("unity", "external", "attach", IntegrationMode.EXTERNAL_ATTACH),
+        ("unreal", "external", "attach", IntegrationMode.EXTERNAL_ATTACH),
+    ],
+)
+def test_skill_scaffold_emits_truthful_engine_integration_profiles(
+    tmp_path: Path,
+    engine: str,
+    access: str,
+    expected_start: str,
+    expected_mode: IntegrationMode,
+) -> None:
+    output = tmp_path / f"{engine}-{access}"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(_SCAFFOLD),
+            "--output",
+            str(output),
+            "--package",
+            f"example_{engine}_{access}",
+            "--environment-id",
+            f"example.{engine}.{access}-v1",
+            "--engine",
+            engine,
+            "--access",
+            access,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    profile = load_runtime_integration(output / "runtime-integration.json")
+    config = load_training_config(output / "training.json")
+    assert profile.engine_family is EngineFamily(engine)
+    assert profile.integration_mode is expected_mode
+    assert profile.start_mode == expected_start
+    assert config.lifecycle.start_mode == expected_start
+    assert profile.required_capabilities == config.bridge.required_capabilities
+    justfile = (output / "justfile").read_text(encoding="utf-8")
+    readme = (output / "README.md").read_text(encoding="utf-8")
+    assert "vx uv sync --python 3.12.13 --all-groups" in justfile
+    assert "vx uv lock --check" in justfile
+    assert "vx run check" in readme
 
 
 def test_research_validator_rejects_local_or_credentialed_sources(tmp_path: Path) -> None:

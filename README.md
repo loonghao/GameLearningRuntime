@@ -59,6 +59,7 @@ engine, transport, or algorithm.
 | Environment | `reset`, truthful live `attach`, `step`, `close`, termination, truncation, episode and step identity |
 | Data | Recursive tensor specs, hybrid/parameterized actions, masks, events, rewards, immutable transitions |
 | Bridge | Capability negotiation, reset/step fencing, metadata deny-by-default, transport-neutral driver ports |
+| Runtime integration | Strict `glr.runtime-integration.v1` profiles for source engine plugins and binary-only external attachments |
 | Training config | Strict `glr.training.v1` knowledge sources, lifecycle policy, bridge requirements, auditable weighted rewards |
 | Collection | Fixed-length or terminal-bounded unrolls for PPO/IMPALA plus `glr.transition.v1` JSONL for BC/offline use |
 | Integrations | Optional Gymnasium, TorchRL 0.13, and model-neutral PyTorch BC/PPO/GAE/V-trace objectives |
@@ -110,6 +111,41 @@ unroll = collector.collect(policy, steps=128, stop_on_done=True)
 Attach starts a fresh logical GLR episode at step zero. It never claims that the
 physical game world was reset or seeded.
 
+## Unity and Unreal integration lanes
+
+GLR keeps one learner-facing contract while making the runtime boundary
+explicit:
+
+- **Source or official extension SDK:** run an engine plugin with semantic
+  state, native actions, main-thread dispatch, controllable time, and a truthful
+  physical reset.
+- **Authorized binary-only runtime:** attach externally through an official API,
+  telemetry, replay, or bounded rendered observation/input seam. It defaults to
+  real-time `attach`, exact target binding, input lease cleanup, and verified
+  post-state.
+
+```python
+from game_learning_runtime import EngineFamily, RuntimeIntegrationProfile
+
+profile = RuntimeIntegrationProfile.for_source(EngineFamily.UNITY)
+environment = profile.connect(authorized_driver)
+```
+
+Generate a Unity or Unreal adapter lane with the repository-owned Skill, then
+replace its synthetic semantics while keeping the contract tests green. See the
+[engine runtime integration guide](docs/guides/engine-runtime-integration.md).
+
+## Reproducible local development
+
+GLR pins Python, uv, and just in `vx.toml`. Local development and GLR's GitHub
+Actions execute the same recipes:
+
+```powershell
+vx setup
+vx just check
+vx just ci
+```
+
 ## Knowledge and rewards as data
 
 ```python
@@ -141,6 +177,43 @@ workflow for:
 
 The Skill never turns web strategy into runtime authority and never treats a
 synthetic test as live-game acceptance.
+
+### Give the Skill to your agent
+
+The fastest path is to clone this repository and start Codex from its root.
+Codex discovers repository skills under `.agents/skills` automatically. Invoke
+the workflow explicitly in your prompt:
+
+```text
+$glr-adapter-builder Create an authorized Unity adapter with source access. Scaffold a trainable environment, research manifest, reward configuration, and contract tests.
+```
+
+For an authorized binary-only runtime, say `external access` instead of `source
+access`. The Skill chooses truthful `attach` semantics and refuses source-only
+capability claims.
+
+To use the Skill from another repository, ask Codex's built-in installer to
+install it from GitHub:
+
+```text
+$skill-installer install https://github.com/loonghao/GameLearningRuntime/tree/main/.agents/skills/glr-adapter-builder
+```
+
+Start a new agent turn after installation, then invoke
+`$glr-adapter-builder`. Pin the GitHub URL to a release tag or commit SHA when
+you need a reproducible team setup. Agents that implement the open Agent Skills
+standard can instead place the same `glr-adapter-builder` directory under the
+target repository's `.agents/skills/` directory. See the [official Codex Skills
+documentation](https://developers.openai.com/codex/skills).
+
+The generated lane includes the environment skeleton, `training.json`,
+`runtime-integration.json`, a provenance-aware research manifest, tests,
+`vx.toml`, and a `justfile`. From that generated directory, run:
+
+```powershell
+vx setup
+vx run check
+```
 
 ## TorchRL and custom learners
 
@@ -202,6 +275,7 @@ runbook](docs/runbooks/release.md).
 
 - [Getting started](docs/guides/getting-started.md)
 - [Build a reusable runtime bridge](docs/guides/runtime-bridges.md)
+- [Connect Unity and Unreal runtimes](docs/guides/engine-runtime-integration.md)
 - [Configure knowledge sources and rewards](docs/guides/knowledge-and-rewards.md)
 - [Validate an adapter](docs/guides/adapter-conformance.md)
 - [Adapt an existing Gymnasium environment](docs/guides/adapting-gymnasium.md)

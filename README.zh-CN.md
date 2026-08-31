@@ -54,6 +54,7 @@ Unity、Unreal、Source、原生程序还是测试模拟器。GLR 标准化的�
 | 环境 | `reset`、真实语义的在线 `attach`、`step`、`close`、终止/截断、episode 与 step 标识 |
 | 数据 | 递归张量规格、混合/参数化动作、掩码、事件、奖励和不可变 transition |
 | 桥接 | 能力协商、reset/step 栅栏、默认拒绝元数据、传输中立的 driver 端口 |
+| 运行时接入 | 严格的 `glr.runtime-integration.v1`，区分有源码引擎插件与无源码外部附着 |
 | 训练配置 | 严格的 `glr.training.v1` 知识源、生命周期策略、桥接要求与可审计加权奖励 |
 | 采集 | 面向 PPO/IMPALA 的定长或终止边界 unroll，以及面向 BC/离线训练的 `glr.transition.v1` JSONL |
 | 集成 | 可选 Gymnasium、TorchRL 0.13 与模型中立的 PyTorch BC/PPO/GAE/V-trace objective |
@@ -103,6 +104,35 @@ unroll = collector.collect(policy, steps=128, stop_on_done=True)
 Attach 会从 step 0 开始一个新的 GLR 逻辑 episode，但绝不声称物理游戏世界已被重置
 或设置了随机种子。
 
+## Unity 与 Unreal 两条接入路径
+
+GLR 只保留一套学习器侧契约，但会显式声明运行时边界：
+
+- **有源码或官方扩展 SDK：** 使用引擎插件提供语义状态、原生动作、主线程调度、
+  可控时钟和真实物理 reset。
+- **已获授权的无源码运行时：** 通过官方 API、遥测、Replay，或受限的渲染观察与
+  输入接口从外部 attach。默认要求实时运行、精确目标绑定、输入租约清理和后状态验证。
+
+```python
+from game_learning_runtime import EngineFamily, RuntimeIntegrationProfile
+
+profile = RuntimeIntegrationProfile.for_source(EngineFamily.UNITY)
+environment = profile.connect(authorized_driver)
+```
+
+可以使用仓库 Skill 生成 Unity 或 Unreal Adapter 路径，再在保持契约测试通过的前提下
+替换其中的合成语义。详见[引擎运行时接入指南](docs/guides/engine-runtime-integration.zh-CN.md)。
+
+## 可复现的本地开发环境
+
+GLR 在 `vx.toml` 中固定 Python、uv 和 just。本地与 GitHub Actions 执行相同 recipes：
+
+```powershell
+vx setup
+vx just check
+vx just ci
+```
+
 ## 将知识库与奖励定义为数据
 
 ```python
@@ -131,6 +161,37 @@ Skill](.agents/skills/glr-adapter-builder/SKILL.md) 为新 Agent 提供边界明
 6. 完成 conformance 验证后，再执行小范围、已授权的真实运行时 trace。
 
 该 Skill 不会把网页策略升级为运行时权威，也不会把合成测试描述成真实游戏验收。
+
+### 把 Skill 交给你的 Agent
+
+最快的方式是克隆本仓库，并从仓库根目录启动 Codex。Codex 会自动发现
+`.agents/skills` 下的仓库级 Skill。然后在提示词里显式调用：
+
+```text
+$glr-adapter-builder 为一个已获授权、拥有源码的 Unity 项目创建适配器。生成可训练环境、玩法研究清单、奖励配置和契约测试。
+```
+
+如果只有已获授权的二进制运行时，把提示词中的“拥有源码”改为“无源码外部接入”。
+Skill 会选择真实语义的 `attach`，并拒绝声明只有源码接入才能证明的能力。
+
+如果希望在其他仓库使用，可以让 Codex 内置的安装器从 GitHub 安装：
+
+```text
+$skill-installer install https://github.com/loonghao/GameLearningRuntime/tree/main/.agents/skills/glr-adapter-builder
+```
+
+安装完成后，在新的 Agent turn 中调用 `$glr-adapter-builder`。团队需要可复现安装时，
+请把 GitHub URL 中的 `main` 固定为 release tag 或 commit SHA。其他兼容开放 Agent
+Skills 标准的 Agent，也可以把同一个 `glr-adapter-builder` 目录放进目标仓库的
+`.agents/skills/`。参见 [Codex Skills 官方文档](https://developers.openai.com/codex/skills)。
+
+生成结果包括环境骨架、`training.json`、`runtime-integration.json`、带来源的研究清单、
+测试、`vx.toml` 和 `justfile`。进入生成目录后运行：
+
+```powershell
+vx setup
+vx run check
+```
 
 ## TorchRL 与自定义学习器
 
@@ -190,6 +251,7 @@ provenance，并通过 Trusted Publishing 把同一份分发包发布到 PyPI。
 
 - [入门指南](docs/guides/getting-started.md)
 - [构建可复用运行时桥接](docs/guides/runtime-bridges.md)
+- [接入 Unity 与 Unreal 游戏运行时](docs/guides/engine-runtime-integration.zh-CN.md)
 - [配置知识源和奖励](docs/guides/knowledge-and-rewards.md)
 - [验证适配器](docs/guides/adapter-conformance.md)
 - [适配现有 Gymnasium 环境](docs/guides/adapting-gymnasium.md)
