@@ -4,16 +4,16 @@ import json
 import re
 from pathlib import Path
 
-import tomllib
-
 ROOT = Path(__file__).parents[1]
 
 
 def test_release_metadata_tracks_package_version() -> None:
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / ".release-please-manifest.json").read_text(encoding="utf-8"))
+    version = re.search(r'^version = "(?P<version>\d+\.\d+\.\d+)"$', pyproject, re.MULTILINE)
 
-    assert manifest["."] == pyproject["project"]["version"]
+    assert version is not None
+    assert manifest["."] == version.group("version")
 
 
 def test_release_please_owns_all_version_surfaces() -> None:
