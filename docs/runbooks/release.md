@@ -34,7 +34,8 @@ The release-impacting Conventional Commit types are:
 | `fix: ...` | Patch |
 | `feat: ...` | Minor |
 | `feat!: ...` or a `BREAKING CHANGE:` footer | Minor while the project is pre-1.0 |
-| `docs:`, `test:`, `ci:`, `chore:` | No release by themselves |
+| `docs: ...` | Patch, so user-facing documentation is versioned with the package |
+| `test:`, `ci:`, `chore:` | No release by themselves |
 
 ## PyPI Trusted Publishing
 
