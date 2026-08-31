@@ -30,10 +30,17 @@ file.
       "id": "guide-research",
       "authority": "advisory",
       "required": false,
+      "provides_context": true,
       "max_age_seconds": 604800,
       "max_payload_bytes": 16384
     }
   ],
+  "knowledge_injection": {
+    "enabled": true,
+    "allowed_intents": ["acquire", "engage", "upgrade", "avoid"],
+    "max_items": 8,
+    "min_confidence": 0.5
+  },
   "reward": {
     "minimum": -20,
     "maximum": 20,
@@ -98,6 +105,74 @@ Reward terms require `authoritative` by default. To experiment with an advisory
 shaping term, set `minimum_authority` to `advisory` on that term, keep its
 weight and clip bounded, document the reason, and run an ablation. Advisory
 knowledge never expands the action mask or acknowledges an action.
+
+## Inject a knowledge context into training
+
+Store compact, project-produced snapshots separately from `training.json`:
+
+```json
+{
+  "schema_version": "glr.knowledge-snapshot.v1",
+  "snapshot_id": "strategy-build-42",
+  "source_id": "guide-research",
+  "created_at": "2026-09-01T00:00:00Z",
+  "items": [
+    {
+      "id": "upgrade-core",
+      "intent": "upgrade",
+      "subject": "core-module",
+      "summary": "Prioritize the core module after stage two.",
+      "tags": ["economy", "ranged"],
+      "priority": 90,
+      "confidence": 0.9,
+      "min_stage": 2
+    }
+  ]
+}
+```
+
+The four intents answer the common decisions directly: `acquire` (what to
+take), `engage` (what to fight), `upgrade` (what to improve), and `avoid`
+(what not to interact with yet).
+
+```python
+from datetime import datetime, timezone
+from pathlib import Path
+
+from game_learning_runtime import (
+    KnowledgeInjector,
+    KnowledgeIntent,
+    KnowledgeQuery,
+    load_training_config,
+)
+
+config = load_training_config("training.json")
+context = KnowledgeInjector(config).inject(
+    [Path("knowledge/strategy-snapshot.json").read_bytes()],
+    KnowledgeQuery(
+        intents=frozenset({KnowledgeIntent.ACQUIRE, KnowledgeIntent.UPGRADE}),
+        stage=3,
+        tags=frozenset({"ranged"}),
+    ),
+    observed_at=datetime.now(timezone.utc),
+)
+
+# The learner owns deterministic tokenization/encoding and concatenates the
+# encoded context with its observation or supplies it through a separate head.
+model_input = encode_observation(observation), encode_knowledge(context)
+```
+
+`KnowledgeInjector` rejects undeclared or non-context sources, stale/future or
+oversized snapshots, malformed fields, duplicate source snapshots, and absent
+required context sources. It filters by stage, tags, intent, confidence, and
+the configured item budget, then binds the result to the exact payload digest.
+Preserve the snapshot files, `training.json`, query construction version, and
+learner encoder in the model bundle.
+
+Snapshot text is untrusted advisory data. Do not execute it, treat it as a
+prompt with tool authority, use it to widen masks, or use it as proof that an
+action or upgrade succeeded. Runtime observation still decides what is
+available; the learner decides whether a recommendation is useful.
 
 ## Gameplay research for new adapters
 

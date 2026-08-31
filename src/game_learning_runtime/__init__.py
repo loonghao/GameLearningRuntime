@@ -34,6 +34,14 @@ from game_learning_runtime.host import (
     HostProcessConfig,
     JsonLineHostChannel,
 )
+from game_learning_runtime.knowledge import (
+    KNOWLEDGE_SNAPSHOT_SCHEMA_VERSION,
+    KnowledgeContext,
+    KnowledgeInjector,
+    KnowledgeItem,
+    KnowledgeQuery,
+    KnowledgeSnapshot,
+)
 from game_learning_runtime.model_bundle import (
     MODEL_BUNDLE_SCHEMA_VERSION,
     BundleFile,
@@ -66,6 +74,8 @@ from game_learning_runtime.training import (
     TRAINING_SCHEMA_VERSION,
     BridgeConfig,
     KnowledgeAuthority,
+    KnowledgeInjectionConfig,
+    KnowledgeIntent,
     KnowledgeSourceSpec,
     LifecycleConfig,
     RewardComposer,
@@ -100,6 +110,7 @@ except PackageNotFoundError:  # pragma: no cover - source tree without installat
 __all__ = [
     "DEMONSTRATION_ARTIFACT_SCHEMA_VERSION",
     "DEMONSTRATION_POLICY_SCHEMA_VERSION",
+    "KNOWLEDGE_SNAPSHOT_SCHEMA_VERSION",
     "MODEL_BUNDLE_SCHEMA_VERSION",
     "REWARD_SAFETY_SCHEMA_VERSION",
     "RUNTIME_INTEGRATION_SCHEMA_VERSION",
@@ -140,6 +151,13 @@ __all__ = [
     "JsonLineHostChannel",
     "JsonlTransitionWriter",
     "KnowledgeAuthority",
+    "KnowledgeContext",
+    "KnowledgeInjectionConfig",
+    "KnowledgeInjector",
+    "KnowledgeIntent",
+    "KnowledgeItem",
+    "KnowledgeQuery",
+    "KnowledgeSnapshot",
     "KnowledgeSourceSpec",
     "LifecycleConfig",
     "LoaderFamily",

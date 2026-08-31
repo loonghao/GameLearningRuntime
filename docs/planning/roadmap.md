@@ -16,8 +16,8 @@ This document describes future work, not current capability.
 - Add a columnar/checksummed dataset container and deterministic replay.
 - Define partial reset and multi-agent identity semantics.
 - Add structured Gymnasium action-mask conformance fixtures.
-- Add freshness-aware knowledge snapshot validation and signed configuration
-  bundles after real adapter requirements are measured.
+- Add signed configuration bundles around the implemented freshness-aware
+  knowledge snapshot validation after real adapter requirements are measured.
 - Add Unity and Unreal engine-plugin templates around the implemented
   engine-neutral C# and C++ provider contracts.
 - Add an authorized external-attach reference driver with bounded rendered
