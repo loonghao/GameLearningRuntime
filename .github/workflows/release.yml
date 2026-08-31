@@ -14,8 +14,7 @@ concurrency:
   group: release-main
   cancel-in-progress: false
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   release-please:
@@ -48,32 +47,118 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.publish_requested == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ needs.release-please.outputs.tag_name }}
       - name: Install the pinned vx toolchain
         uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
-          tools: "uv just"
+          tools: "uv just rust dotnet"
           cache: "true"
+      - name: Install the pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
       - name: Verify, test, and build the immutable tag
         run: vx just release-check "${{ needs.release-please.outputs.tag_name }}"
-      - name: Upload distributions
+      - name: Resolve the immutable package version
+        id: package-version
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Pack the C# provider contract
+        run: >-
+          vx dotnet pack
+          sdk/csharp/GameLearningRuntime.Provider/GameLearningRuntime.Provider.csproj
+          --configuration Release
+          --output dist-sdk
+          -p:PackageVersion=${{ steps.package-version.outputs.version }}
+      - name: Upload Python distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-distributions
           path: dist/
           if-no-files-found: error
           retention-days: 7
+      - name: Upload the C# provider SDK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: csharp-provider-sdk
+          path: dist-sdk/
+          if-no-files-found: error
+          retention-days: 7
+
+  host-binaries:
+    name: Build host / ${{ matrix.target }}
+    needs: release-please
+    if: needs.release-please.outputs.publish_requested == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: target/x86_64-unknown-linux-gnu/release/glr-hostd
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: target/x86_64-pc-windows-msvc/release/glr-hostd.exe
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: target/x86_64-apple-darwin/release/glr-hostd
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            binary: target/aarch64-apple-darwin/release/glr-hostd
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - name: Install the pinned vx toolchain
+        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
+        with:
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "uv just rust dotnet"
+          cache: "true"
+      - name: Resolve the immutable package version
+        id: package-version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Build the native Runtime Host
+        run: >-
+          vx cargo build --package glr-host --bin glr-hostd
+          --release --locked --target "${{ matrix.target }}"
+      - name: Package the bounded conformance host
+        run: >-
+          vx python scripts/package_host.py
+          --binary "${{ matrix.binary }}"
+          --target "${{ matrix.target }}"
+          --version "${{ steps.package-version.outputs.version }}"
+      - name: Upload the Runtime Host archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: host-${{ matrix.target }}
+          path: .glr-release/*.zip
+          if-no-files-found: error
+          retention-days: 7
 
   github-release:
     name: Attach GitHub Release assets
-    needs: [release-please, build]
+    needs: [release-please, build, host-binaries]
     if: needs.release-please.outputs.publish_requested == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -82,20 +167,36 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Download distributions
+      - name: Download Python distributions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: python-distributions
-          path: dist/
-      - name: Attest distributions
+          path: release-assets/
+      - name: Download the C# provider SDK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: csharp-provider-sdk
+          path: release-assets/
+      - name: Download Runtime Host archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: host-*
+          path: release-assets/
+          merge-multiple: true
+      - name: Attest release assets
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: "dist/*"
+          subject-path: "release-assets/*"
+      - name: Write deterministic checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS
       - name: Attach assets to the immutable release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/* --clobber --repo "${{ github.repository }}"
+        run: >-
+          gh release upload "$RELEASE_TAG" release-assets/*
+          --clobber --repo "${{ github.repository }}"
 
   pypi-publish:
     name: Publish distributions to PyPI

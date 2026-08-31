@@ -25,9 +25,11 @@ def test_release_please_owns_all_version_surfaces() -> None:
     assert package["package-name"] == "game-learning-runtime"
     assert package["changelog-path"] == "CHANGELOG.md"
     assert ("toml", "pyproject.toml") in extra_files
+    assert ("toml", "Cargo.toml") in extra_files
     assert ("generic", "README.md") in extra_files
     assert ("generic", "README.zh-CN.md") in extra_files
     assert ("generic", "uv.lock") in extra_files
+    assert ("generic", "Cargo.lock") in extra_files
 
 
 def test_uv_lock_version_matches_manifest_and_has_release_marker() -> None:
@@ -42,6 +44,26 @@ def test_uv_lock_version_matches_manifest_and_has_release_marker() -> None:
     match = pattern.search(lock)
     assert match is not None
     assert match.group("version") == manifest["."]
+
+
+def test_rust_workspace_and_lock_versions_match_manifest() -> None:
+    manifest = json.loads((ROOT / ".release-please-manifest.json").read_text(encoding="utf-8"))
+    workspace = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+    lock = (ROOT / "Cargo.lock").read_text(encoding="utf-8")
+    workspace_match = re.search(
+        r'^version = "(?P<version>\d+\.\d+\.\d+)"$', workspace, re.MULTILINE
+    )
+    lock_match = re.search(
+        r'^name = "glr-host"\n'
+        r'version = "(?P<version>\d+\.\d+\.\d+)" # x-release-please-version$',
+        lock,
+        re.MULTILINE,
+    )
+
+    assert workspace_match is not None
+    assert lock_match is not None
+    assert workspace_match.group("version") == manifest["."]
+    assert lock_match.group("version") == manifest["."]
 
 
 def test_bilingual_readme_release_pins_match_manifest() -> None:

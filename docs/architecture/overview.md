@@ -34,7 +34,10 @@ versioning, and low adoption cost for local vx/uv projects.
 │ ContractEnvironment (fail-closed lifecycle validation)       │
 ├─────────────────────────────────────────────────────────────┤
 │ Protocol                                                     │
-│ glr.v1 Protobuf: Describe │ Reset │ Step │ Interact stream  │
+│ glr.v1 environment │ glr.host.v1 bounded host envelope       │
+├─────────────────────────────────────────────────────────────┤
+│ Runtime Host and provider SDKs                               │
+│ Rust hostd │ Python driver │ Unity C# │ Unreal C++           │
 └───────────────────────────┬─────────────────────────────────┘
                             │ Adapter-specific transport
 ┌───────────────────────────▼─────────────────────────────────┐
@@ -59,6 +62,16 @@ and denies metadata by default. The server serializes requests and reuses
 runtime binding, deadlines, bounded frames/queues, error mapping, and the
 engine's main-thread dispatcher.
 
+The first concrete Runtime Host composes that client boundary as
+`BridgeEnvironment -> HostBridgeDriver -> glr-hostd`. Rust owns strict
+`glr.host.v1` JSON-lines framing, a 1 MiB hard bound, serialized lifecycle, and
+episode/step fencing. The built-in `synthetic-counter` provider proves the
+cross-process training seam. C# .NET Standard 2.0 and header-only C++20
+contracts define the engine-provider vocabulary without importing Unity,
+Unreal, BepInEx, or UE4SS into core. The first stdio transport truthfully omits
+`authenticated` and `target-bound`; live engine-provider IPC is still future
+work.
+
 `RuntimeIntegrationProfile` selects a truthful deployment boundary before the
 bridge connects. Source-integrated Unity and Unreal plugins normally prove
 physical reset, controllable time, semantic state, native actions, and
@@ -76,9 +89,10 @@ on linked, missing, resized, or modified entries. It captures a reproduction
 environment without claiming hardware-level determinism or model quality.
 
 Existing Gymnasium environments enter through a deny-by-default compatibility
-adapter. Native Rust is reserved for benchmark-proven protocol, storage, and
-actor data-plane work; it does not create a second learner or game-semantics
-layer. Optional PyTorch objectives consume learner-side tensors but contain no
+adapter. Native Rust now owns the bounded Runtime Host lifecycle/framing slice
+and remains reserved for benchmark-proven storage and actor data-plane work; it
+does not create a second learner or game-semantics layer. Optional PyTorch
+objectives consume learner-side tensors but contain no
 model, optimizer, collector, reward shaping, or game-specific state.
 
 `TrainingConfig` is a versioned data-only policy, not a dependency-injection
@@ -114,6 +128,8 @@ environment IDs, metadata, paths, and timestamps never enter its report.
 | Policy output relabelled as expert | BC provenance/outcome allowlist fails closed | Deliberate distillation policy |
 | Loader mismatch or unknown action | Exact loader tag plus empty-deny vocabulary | Version-specific live acceptance matrix |
 | Model/config drift | Bundle verifier identifies the changed relative entry | Signed model and dataset attestations |
+| Oversized/stale Host request | Reject before provider execution; never retry mutation | Authenticated target-bound local IPC |
+| Host/provider SDK schema drift | Rust, Python, C#, and C++ contract gates | Generated SDK codecs after schema stabilizes |
 
 ## Security boundary
 
@@ -125,3 +141,7 @@ authorization are deferred until a threat model and dedicated ADR exist.
 Public gameplay research contains paraphrased claims and public URLs only. It
 cannot grant runtime authority, disclose local connection details, or replace
 post-action verification.
+
+`glr-hostd` does not discover or inject into processes, accept arbitrary
+provider library paths, listen on a network, or select a game installation. Its
+published binaries currently contain only the synthetic conformance provider.

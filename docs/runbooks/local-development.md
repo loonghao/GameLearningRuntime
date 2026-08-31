@@ -5,8 +5,9 @@
 - Git
 - [vx](https://github.com/loonghao/vx)
 
-`vx.toml` and `vx.lock` pin the baseline Python, uv, and just versions. The
-GitHub Actions jobs use the same just recipes as local development.
+`vx.toml` and `vx.lock` pin the baseline Python, uv, just, and rustup versions.
+`rust-toolchain.toml` pins Rust 1.98.0 and `global.json` pins .NET SDK 10.0.400.
+The GitHub Actions jobs use the same just recipes as local development.
 
 ## Steps
 
@@ -21,6 +22,14 @@ For the optional integration:
 ```powershell
 vx just ci-torchrl
 vx just ci-gymnasium
+```
+
+Validate the cross-language Runtime Host and provider boundary directly:
+
+```powershell
+vx just rust-check
+vx just provider-sdk-check
+vx just host-smoke
 ```
 
 Run the complete local pre-push surface with `vx just ci`. CI selects Python
@@ -45,3 +54,5 @@ vx just origin
 | Torch wheel is large | Run the core suite without the `torchrl` extra; use the dedicated integration job for TorchRL |
 | Contract violation | Compare the failing path, dtype, shape, and declared bounds; do not cast silently |
 | Protocol test fails | Compile the packaged `runtime.proto`; do not test an unshipped duplicate |
+| Runtime Host smoke times out | Run `vx cargo build --locked`, confirm the explicit host binary starts, and inspect only local stderr; never retry a mutating request |
+| C++ provider check cannot find a compiler | Install a C++20 compiler; Windows uses the latest Visual Studio VC tools selected by `vswhere` |

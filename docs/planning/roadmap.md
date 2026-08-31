@@ -4,20 +4,22 @@ This document describes future work, not current capability.
 
 ## Next
 
-- Generate versioned Python, C#, C++, and Rust clients from `glr.v1`.
+- Generate codecs from `glr.v1`/`glr.host.v1` after the implemented Python,
+  Rust, C# provider, and C++ provider contracts stabilize.
 - Prototype checksummed codec and multi-actor queue candidates against the
   recorded Python baseline; retain Rust only when ADR-0004's paired threshold
   is reproducible.
-- Implement concrete authenticated local gRPC and framed-stream drivers with
-  deadlines, health, exact runtime binding, and bounded payloads.
+- Extend the implemented bounded stdio Runtime Host with authenticated,
+  target-bound named-pipe/Unix-socket provider and learner connections,
+  deadlines, health, and reconnect reconciliation.
 - Add bounded asynchronous actor queues and IMPALA backpressure metrics.
 - Add a columnar/checksummed dataset container and deterministic replay.
 - Define partial reset and multi-agent identity semantics.
 - Add structured Gymnasium action-mask conformance fixtures.
 - Add freshness-aware knowledge snapshot validation and signed configuration
   bundles after real adapter requirements are measured.
-- Generate versioned Unity/C# and Unreal/C++ engine-plugin SDK templates from
-  `glr.runtime-integration.v2` and `glr.v1`.
+- Add Unity and Unreal engine-plugin templates around the implemented
+  engine-neutral C# and C++ provider contracts.
 - Add an authorized external-attach reference driver with bounded rendered
   observations, input leases, exact target binding, and post-state receipts.
 - Add separately tested BepInEx IL2CPP and UE4SS C++ loader templates after

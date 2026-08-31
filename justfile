@@ -35,7 +35,33 @@ test:
 core-check:
     vx uv run python scripts/run_core_checks.py
 
-check: setup lock-check workflow-check core-check
+rust-format-check:
+    vx cargo fmt --all -- --check
+
+rust-clippy:
+    vx cargo clippy --workspace --all-targets --locked -- -D warnings
+
+rust-test:
+    vx cargo test --workspace --locked
+
+rust-build:
+    vx cargo build -p glr-host --bin glr-hostd --locked
+
+host-smoke: rust-build
+    vx uv run python scripts/run_host_smoke.py
+
+rust-check: rust-format-check rust-clippy rust-test host-smoke
+
+csharp-check:
+    vx dotnet build sdk/csharp/GameLearningRuntime.Provider.Smoke/GameLearningRuntime.Provider.Smoke.csproj --configuration Release
+    vx dotnet run --project sdk/csharp/GameLearningRuntime.Provider.Smoke/GameLearningRuntime.Provider.Smoke.csproj --configuration Release --no-build
+
+cpp-check:
+    vx uv run python scripts/check_cpp_provider.py
+
+provider-sdk-check: csharp-check cpp-check
+
+check: setup lock-check workflow-check core-check rust-check provider-sdk-check
 
 build:
     vx uv run --no-sync python -m build --no-isolation
@@ -65,6 +91,8 @@ ci-torchrl:
     vx uv run --no-sync python -m pytest tests_optional/test_torch_objectives.py tests_optional/test_torchrl.py
 
 ci-package: setup workflow-check build
+
+ci-runtime-host: setup lock-check rust-check provider-sdk-check
 
 release-check tag:
     vx uv run python scripts/verify_release.py {{tag}}

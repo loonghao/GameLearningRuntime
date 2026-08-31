@@ -49,6 +49,21 @@ ContractEnvironment
                       └─ authorized runtime adapter / main-thread dispatcher
 ```
 
+The implemented Runtime Host path is one concrete serialized driver:
+
+```text
+ContractEnvironment
+  └─ BridgeEnvironment
+       └─ HostBridgeDriver
+            └─ glr-hostd stdio (glr.host.v1, <= 1 MiB)
+                 └─ RuntimeProvider
+                      └─ synthetic-counter (implemented conformance provider)
+```
+
+The C# and C++ provider SDKs define the next engine-facing port. They do not yet
+connect a live provider to `glr-hostd`, so `host-stdio` cannot satisfy runtime
+profiles that require authenticated and exact target-bound local IPC.
+
 The client does not retry a failed `Step`. A lost mutating response can mean
 the action happened, so a concrete driver must reconcile through an
 authoritative readback or report an unknown outcome. Read-only health and
@@ -92,7 +107,8 @@ deliberately lowers that individual term to advisory authority.
 The Protobuf package is `glr.v1` and the JSONL record schema is
 `glr.transition.v1`. Additive fields may remain within v1. Removing fields,
 changing meaning, or changing tensor encoding requires a new major schema.
-Training policy uses `glr.training.v1`. Unknown fields fail closed so spelling
+Training policy uses `glr.training.v1`; the Runtime Host envelope uses
+`glr.host.v1`. Unknown fields fail closed so spelling
 mistakes do not silently change reward behavior. Gameplay research uses a
 separate `glr.knowledge-research.v1` design manifest and is never loaded as an
 executable runtime configuration.

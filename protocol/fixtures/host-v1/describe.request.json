@@ -1,0 +1,6 @@
+{
+  "schema": "glr.host.v1",
+  "request_id": "describe-fixture-1",
+  "operation": "describe",
+  "payload": {}
+}

@@ -8,8 +8,8 @@ version, changelog, or tag by hand.
 
 1. Merge feature and fix pull requests only after all required checks pass.
 2. The `Release` workflow creates or updates a Release Please pull request. Its
-   version, changelog, manifest, package metadata, and README workflow pins must
-   move together.
+   version, changelog, manifest, Python/Rust package metadata, lock-file release
+   markers, and README workflow pins must move together.
 3. Review the release pull request like any other change. Verify the proposed
    semantic version, included commits, generated changelog, and green required
    checks.
@@ -18,14 +18,19 @@ version, changelog, or tag by hand.
 
    - checks out the tag rather than mutable `main`;
    - verifies the tag against `pyproject.toml`;
-   - runs quality checks and core tests;
+   - runs Python, Rust, C#, and C++ quality/contract checks;
    - builds and checks one wheel/sdist pair;
-   - attaches build provenance and the distributions to the GitHub Release;
+   - builds the C# provider contract package;
+   - builds native `glr-hostd` conformance archives for Linux x64, Windows x64,
+     Intel macOS, and Apple Silicon;
+   - attaches build provenance, deterministic `SHA256SUMS`, and all assets to
+     the GitHub Release;
    - publishes those same distributions to PyPI through Trusted Publishing.
 
 5. Verify the workflow conclusion, tag/commit identity, non-draft GitHub
-   Release, attached assets, PyPI project page, and installation in a clean
-   temporary project.
+   Release, four host archives, the C# package, `SHA256SUMS`, PyPI project page,
+   and installation/execution in clean temporary directories. The host smoke
+   proves only `synthetic-counter`, not a live engine provider.
 
 The release-impacting Conventional Commit types are:
 
@@ -55,8 +60,8 @@ that token.
 First rerun failed jobs from the original workflow run. If its artifacts have
 expired, manually run the `Release` workflow from `main` and supply an existing
 immutable tag such as `v0.2.0`. The workflow checks out and verifies that tag,
-rebuilds the distributions, replaces the GitHub Release assets, and attempts
-the same Trusted Publishing path.
+rebuilds the Python/C#/native-host distributions, replaces the GitHub Release
+assets, and attempts the same Trusted Publishing path.
 
 Do not use recovery to move a tag, change released source, or overwrite a PyPI
 file. PyPI rejects an existing distribution filename. If released source is

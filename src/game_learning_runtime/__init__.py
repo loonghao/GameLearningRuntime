@@ -13,7 +13,18 @@ from game_learning_runtime.bridge import (
 from game_learning_runtime.collector import Policy, SyncCollector
 from game_learning_runtime.contracts import Event, TimeStep, Transition, Unroll
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
-from game_learning_runtime.errors import ContractViolation, GLRError, OptionalDependencyError
+from game_learning_runtime.errors import (
+    ContractViolation,
+    GLRError,
+    HostProtocolError,
+    HostRemoteError,
+    OptionalDependencyError,
+)
+from game_learning_runtime.host import (
+    HostBridgeDriver,
+    HostProcessConfig,
+    JsonLineHostChannel,
+)
 from game_learning_runtime.model_bundle import (
     MODEL_BUNDLE_SCHEMA_VERSION,
     BundleFile,
@@ -109,7 +120,12 @@ __all__ = [
     "GLRError",
     "GameEnvironment",
     "GuardedRewardResult",
+    "HostBridgeDriver",
+    "HostProcessConfig",
+    "HostProtocolError",
+    "HostRemoteError",
     "IntegrationMode",
+    "JsonLineHostChannel",
     "JsonlTransitionWriter",
     "KnowledgeAuthority",
     "KnowledgeSourceSpec",

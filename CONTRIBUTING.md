@@ -5,7 +5,8 @@ Thanks for helping make game-learning infrastructure reusable.
 ## Development
 
 Prerequisites: Git and [vx](https://github.com/loonghao/vx). The committed
-`vx.toml` and `vx.lock` select Python, uv, and just for local and CI use.
+`vx.toml`, `vx.lock`, `rust-toolchain.toml`, and `global.json` select Python,
+uv, just, rustup/Rust, and .NET inputs for local and CI use.
 
 ```powershell
 git clone https://github.com/loonghao/GameLearningRuntime.git
@@ -19,6 +20,8 @@ Optional integration contracts:
 ```powershell
 vx just ci-torchrl
 vx just ci-gymnasium
+vx just rust-check
+vx just provider-sdk-check
 ```
 
 ## Change contract
@@ -26,6 +29,8 @@ vx just ci-gymnasium
 - Keep game adapters independent from learning algorithms.
 - Add or update an ADR when changing a public boundary or wire format.
 - Treat protocol and dataset schemas as versioned compatibility contracts.
+- Keep engine providers behind the shared C# or C++ provider vocabulary; do
+  not add another learner-facing wire envelope without an ADR and parity tests.
 - Add adversarial tests for lifecycle, shapes, dtypes, bounds, masks, and stale
   episode/step identity.
 - Use Conventional Commits in English.
@@ -42,6 +47,9 @@ vx just ci-gymnasium
   script, dump, or generic call surfaces.
 - Model examples must include `glr.model-bundle.v1` inputs and checksums; never
   publish source workstation paths or proprietary runtime traces.
+- Runtime Host changes must preserve frame bounds, pre-dispatch fencing,
+  no-retry mutation semantics, and truthful capabilities. A stdio smoke does
+  not prove authentication, target binding, or live-engine behavior.
 
 Open a pull request only after local checks pass. A maintainer review and green
 required checks are necessary before merge.
