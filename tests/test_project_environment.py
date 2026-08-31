@@ -43,6 +43,7 @@ def test_internal_github_actions_execute_the_same_just_recipes() -> None:
     assert action in ci
     assert action in release
     assert "loonghao/vx@main" not in ci + release
+    assert "name: core / Python ${{ matrix.python-version }}" in ci
     for recipe in ("ci-core", "ci-torchrl", "ci-gymnasium", "ci-package"):
         assert f"vx just {recipe}" in ci
     assert "vx just release-check" in release

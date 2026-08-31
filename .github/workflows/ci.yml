@@ -15,7 +15,8 @@ permissions:
 
 jobs:
   core:
-    name: Python ${{ matrix.python-version }}
+    # Keep this context stable: main branch protection requires these names.
+    name: core / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
