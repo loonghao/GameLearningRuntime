@@ -2,22 +2,22 @@
 
 [English](engine-runtime-integration.md)
 
-GLR 只维护一套环境契约，同时提供两种真实可信的部署 Profile。接入路径由你被授权
+GLR 只维护一套环境契约，同时提供三种真实可信的部署 Profile。接入路径由你被授权
 使用的运行时边界决定，而不是由 PPO、IMPALA 或 BC 等训练算法决定。
 
 ## 选择接入路径
 
-| 边界 | 引擎插件 | 外部附着 |
-| --- | --- | --- |
-| 常见条件 | 拥有游戏源码，或引擎提供官方扩展 SDK | 只有二进制游戏，但存在获授权的外部接口 |
-| 生命周期 | 物理 `reset` 或检查点恢复 | 默认只声明真实语义的 `attach` |
-| 时钟 | 手动步进或受控时间缩放 | 实时运行 |
-| 观察 | 引擎语义状态，可选渲染传感器 | 优先官方遥测/API，其次渲染输出 |
-| 动作 | 原生游戏命令 | 官方动作 API 或受限输入词表 |
-| 目标安全 | 绑定引擎实例和会话 | 每次修改前重新核对进程、窗口或会话 |
-| 吞吐 | 无头构建、时间缩放、多个隔离实例 | 受实时执行和采集延迟限制 |
+| 边界 | 引擎插件 | Loader Plugin | 外部附着 |
+| --- | --- | --- | --- |
+| 常见条件 | 游戏源码或官方扩展 SDK | 获授权的 BepInEx/UE4SS Mod | 获授权的二进制外部接口 |
+| 生命周期 | 物理 `reset` 或检查点恢复 | 真实语义 `attach` | 默认真实语义 `attach` |
+| 时钟 | 手动步进或受控时间缩放 | 实时运行 | 实时运行 |
+| 观察 | 引擎语义状态，可选渲染传感器 | 经过审查的引擎语义状态 | 优先官方遥测/API，其次渲染输出 |
+| 动作 | 原生游戏命令 | 初始为空、默认拒绝的有界命令词表 | 官方动作 API 或受限输入词表 |
+| 目标安全 | 绑定引擎实例和会话 | Loader/版本、episode、step 与游戏线程 | 每次修改前核对进程、窗口或会话 |
+| 吞吐 | 无头构建、时间缩放、多个隔离实例 | 受实时游戏执行限制 | 受实时执行和采集延迟限制 |
 
-两条路径都返回相同的不可变 `EnvironmentSpec` 与 `TimeStep`，共用 episode/step
+三条路径都返回相同的不可变 `EnvironmentSpec` 与 `TimeStep`，共用 episode/step
 栅栏、Collector、数据集和训练器。
 
 ## 生成接入骨架
@@ -47,6 +47,10 @@ vx python .agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py `
 脚手架会生成 `runtime-integration.json`、`training.json`、合成 conformance 环境、
 研究清单、测试、`vx.toml` 和 `justfile`。首先只替换合成游戏语义，并始终保留契约
 测试的 Red-Green-Refactor 闭环。
+
+使用获授权的 BepInEx 或 UE4SS 时，指定 `--access loader`、准确的 `--loader`
+和 `--loader-version`。详见 [Loader Plugin 指南](loader-plugin-integration.zh-CN.md)；
+进程内 Loader 仍不能声明只有源码工程才能证明的 reset、seed 或时钟控制。
 
 ## 有源码：引擎内插件
 

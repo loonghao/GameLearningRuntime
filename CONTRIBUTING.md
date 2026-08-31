@@ -37,6 +37,11 @@ vx just ci-gymnasium
   process/window identifiers, credentials, or private runtime data.
 - Do not add game instrumentation unless it is legal, authorized, and isolated
   behind an adapter.
+- Loader templates must keep unknown actions denied, use explicit upstream
+  versions, stage rather than auto-install, and never add arbitrary reflection,
+  script, dump, or generic call surfaces.
+- Model examples must include `glr.model-bundle.v1` inputs and checksums; never
+  publish source workstation paths or proprietary runtime traces.
 
 Open a pull request only after local checks pass. A maintainer review and green
 required checks are necessary before merge.

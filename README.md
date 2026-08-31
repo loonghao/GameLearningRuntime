@@ -59,15 +59,17 @@ engine, transport, or algorithm.
 | Environment | `reset`, truthful live `attach`, `step`, `close`, termination, truncation, episode and step identity |
 | Data | Recursive tensor specs, hybrid/parameterized actions, masks, events, rewards, immutable transitions |
 | Bridge | Capability negotiation, reset/step fencing, metadata deny-by-default, transport-neutral driver ports |
-| Runtime integration | Strict `glr.runtime-integration.v1` profiles for source engine plugins and binary-only external attachments |
+| Runtime integration | Backward-compatible `glr.runtime-integration.v2` profiles for source plugins, authorized loader plugins, and external attachments |
 | Training config | Strict `glr.training.v1` knowledge sources, lifecycle policy, bridge requirements, auditable weighted rewards |
+| Training safety | Episode shaping budgets, mandatory terminal outcomes, failed-return ceilings, and BC provenance gates |
 | Collection | Fixed-length or terminal-bounded unrolls for PPO/IMPALA plus `glr.transition.v1` JSONL for BC/offline use |
 | Integrations | Optional Gymnasium, TorchRL 0.13, and model-neutral PyTorch BC/PPO/GAE/V-trace objectives |
 | Validation | Fail-closed contract wrapper and privacy-safe synthetic conformance profiles |
-| Agent workflow | `glr-adapter-builder` Skill for provenance-first research, bridge scaffolding, rewards, and validation |
+| Agent workflow | `glr-adapter-builder` Skill for provenance-first research, bounded host scaffolding, deployment staging, training, and validation |
+| Model reproduction | `glr.model-bundle.v1` copies config, source/lock inputs, seeds, versions, weights, metrics, and SHA-256 provenance |
 
 Game-specific adapters, concrete transports, generated C#/C++/Rust SDKs,
-distributed actor transport, complete trainers, and reference models remain
+distributed actor transport, production trainers, and reference policies remain
 [roadmap](docs/planning/roadmap.md) work.
 
 ## Quick start
@@ -123,6 +125,10 @@ explicit:
   telemetry, replay, or bounded rendered observation/input seam. It defaults to
   real-time `attach`, exact target binding, input lease cleanup, and verified
   post-state.
+- **Authorized mod-loader runtime:** host a reviewed bounded-command adapter in
+  BepInEx or UE4SS. It keeps truthful real-time `attach`, semantic observations,
+  game-thread dispatch, exact loader/version provenance, and an empty-deny
+  action vocabulary until game-specific handlers are reviewed.
 
 ```python
 from game_learning_runtime import EngineFamily, RuntimeIntegrationProfile
@@ -134,6 +140,24 @@ environment = profile.connect(authorized_driver)
 Generate a Unity or Unreal adapter lane with the repository-owned Skill, then
 replace its synthetic semantics while keeping the contract tests green. See the
 [engine runtime integration guide](docs/guides/engine-runtime-integration.md).
+
+For no-source games that explicitly permit mods, GLR can generate a BepInEx 5
+LTS Unity Mono host or a UE4SS 3.x Lua host:
+
+```powershell
+vx python .agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py `
+  --output adapters/example_loader `
+  --package example_loader `
+  --environment-id example.loader-v1 `
+  --engine unity `
+  --access loader `
+  --loader bepinex `
+  --loader-version v5.4.23.5
+```
+
+The generated deployment command stages a checksummed payload; it never scans
+for or modifies a game installation. See the [loader-plugin integration
+guide](docs/guides/loader-plugin-integration.md).
 
 ## Reproducible local development
 
@@ -149,18 +173,27 @@ vx just ci
 ## Knowledge and rewards as data
 
 ```python
-from game_learning_runtime import RewardComposer, RewardSignal, load_training_config
+from game_learning_runtime import (
+    EpisodeRewardGuard,
+    RewardSignal,
+    load_reward_safety_config,
+    load_training_config,
+)
 
 config = load_training_config("training.json")
-reward = RewardComposer(config).compose(
-    [RewardSignal(name="progress", source="runtime", value=0.25)]
-)
+guard = EpisodeRewardGuard(config, load_reward_safety_config("reward-safety.json"))
+reward = guard.compose([RewardSignal(name="progress", source="runtime", value=0.25)])
 print(reward.total, reward.contributions)
 ```
 
 Runtime telemetry should be `authoritative`; web guides and strategy priors
 should be `advisory`. Reward terms require authoritative sources by default.
 Configuration is data only: GLR does not evaluate reward expressions as code.
+The episode guard caps positive shaping per step and episode, requires an
+authoritative terminal outcome, and prevents a failed episode from retaining a
+positive return. `DemonstrationGate` separately rejects policy self-imitation,
+failed episodes, and unknown provenance from BC by default. See [training
+safety](docs/guides/training-safety.md).
 
 ## Build an adapter with the Agent Skill
 
@@ -171,7 +204,7 @@ workflow for:
 1. researching current game mechanics with source provenance;
 2. separating physical `reset` from truthful live `attach`;
 3. scaffolding a synthetic trainable seam;
-4. defining knowledge and reward configuration;
+4. defining knowledge, reward budgets, and BC provenance policy;
 5. implementing fenced observations/actions through a runtime bridge; and
 6. validating conformance before a bounded authorized runtime trace.
 
@@ -188,9 +221,10 @@ the workflow explicitly in your prompt:
 $glr-adapter-builder Create an authorized Unity adapter with source access. Scaffold a trainable environment, research manifest, reward configuration, and contract tests.
 ```
 
-For an authorized binary-only runtime, say `external access` instead of `source
-access`. The Skill chooses truthful `attach` semantics and refuses source-only
-capability claims.
+For an authorized binary-only runtime, say `external access`. For an authorized
+mod-enabled runtime, name `BepInEx` or `UE4SS` and the exact compatible upstream
+tag. The Skill chooses truthful `attach`, denies unknown actions, and refuses
+source-only capability claims.
 
 To use the Skill from another repository, ask Codex's built-in installer to
 install it from GitHub:
@@ -207,13 +241,23 @@ target repository's `.agents/skills/` directory. See the [official Codex Skills
 documentation](https://developers.openai.com/codex/skills).
 
 The generated lane includes the environment skeleton, `training.json`,
-`runtime-integration.json`, a provenance-aware research manifest, tests,
-`vx.toml`, and a `justfile`. From that generated directory, run:
+`reward-safety.json`, `demonstration-policy.json`, `runtime-integration.json`, a
+provenance-aware research manifest, tests, Agent instructions, a model-bundle
+smoke trainer, `vx.toml`, and a `justfile`.
+Loader lanes also include bounded host source and a deployment manifest. From
+that generated directory, run:
 
 ```powershell
 vx setup
 vx run check
+vx run train
+vx run reproduce
 ```
+
+`train` emits a synthetic BC smoke model plus a self-contained checksummed
+reproduction environment. Replace the learner while preserving the
+`glr.model-bundle.v1` gate; see [reproducible model
+bundles](docs/guides/reproducible-model-bundles.md).
 
 ## TorchRL and custom learners
 
@@ -276,7 +320,10 @@ runbook](docs/runbooks/release.md).
 - [Getting started](docs/guides/getting-started.md)
 - [Build a reusable runtime bridge](docs/guides/runtime-bridges.md)
 - [Connect Unity and Unreal runtimes](docs/guides/engine-runtime-integration.md)
+- [Connect authorized BepInEx and UE4SS loaders](docs/guides/loader-plugin-integration.md)
+- [Reproduce trained models](docs/guides/reproducible-model-bundles.md)
 - [Configure knowledge sources and rewards](docs/guides/knowledge-and-rewards.md)
+- [Enforce reward budgets and BC provenance](docs/guides/training-safety.md)
 - [Validate an adapter](docs/guides/adapter-conformance.md)
 - [Adapt an existing Gymnasium environment](docs/guides/adapting-gymnasium.md)
 - [Compose custom Torch objectives](docs/guides/using-torch-objectives.md)

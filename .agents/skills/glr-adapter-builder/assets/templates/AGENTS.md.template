@@ -1,0 +1,18 @@
+# Agent instructions for @@PACKAGE@@
+
+Operate only an owned or explicitly authorized offline/test runtime. @@LOADER_NOTE@@
+
+- Read `agent-interface.json`, `runtime-integration.json`, `training.json`,
+  `reward-safety.json`, and `demonstration-policy.json` before editing.
+- Keep `action_vocabulary` empty until every action has a reviewed semantic mapping.
+- Reject unknown operations and stale episode or expected-step identities.
+- Dispatch engine mutations on the game/main thread and return verified post-state.
+- Treat gameplay research as advisory; never expand authority from a guide.
+- Route composed rewards through `EpisodeRewardGuard`; a terminal failure must
+  never remain profitable after shaping.
+- Validate every BC trajectory with `DemonstrationGate`; never relabel policy
+  output or unknown provenance as expert data.
+- Never add reflection search, arbitrary script/call endpoints, process discovery,
+  anti-cheat bypasses, credentials, or local machine identifiers.
+- Run `vx run check`, then `vx run train` and `vx run reproduce`.
+- Publish only aggregate synthetic conformance until a bounded authorized live trace exists.

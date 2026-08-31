@@ -54,15 +54,17 @@ Unity、Unreal、Source、原生程序还是测试模拟器。GLR 标准化的�
 | 环境 | `reset`、真实语义的在线 `attach`、`step`、`close`、终止/截断、episode 与 step 标识 |
 | 数据 | 递归张量规格、混合/参数化动作、掩码、事件、奖励和不可变 transition |
 | 桥接 | 能力协商、reset/step 栅栏、默认拒绝元数据、传输中立的 driver 端口 |
-| 运行时接入 | 严格的 `glr.runtime-integration.v1`，区分有源码引擎插件与无源码外部附着 |
+| 运行时接入 | 向后兼容的 `glr.runtime-integration.v2`，区分有源码插件、获授权 Loader Plugin 与外部附着 |
 | 训练配置 | 严格的 `glr.training.v1` 知识源、生命周期策略、桥接要求与可审计加权奖励 |
+| 训练安全 | Episode shaping 预算、必需终局结果、失败回报上限与 BC 数据来源门禁 |
 | 采集 | 面向 PPO/IMPALA 的定长或终止边界 unroll，以及面向 BC/离线训练的 `glr.transition.v1` JSONL |
 | 集成 | 可选 Gymnasium、TorchRL 0.13 与模型中立的 PyTorch BC/PPO/GAE/V-trace objective |
 | 验证 | 失败即关闭的契约包装器与隐私安全的合成 conformance profiles |
-| Agent 工作流 | `glr-adapter-builder` Skill，用于带来源的玩法研究、桥接脚手架、奖励和验证 |
+| Agent 工作流 | `glr-adapter-builder` Skill，用于带来源的玩法研究、有界宿主脚手架、部署暂存、训练和验证 |
+| 模型复现 | `glr.model-bundle.v1` 保存配置、源码/锁文件、种子、版本、权重、指标与 SHA-256 溯源 |
 
 具体游戏适配器、具体传输实现、自动生成的 C#/C++/Rust SDK、分布式 actor 传输、
-完整训练器和参考模型仍属于[路线图](docs/planning/roadmap.md)工作。
+生产训练器和参考策略仍属于[路线图](docs/planning/roadmap.md)工作。
 
 ## 快速开始
 
@@ -104,7 +106,7 @@ unroll = collector.collect(policy, steps=128, stop_on_done=True)
 Attach 会从 step 0 开始一个新的 GLR 逻辑 episode，但绝不声称物理游戏世界已被重置
 或设置了随机种子。
 
-## Unity 与 Unreal 两条接入路径
+## Unity 与 Unreal 三条接入路径
 
 GLR 只保留一套学习器侧契约，但会显式声明运行时边界：
 
@@ -112,6 +114,9 @@ GLR 只保留一套学习器侧契约，但会显式声明运行时边界：
   可控时钟和真实物理 reset。
 - **已获授权的无源码运行时：** 通过官方 API、遥测、Replay，或受限的渲染观察与
   输入接口从外部 attach。默认要求实时运行、精确目标绑定、输入租约清理和后状态验证。
+- **已获授权的 Mod Loader 运行时：** 通过 BepInEx 或 UE4SS 在进程内承载经过审查的
+  有界命令 Adapter。它仍按实时 `attach` 工作，要求语义观察、游戏线程调度、准确的
+  Loader/版本溯源；在游戏语义 handler 通过审查前，动作词表保持为空并默认拒绝。
 
 ```python
 from game_learning_runtime import EngineFamily, RuntimeIntegrationProfile
@@ -122,6 +127,23 @@ environment = profile.connect(authorized_driver)
 
 可以使用仓库 Skill 生成 Unity 或 Unreal Adapter 路径，再在保持契约测试通过的前提下
 替换其中的合成语义。详见[引擎运行时接入指南](docs/guides/engine-runtime-integration.zh-CN.md)。
+
+对于明确允许 Mod 的无源码游戏，可以直接生成 BepInEx 5 LTS Unity Mono 宿主或
+UE4SS 3.x Lua 宿主：
+
+```powershell
+vx python .agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py `
+  --output adapters/example_loader `
+  --package example_loader `
+  --environment-id example.loader-v1 `
+  --engine unity `
+  --access loader `
+  --loader bepinex `
+  --loader-version v5.4.23.5
+```
+
+生成的部署命令只暂存带校验和的 payload，不会扫描或修改游戏安装目录。详见
+[Loader Plugin 接入指南](docs/guides/loader-plugin-integration.zh-CN.md)。
 
 ## 可复现的本地开发环境
 
@@ -136,17 +158,24 @@ vx just ci
 ## 将知识库与奖励定义为数据
 
 ```python
-from game_learning_runtime import RewardComposer, RewardSignal, load_training_config
+from game_learning_runtime import (
+    EpisodeRewardGuard,
+    RewardSignal,
+    load_reward_safety_config,
+    load_training_config,
+)
 
 config = load_training_config("training.json")
-reward = RewardComposer(config).compose(
-    [RewardSignal(name="progress", source="runtime", value=0.25)]
-)
+guard = EpisodeRewardGuard(config, load_reward_safety_config("reward-safety.json"))
+reward = guard.compose([RewardSignal(name="progress", source="runtime", value=0.25)])
 print(reward.total, reward.contributions)
 ```
 
 运行时遥测应标记为 `authoritative`；网页攻略和策略先验应标记为 `advisory`。
 奖励项默认要求权威来源。配置只包含数据，GLR 不会把奖励表达式当作代码执行。
+Episode guard 会限制每步和整局正向 shaping，要求权威的终局 outcome，并确保失败局
+不会保留正回报。`DemonstrationGate` 则默认拒绝策略自模仿、失败局和未知来源样本进入
+BC。详见[训练安全指南](docs/guides/training-safety.zh-CN.md)。
 
 ## 使用 Agent Skill 搭建适配器
 
@@ -156,7 +185,7 @@ Skill](.agents/skills/glr-adapter-builder/SKILL.md) 为新 Agent 提供边界明
 1. 研究当前玩法并保存来源；
 2. 区分物理 `reset` 与真实语义的在线 `attach`；
 3. 先搭建可训练的合成接缝；
-4. 定义知识与奖励配置；
+4. 定义知识、奖励预算与 BC 数据来源策略；
 5. 通过运行时桥接实现带栅栏的观察和动作；
 6. 完成 conformance 验证后，再执行小范围、已授权的真实运行时 trace。
 
@@ -171,8 +200,9 @@ Skill](.agents/skills/glr-adapter-builder/SKILL.md) 为新 Agent 提供边界明
 $glr-adapter-builder 为一个已获授权、拥有源码的 Unity 项目创建适配器。生成可训练环境、玩法研究清单、奖励配置和契约测试。
 ```
 
-如果只有已获授权的二进制运行时，把提示词中的“拥有源码”改为“无源码外部接入”。
-Skill 会选择真实语义的 `attach`，并拒绝声明只有源码接入才能证明的能力。
+如果只有已获授权的二进制运行时，可以指定“无源码外部接入”。如果游戏明确允许
+Mod，则指定 `BepInEx` 或 `UE4SS` 以及准确的兼容上游 tag。Skill 会选择真实语义的
+`attach`、拒绝未知动作，并拒绝声明只有源码接入才能证明的能力。
 
 如果希望在其他仓库使用，可以让 Codex 内置的安装器从 GitHub 安装：
 
@@ -185,13 +215,21 @@ $skill-installer install https://github.com/loonghao/GameLearningRuntime/tree/ma
 Skills 标准的 Agent，也可以把同一个 `glr-adapter-builder` 目录放进目标仓库的
 `.agents/skills/`。参见 [Codex Skills 官方文档](https://developers.openai.com/codex/skills)。
 
-生成结果包括环境骨架、`training.json`、`runtime-integration.json`、带来源的研究清单、
-测试、`vx.toml` 和 `justfile`。进入生成目录后运行：
+生成结果包括环境骨架、`training.json`、`reward-safety.json`、
+`demonstration-policy.json`、`runtime-integration.json`、带来源的研究清单、Agent 指令、
+模型包冒烟训练器、测试、`vx.toml` 和 `justfile`。Loader 路径还会生成有界宿主源码
+与部署清单。进入生成目录后运行：
 
 ```powershell
 vx setup
 vx run check
+vx run train
+vx run reproduce
 ```
+
+`train` 会输出一个合成 BC 冒烟模型及自包含、带校验和的复现环境。替换真实 Learner
+时仍应保留 `glr.model-bundle.v1` 校验门，详见
+[可复现模型包](docs/guides/reproducible-model-bundles.zh-CN.md)。
 
 ## TorchRL 与自定义学习器
 
@@ -252,7 +290,10 @@ provenance，并通过 Trusted Publishing 把同一份分发包发布到 PyPI。
 - [入门指南](docs/guides/getting-started.md)
 - [构建可复用运行时桥接](docs/guides/runtime-bridges.md)
 - [接入 Unity 与 Unreal 游戏运行时](docs/guides/engine-runtime-integration.zh-CN.md)
+- [接入获授权的 BepInEx 与 UE4SS Loader](docs/guides/loader-plugin-integration.zh-CN.md)
+- [复现训练模型](docs/guides/reproducible-model-bundles.zh-CN.md)
 - [配置知识源和奖励](docs/guides/knowledge-and-rewards.md)
+- [限制奖励并验证 BC 数据来源](docs/guides/training-safety.zh-CN.md)
 - [验证适配器](docs/guides/adapter-conformance.md)
 - [适配现有 Gymnasium 环境](docs/guides/adapting-gymnasium.md)
 - [组合自定义 Torch objectives](docs/guides/using-torch-objectives.md)

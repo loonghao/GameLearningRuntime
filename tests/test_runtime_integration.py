@@ -16,6 +16,7 @@ from game_learning_runtime import (
     ContractViolation,
     EngineFamily,
     IntegrationMode,
+    LoaderFamily,
     ObservationMode,
     RuntimeIntegrationProfile,
     TransportMode,
@@ -110,6 +111,114 @@ def test_binary_only_profile_is_truthful_live_attach(engine: EngineFamily) -> No
     } <= profile.required_capabilities
 
 
+@pytest.mark.parametrize(
+    ("engine", "loader"),
+    [
+        (EngineFamily.UNITY, LoaderFamily.BEPINEX),
+        (EngineFamily.UNREAL, LoaderFamily.UE4SS),
+    ],
+)
+def test_loader_profile_is_in_process_but_truthful_live_attach(
+    engine: EngineFamily, loader: LoaderFamily
+) -> None:
+    profile = RuntimeIntegrationProfile.for_loader(engine, loader_family=loader)
+
+    assert profile.integration_mode is IntegrationMode.LOADER_PLUGIN
+    assert profile.loader_family is loader
+    assert profile.start_mode == "attach"
+    assert profile.clock_mode is ClockMode.REALTIME
+    assert profile.observation_mode is ObservationMode.ENGINE_STATE
+    assert profile.action_mode is ActionMode.BOUNDED_COMMAND
+    assert profile.transport_mode is TransportMode.LOCAL_IPC
+    assert not profile.seedable
+    assert {
+        "authenticated",
+        "bounded-command",
+        "live-attach",
+        "loader-plugin",
+        "main-thread-dispatch",
+        "postcondition-verified",
+        "realtime",
+        "semantic-observation",
+        "step",
+        "target-bound",
+    } <= profile.required_capabilities
+
+
+def test_loader_profile_rejects_incompatible_or_false_capabilities() -> None:
+    with pytest.raises(ValueError, match="BepInEx loader profiles require Unity"):
+        RuntimeIntegrationProfile.for_loader(
+            EngineFamily.UNREAL, loader_family=LoaderFamily.BEPINEX
+        )
+    with pytest.raises(ValueError, match="UE4SS loader profiles require Unreal"):
+        RuntimeIntegrationProfile.for_loader(EngineFamily.UNITY, loader_family=LoaderFamily.UE4SS)
+    with pytest.raises(ValueError, match="loader plugins require start_mode='attach'"):
+        RuntimeIntegrationProfile(
+            engine_family=EngineFamily.UNITY,
+            integration_mode=IntegrationMode.LOADER_PLUGIN,
+            loader_family=LoaderFamily.BEPINEX,
+            start_mode="reset",
+            clock_mode=ClockMode.REALTIME,
+            observation_mode=ObservationMode.ENGINE_STATE,
+            action_mode=ActionMode.BOUNDED_COMMAND,
+            transport_mode=TransportMode.LOCAL_IPC,
+        )
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"loader_family": None}, "require loader_family"),
+        ({"clock_mode": ClockMode.MANUAL_STEP}, "require realtime"),
+        ({"observation_mode": ObservationMode.RENDERED}, "engine-state"),
+        ({"action_mode": ActionMode.NATIVE}, "bounded-command"),
+        ({"transport_mode": TransportMode.IN_PROCESS}, "local-ipc"),
+    ],
+)
+def test_loader_profile_rejects_each_unsupported_boundary_claim(
+    override: dict[str, object], message: str
+) -> None:
+    values: dict[str, object] = {
+        "engine_family": EngineFamily.UNITY,
+        "integration_mode": IntegrationMode.LOADER_PLUGIN,
+        "loader_family": LoaderFamily.BEPINEX,
+        "start_mode": "attach",
+        "clock_mode": ClockMode.REALTIME,
+        "observation_mode": ObservationMode.ENGINE_STATE,
+        "action_mode": ActionMode.BOUNDED_COMMAND,
+        "transport_mode": TransportMode.LOCAL_IPC,
+    }
+    values.update(override)
+
+    with pytest.raises(ValueError, match=message):
+        RuntimeIntegrationProfile(**values)  # type: ignore[arg-type]
+
+
+def test_profiles_reject_loader_identity_outside_the_loader_lane() -> None:
+    with pytest.raises(ValueError, match="external attach cannot declare"):
+        RuntimeIntegrationProfile(
+            engine_family=EngineFamily.UNITY,
+            integration_mode=IntegrationMode.EXTERNAL_ATTACH,
+            loader_family=LoaderFamily.BEPINEX,
+            start_mode="attach",
+            clock_mode=ClockMode.REALTIME,
+            observation_mode=ObservationMode.RENDERED,
+            action_mode=ActionMode.BOUNDED_INPUT,
+            transport_mode=TransportMode.LOCAL_IPC,
+        )
+    with pytest.raises(ValueError, match="engine plugins cannot declare"):
+        RuntimeIntegrationProfile(
+            engine_family=EngineFamily.UNITY,
+            integration_mode=IntegrationMode.ENGINE_PLUGIN,
+            loader_family=LoaderFamily.BEPINEX,
+            start_mode="reset",
+            clock_mode=ClockMode.MANUAL_STEP,
+            observation_mode=ObservationMode.ENGINE_STATE,
+            action_mode=ActionMode.NATIVE,
+            transport_mode=TransportMode.LOCAL_IPC,
+        )
+
+
 def test_external_profile_rejects_source_only_claims() -> None:
     with pytest.raises(ValueError, match="external attach requires realtime"):
         RuntimeIntegrationProfile(
@@ -191,3 +300,35 @@ def test_runtime_integration_profile_round_trips_strict_json(tmp_path: Any) -> N
     invalid = expected.to_mapping() | {"endpoint": "private-local-value"}
     with pytest.raises(ValueError, match="unexpected fields"):
         RuntimeIntegrationProfile.from_mapping(invalid)
+
+
+def test_loader_profile_round_trips_v2_and_v1_remains_loadable(tmp_path: Any) -> None:
+    expected = RuntimeIntegrationProfile.for_loader(
+        EngineFamily.UNREAL, loader_family=LoaderFamily.UE4SS
+    )
+    mapping = expected.to_mapping()
+
+    assert mapping["schema_version"] == "glr.runtime-integration.v2"
+    assert mapping["loader_family"] == "ue4ss"
+    assert RuntimeIntegrationProfile.from_mapping(mapping) == expected
+
+    legacy = {
+        "schema_version": "glr.runtime-integration.v1",
+        "engine_family": "unity",
+        "integration_mode": "engine-plugin",
+        "start_mode": "reset",
+        "clock_mode": "manual-step",
+        "observation_mode": "engine-state",
+        "action_mode": "native",
+        "transport_mode": "local-ipc",
+        "seedable": True,
+    }
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    loaded = load_runtime_integration(path)
+    assert loaded.schema_version == "glr.runtime-integration.v1"
+    assert loaded.loader_family is None
+
+    with pytest.raises(ValueError, match="cannot describe loader plugins"):
+        RuntimeIntegrationProfile.from_mapping(legacy | {"integration_mode": "loader-plugin"})
