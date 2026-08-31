@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.2.0...v0.3.0) (2026-08-31)
+
+
+### Features
+
+* add engine runtime integration profiles ([955489b](https://github.com/loonghao/GameLearningRuntime/commit/955489b2f9dcdf0e8e72344db1bcabef1627f53e))
+* add loader and training safety toolkit ([#18](https://github.com/loonghao/GameLearningRuntime/issues/18)) ([c22cbb2](https://github.com/loonghao/GameLearningRuntime/commit/c22cbb2a0fbb60c39ac5e81e07aa7ba228067908))
+* add runtime host and provider SDKs ([e1bb13f](https://github.com/loonghao/GameLearningRuntime/commit/e1bb13f307e13674eed7f49a432fe60541528d16))
+
+
+### Bug Fixes
+
+* **ci:** harden release checksum glob ([9e01292](https://github.com/loonghao/GameLearningRuntime/commit/9e01292aaabb8d7f658070eeca5f87283801f3e0))
+
 ## [0.2.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.1.0...v0.2.0) (2026-08-31)
 
 ### Added
