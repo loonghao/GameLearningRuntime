@@ -184,14 +184,40 @@ def behavior_cloning_loss(
     actions: Tensor,
     *,
     action_mask: Tensor | None = None,
+    sample_weight: Tensor | None = None,
     label_smoothing: float = 0.0,
     entropy_coefficient: float = 0.0,
 ) -> BehaviorCloningLoss:
-    """Compute a masked discrete behavior-cloning objective."""
+    """Compute a masked discrete behavior-cloning objective.
+
+    ``sample_weight`` accepts the audited weight emitted by
+    :class:`~game_learning_runtime.training_safety.DemonstrationGate` for each
+    sample. The weights are normalized by their sum, so their absolute scale
+    does not change the optimizer step.
+    """
 
     _require_probability("label_smoothing", label_smoothing)
     _require_non_negative("entropy_coefficient", entropy_coefficient)
     log_probabilities = _policy_log_probabilities(policy_logits, actions, action_mask)
+    if sample_weight is not None:
+        if sample_weight.shape != actions.shape:
+            raise ValueError("sample_weight must have the same batch shape as actions")
+        _require_floating("sample_weight", sample_weight)
+        if sample_weight.device != policy_logits.device:
+            raise ValueError("sample_weight and policy_logits must be on the same device")
+        if not torch.isfinite(sample_weight).all().item():
+            raise ValueError("sample_weight must contain only finite values")
+        if (sample_weight < 0).any().item():
+            raise ValueError("sample_weight must be non-negative")
+        if not (sample_weight.sum() > 0).item():
+            raise ValueError("sample_weight must have a positive total")
+
+    def mean(value: Tensor) -> Tensor:
+        if sample_weight is None:
+            return value.mean()
+        weight = sample_weight.to(dtype=value.dtype)
+        return (value * weight).sum() / weight.sum()
+
     selected_log_probability = log_probabilities.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
     per_sample_nll = -selected_log_probability
     if label_smoothing:
@@ -199,10 +225,11 @@ def behavior_cloning_loss(
         valid_count = valid.sum(dim=-1)
         smooth_nll = -(log_probabilities.masked_fill(~valid, 0.0).sum(dim=-1) / valid_count)
         per_sample_nll = (1.0 - label_smoothing) * per_sample_nll + (label_smoothing * smooth_nll)
-    negative_log_likelihood = per_sample_nll.mean()
-    entropy = _mean_entropy(log_probabilities)
+    negative_log_likelihood = mean(per_sample_nll)
+    per_sample_entropy = -(log_probabilities.exp() * log_probabilities).sum(dim=-1)
+    entropy = mean(per_sample_entropy)
     loss = negative_log_likelihood - entropy_coefficient * entropy
-    accuracy = (log_probabilities.argmax(dim=-1) == actions).to(policy_logits.dtype).mean()
+    accuracy = mean((log_probabilities.argmax(dim=-1) == actions).to(policy_logits.dtype))
     return BehaviorCloningLoss(
         loss=loss,
         negative_log_likelihood=negative_log_likelihood,

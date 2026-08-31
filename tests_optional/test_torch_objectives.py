@@ -83,6 +83,41 @@ def test_behavior_cloning_loss_reports_stable_components() -> None:
     assert result.accuracy.item() == pytest.approx(0.5)
 
 
+def test_behavior_cloning_loss_applies_demonstration_sample_weights() -> None:
+    logits = torch.tensor([[3.0, 0.0], [3.0, 0.0]])
+    actions = torch.tensor([0, 1])
+
+    unweighted = behavior_cloning_loss(logits, actions)
+    weighted = behavior_cloning_loss(
+        logits,
+        actions,
+        sample_weight=torch.tensor([9.0, 1.0]),
+    )
+
+    assert weighted.loss.item() < unweighted.loss.item()
+    assert weighted.accuracy.item() == pytest.approx(0.9)
+
+
+@pytest.mark.parametrize(
+    "sample_weight, message",
+    [
+        (torch.tensor([1.0]), "same batch shape"),
+        (torch.tensor([1.0, -1.0]), "non-negative"),
+        (torch.tensor([0.0, 0.0]), "positive total"),
+    ],
+)
+def test_behavior_cloning_loss_rejects_invalid_sample_weights(
+    sample_weight: torch.Tensor,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        behavior_cloning_loss(
+            torch.tensor([[3.0, 0.0], [3.0, 0.0]]),
+            torch.tensor([0, 1]),
+            sample_weight=sample_weight,
+        )
+
+
 def test_behavior_cloning_loss_rejects_an_action_excluded_by_its_mask() -> None:
     logits = torch.zeros((2, 2), dtype=torch.float32)
     actions = torch.tensor([0, 1])
