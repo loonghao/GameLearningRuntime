@@ -104,7 +104,9 @@ validates their declared sources, applies clipping and weights, and returns an
 immutable breakdown without evaluating expressions or importing callbacks.
 `EpisodeRewardGuard` then enforces per-step and per-episode positive shaping
 budgets plus terminal failure dominance. `DemonstrationGate` rejects
-unapproved origin/outcome pairs before BC ingestion. Both policies remain
+unapproved origin/outcome pairs before BC ingestion. A
+`DemonstrationArtifactManifest` binds the accepted provenance to the exact
+`glr.transition.v1` bytes, environment, and episode. These policies remain
 learner-neutral JSON inputs and are included in model bundles.
 
 The testing integration composes the same contract wrapper and collector used

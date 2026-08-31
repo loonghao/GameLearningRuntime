@@ -102,3 +102,44 @@ allowlisting plus `policy_id`; never relabel it as human or scripted expert.
 Include both JSON policies, aggregate acceptance/rejection counts, seeds, and
 the trainer source in the model bundle. Do not publish raw proprietary traces,
 account identifiers, local paths, or process/window identifiers.
+
+## Bind provenance to exact transition bytes
+
+Do not keep provenance in an unrelated filename or database row. Build an
+adjacent artifact manifest after an authorized collector records one complete
+`glr.transition.v1` episode:
+
+```python
+from game_learning_runtime import (
+    DemonstrationProvenance,
+    build_demonstration_artifact,
+)
+
+build_demonstration_artifact(
+    "episode.manifest.json",
+    trajectory_path="episode.jsonl",
+    environment_id=environment.spec.environment_id,
+    provenance=DemonstrationProvenance(
+        origin="scripted-expert",
+        outcome="success",
+    ),
+)
+```
+
+Before BC ingestion, verify the expected environment, trajectory SHA-256,
+single contiguous episode, terminal outcome, and demonstration policy in one
+operation:
+
+```python
+from game_learning_runtime import verify_demonstration_artifact
+
+verified = verify_demonstration_artifact(
+    "episode.manifest.json",
+    gate=gate,
+    expected_environment_id=environment.spec.environment_id,
+)
+dataset.add(verified.transitions, weight=verified.sample_weight)
+```
+
+Verification returns the parsed transitions that were hashed. Training code
+should consume those objects directly instead of reopening the path.

@@ -12,6 +12,15 @@ from game_learning_runtime.bridge import (
 )
 from game_learning_runtime.collector import Policy, SyncCollector
 from game_learning_runtime.contracts import Event, TimeStep, Transition, Unroll
+from game_learning_runtime.demonstration_artifact import (
+    DEMONSTRATION_ARTIFACT_SCHEMA_VERSION,
+    DemonstrationArtifactFile,
+    DemonstrationArtifactManifest,
+    VerifiedDemonstrationArtifact,
+    build_demonstration_artifact,
+    load_demonstration_artifact_manifest,
+    verify_demonstration_artifact,
+)
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
 from game_learning_runtime.errors import (
     ContractViolation,
@@ -89,6 +98,7 @@ except PackageNotFoundError:  # pragma: no cover - source tree without installat
     __version__ = "0.0.0+local"
 
 __all__ = [
+    "DEMONSTRATION_ARTIFACT_SCHEMA_VERSION",
     "DEMONSTRATION_POLICY_SCHEMA_VERSION",
     "MODEL_BUNDLE_SCHEMA_VERSION",
     "REWARD_SAFETY_SCHEMA_VERSION",
@@ -106,6 +116,8 @@ __all__ = [
     "CompositeSpec",
     "ContractEnvironment",
     "ContractViolation",
+    "DemonstrationArtifactFile",
+    "DemonstrationArtifactManifest",
     "DemonstrationDecision",
     "DemonstrationGate",
     "DemonstrationOrigin",
@@ -150,8 +162,11 @@ __all__ = [
     "Transition",
     "TransportMode",
     "Unroll",
+    "VerifiedDemonstrationArtifact",
     "__version__",
+    "build_demonstration_artifact",
     "build_model_bundle",
+    "load_demonstration_artifact_manifest",
     "load_demonstration_policy_config",
     "load_model_bundle_manifest",
     "load_reward_safety_config",
@@ -161,5 +176,6 @@ __all__ = [
     "read_jsonl_transitions",
     "transition_from_record",
     "transition_to_record",
+    "verify_demonstration_artifact",
     "verify_model_bundle",
 ]
