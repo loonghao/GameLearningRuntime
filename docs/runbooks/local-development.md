@@ -3,31 +3,28 @@
 ## Prerequisites
 
 - Git
-- uv 0.11 or newer
-- Python 3.10 through 3.13
+- [vx](https://github.com/loonghao/vx)
+
+`vx.toml` and `vx.lock` pin the baseline Python, uv, and just versions. The
+GitHub Actions jobs use the same just recipes as local development.
 
 ## Steps
 
 ```powershell
-uv sync --frozen --all-groups
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest -m "not torchrl" --cov=game_learning_runtime --cov-report=term-missing
-uv build
-uv run twine check dist/*
+vx setup
+vx just check
+vx just build
 ```
 
 For the optional integration:
 
 ```powershell
-uv sync --frozen --all-groups --extra torchrl
-uv run --extra torchrl mypy src/game_learning_runtime/integrations/torch_objectives.py src/game_learning_runtime/integrations/torchrl.py
-uv run --extra torchrl pytest tests_optional/test_torch_objectives.py tests_optional/test_torchrl.py
-uv sync --frozen --all-groups --extra gymnasium
-uv run --extra gymnasium mypy src/game_learning_runtime/integrations/gymnasium.py
-uv run --extra gymnasium pytest tests_optional/test_gymnasium.py
+vx just ci-torchrl
+vx just ci-gymnasium
 ```
+
+Run the complete local pre-push surface with `vx just ci`. CI selects Python
+3.10 through 3.13 through `vx just ci-core <version>` in isolated jobs.
 
 ## Verify
 
@@ -35,14 +32,16 @@ All commands must exit zero. Confirm imports originate from this checkout when
 debugging environment drift:
 
 ```powershell
-uv run python -c "import game_learning_runtime as g; print(g.__file__)"
+vx just origin
 ```
 
 ## Troubleshooting
 
 | Problem | Resolution |
 |---|---|
-| Lock file changed unexpectedly | Run `uv lock --check`; inspect dependency inputs before accepting a relock |
+| Lock file changed unexpectedly | Run `vx uv lock --check`; inspect dependency inputs before accepting a relock |
+| vx tool versions drifted | Run `vx lock --check`; update `vx.toml` and `vx.lock` together after review |
+| Existing `.venv` is unrelated or broken | GLR uses the project-owned `.venv-glr` through just; do not delete another environment as a workaround |
 | Torch wheel is large | Run the core suite without the `torchrl` extra; use the dedicated integration job for TorchRL |
 | Contract violation | Compare the failing path, dtype, shape, and declared bounds; do not cast silently |
 | Protocol test fails | Compile the packaged `runtime.proto`; do not test an unshipped duplicate |

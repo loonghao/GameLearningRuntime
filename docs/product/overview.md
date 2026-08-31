@@ -12,6 +12,8 @@ to reuse.
 ### Runtime adapter developer
 
 Builds an authorized Unity, Unreal, native, emulator, or official-API adapter.
+Source-integrated engine plugins and binary-only external attachments declare
+separate machine-checkable profiles while sharing one environment contract.
 They need one precise lifecycle and tensor contract, independent of training
 code.
 
@@ -50,4 +52,3 @@ capture, and automated gameplay checks without importing learner internals.
 - The packaged Protobuf schema compiles.
 - TorchRL's `check_env_specs` accepts the reference adapter.
 - A local project can install a release tag and call the reusable CI workflow.
-

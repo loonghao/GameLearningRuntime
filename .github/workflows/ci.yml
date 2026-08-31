@@ -15,12 +15,23 @@ permissions:
 
 jobs:
   core:
-    uses: ./.github/workflows/reusable-python-ci.yml
-    with:
-      python-versions: '["3.10", "3.11", "3.12", "3.13"]'
-      sync-args: "--frozen --all-groups"
-      lint-command: "uv run ruff check . && uv run ruff format --check . && uv run mypy"
-      test-command: 'uv run pytest -m "not torchrl" --cov=game_learning_runtime --cov-report=term-missing'
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the pinned vx toolchain
+        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
+        with:
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "uv just"
+          cache: "true"
+      - run: vx just ci-core "${{ matrix.python-version }}"
 
   torchrl:
     name: TorchRL 0.13 contract
@@ -28,21 +39,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Install the pinned vx toolchain
+        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
         with:
-          version: "0.11.19"
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --frozen --all-groups --extra torchrl
-      - run: >-
-          uv run --extra torchrl mypy
-          src/game_learning_runtime/integrations/torch_objectives.py
-          src/game_learning_runtime/integrations/torchrl.py
-      - run: >-
-          uv run --extra torchrl pytest
-          tests_optional/test_torch_objectives.py
-          tests_optional/test_torchrl.py
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "uv just"
+          cache: "true"
+      - run: vx just ci-torchrl
 
   gymnasium:
     name: Gymnasium 1.x contract
@@ -50,15 +54,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Install the pinned vx toolchain
+        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
         with:
-          version: "0.11.19"
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --frozen --all-groups --extra gymnasium
-      - run: uv run --extra gymnasium mypy src/game_learning_runtime/integrations/gymnasium.py
-      - run: uv run --extra gymnasium pytest tests_optional/test_gymnasium.py
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "uv just"
+          cache: "true"
+      - run: vx just ci-gymnasium
 
   package:
     name: Build distribution
@@ -67,15 +70,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Install the pinned vx toolchain
+        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
         with:
-          version: "0.11.19"
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --frozen --all-groups
-      - run: uv build
-      - run: uv run twine check dist/*
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "uv just"
+          cache: "true"
+      - run: vx just ci-package
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-distributions

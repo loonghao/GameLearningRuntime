@@ -54,21 +54,15 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.release-please.outputs.tag_name }}
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Install the pinned vx toolchain
+        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
         with:
-          version: "0.11.19"
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - run: uv sync --frozen --all-groups
-      - name: Verify semantic version tag
-        run: uv run python scripts/verify_release.py "${{ needs.release-please.outputs.tag_name }}"
-      - name: Run quality checks
-        run: uv run ruff check . && uv run ruff format --check . && uv run mypy
-      - name: Run core tests
-        run: uv run pytest -m "not torchrl" --cov=game_learning_runtime --cov-report=term-missing
-      - run: uv build
-      - run: uv run twine check dist/*
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "uv just"
+          cache: "true"
+      - name: Verify, test, and build the immutable tag
+        run: vx just release-check "${{ needs.release-please.outputs.tag_name }}"
       - name: Upload distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

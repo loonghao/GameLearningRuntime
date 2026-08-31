@@ -9,7 +9,7 @@ hierarchical, and eventually multi-agent environments.
 
 Non-functional priorities are correctness before throughput, deterministic
 identity and ordering, optional heavy dependencies, portable records, semantic
-versioning, and low adoption cost for local uv projects.
+versioning, and low adoption cost for local vx/uv projects.
 
 ## Components
 
@@ -24,6 +24,7 @@ versioning, and low adoption cost for local uv projects.
 │ SyncCollector │ recorder/replay │ framework adapters         │
 │ optional BC/PPO/GAE/V-trace objective primitives            │
 │ TrainingConfig │ RewardComposer │ knowledge source policy     │
+│ RuntimeIntegrationProfile: engine-plugin │ external-attach      │
 │ privacy-safe adapter conformance runner                      │
 │ BridgeEnvironment (client) │ EnvironmentBridgeDriver (server)│
 ├─────────────────────────────────────────────────────────────┤
@@ -37,7 +38,8 @@ versioning, and low adoption cost for local uv projects.
                             │ Adapter-specific transport
 ┌───────────────────────────▼─────────────────────────────────┐
 │ Authorized runtime adapters                                 │
-│ Unity/C# │ Unreal/C++ │ Native/Rust/C++ │ official APIs    │
+│ Engine plugin                    │ External attach             │
+│ Unity/C# │ Unreal/C++            │ official API │ rendered I/O │
 └───────────────────────────┬─────────────────────────────────┘
                             ▼
                           Game
@@ -55,6 +57,13 @@ and denies metadata by default. The server serializes requests and reuses
 `ContractEnvironment`. A concrete driver still owns authentication, exact
 runtime binding, deadlines, bounded frames/queues, error mapping, and the
 engine's main-thread dispatcher.
+
+`RuntimeIntegrationProfile` selects a truthful deployment boundary before the
+bridge connects. Source-integrated Unity and Unreal plugins normally prove
+physical reset, controllable time, semantic state, native actions, and
+main-thread dispatch. Binary-only adapters normally prove live attach, exact
+target binding, real-time operation, bounded input ownership, and post-action
+readback. Both profiles reuse the same learner-facing environment contract.
 
 Existing Gymnasium environments enter through a deny-by-default compatibility
 adapter. Native Rust is reserved for benchmark-proven protocol, storage, and

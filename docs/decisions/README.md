@@ -8,6 +8,7 @@
 - [ADR-0006: Distinguish live attach from reset](0006-distinguish-live-attach-from-reset.md)
 - [ADR-0007: Standardize bridge lifecycle, not game transports](0007-standardize-bridge-lifecycle.md)
 - [ADR-0008: Configure knowledge and rewards as strict data](0008-configure-knowledge-and-rewards-as-data.md)
+- [ADR-0009: Profile engine-plugin and external-attach integrations](0009-profile-engine-plugin-and-external-attach.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

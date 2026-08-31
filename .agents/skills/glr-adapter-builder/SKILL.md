@@ -29,12 +29,26 @@ Run the deterministic scaffold once. Choose a generic public environment ID and
 Python package name; do not put a game account, host, PID, HWND, local path, or
 secret in either value.
 
+For a Unity or Unreal project with source access, create an engine-plugin lane:
+
 ```powershell
-python .agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py `
+vx python .agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py `
   --output adapters/example_adapter `
   --package example_adapter `
   --environment-id example.environment-v1 `
-  --start-mode reset
+  --engine unity `
+  --access source
+```
+
+For an authorized binary-only runtime, create a truthful external-attach lane:
+
+```powershell
+vx python .agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py `
+  --output adapters/example_external `
+  --package example_external `
+  --environment-id example.external-v1 `
+  --engine unreal `
+  --access external
 ```
 
 The generated environment is an explicitly synthetic, trainable seam. Replace
@@ -103,9 +117,8 @@ GLR owns the environment lifecycle and learner-facing contract.
 Read [validation-gates.md](references/validation-gates.md) completely, then run:
 
 ```powershell
-uv run pytest
-uv run mypy src
-uv run ruff check .
+vx setup
+vx run check
 ```
 
 Also run adapter-specific synthetic conformance, stale-request tests, malformed

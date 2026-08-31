@@ -34,8 +34,8 @@ def _environment_module(start_mode: str) -> str:
         return '''"""Synthetic seam; replace its semantics with the authorized adapter."""
 
 from game_learning_runtime.contracts import TensorTree, TimeStep
-from game_learning_runtime.examples import CounterEnvironment, always_increment
 from game_learning_runtime.environment import GameEnvironment
+from game_learning_runtime.examples import CounterEnvironment, always_increment
 
 
 def create_environment() -> GameEnvironment:
@@ -60,8 +60,8 @@ from typing import Any
 
 from game_learning_runtime.contracts import TensorTree, TimeStep
 from game_learning_runtime.environment import GameEnvironment
-from game_learning_runtime.examples import CounterEnvironment, always_increment
 from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.examples import CounterEnvironment, always_increment
 from game_learning_runtime.specs import EnvironmentSpec
 
 
@@ -115,7 +115,6 @@ from game_learning_runtime.testing import run_environment_conformance
 
 from {package}.environment import create_environment, synthetic_policy
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -154,7 +153,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.3"]
+dev = ["mypy>=1.15", "pytest>=8.3", "ruff>=0.11"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/{package}"]
@@ -164,11 +163,125 @@ testpaths = ["tests"]
 '''
 
 
-def _readme(package: str, environment_id: str, start_mode: str) -> str:
+def _vx_toml(package: str) -> str:
+    return f'''[project]
+name = "{package.replace("_", "-")}"
+
+[tools]
+python = "3.12.13"
+uv = "0.12.7"
+just = "1.58.0"
+
+[env]
+UV_PROJECT_ENVIRONMENT = ".venv-glr"
+
+[scripts]
+setup = "vx just setup"
+check = "vx just check"
+test = "vx just test"
+'''
+
+
+def _justfile() -> str:
+    windows_shell = (
+        'set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", '
+        '"-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]'
+    )
+    return f"""set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+{windows_shell}
+export UV_PROJECT_ENVIRONMENT := ".venv-glr"
+
+default: check
+
+setup:
+    vx uv sync --python 3.12.13 --all-groups
+
+lock-check:
+    vx uv lock --check
+
+lint:
+    vx uv run python -m ruff check src tests
+
+typecheck:
+    vx uv run python -m mypy src
+
+test:
+    vx uv run python -m pytest
+
+check: setup lock-check lint typecheck test
+"""
+
+
+def _runtime_integration(engine: str, access: str) -> dict[str, object]:
+    if access == "source":
+        return {
+            "schema_version": "glr.runtime-integration.v1",
+            "engine_family": engine,
+            "integration_mode": "engine-plugin",
+            "start_mode": "reset",
+            "clock_mode": "manual-step",
+            "observation_mode": "engine-state",
+            "action_mode": "native",
+            "transport_mode": "local-ipc",
+            "seedable": True,
+        }
+    return {
+        "schema_version": "glr.runtime-integration.v1",
+        "engine_family": engine,
+        "integration_mode": "external-attach",
+        "start_mode": "attach",
+        "clock_mode": "realtime",
+        "observation_mode": "rendered",
+        "action_mode": "bounded-input",
+        "transport_mode": "local-ipc",
+        "seedable": False,
+    }
+
+
+def _required_capabilities(access: str) -> list[str]:
+    if access == "source":
+        return sorted(
+            {
+                "authenticated",
+                "deterministic-reset",
+                "main-thread-dispatch",
+                "manual-step",
+                "native-action",
+                "postcondition-verified",
+                "reset",
+                "semantic-observation",
+                "step",
+                "target-bound",
+            }
+        )
+    return sorted(
+        {
+            "authenticated",
+            "bounded-input",
+            "input-lease",
+            "live-attach",
+            "postcondition-verified",
+            "realtime",
+            "rendered-observation",
+            "step",
+            "target-bound",
+        }
+    )
+
+
+def _readme(
+    package: str,
+    environment_id: str,
+    start_mode: str,
+    *,
+    engine: str,
+    access: str | None,
+) -> str:
+    integration = "generic" if access is None else f"{engine} {access}"
     return f"""# {package}
 
 GLR adapter development lane for `{environment_id}` using `{start_mode}` start
-semantics.
+semantics and the `{integration}` integration profile.
 
 The initial environment is deliberately synthetic and trainable. Replace it
 with an authorized runtime adapter while preserving the tests. Do not publish
@@ -180,8 +293,8 @@ compact paraphrased claims with provenance. Guide research remains advisory;
 reward authority comes from verified runtime signals in `training.json`.
 
 ```powershell
-uv sync --all-groups
-uv run pytest
+vx setup
+vx run check
 ```
 """
 
@@ -191,12 +304,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="new or empty output directory")
     parser.add_argument("--package", required=True, help="lowercase Python package name")
     parser.add_argument("--environment-id", required=True, help="generic public ID")
-    parser.add_argument("--start-mode", choices=("reset", "attach"), default="reset")
+    parser.add_argument("--engine", choices=("unity", "unreal", "other"), default="other")
+    parser.add_argument(
+        "--access",
+        choices=("source", "external"),
+        help="source plugin or binary-only external integration",
+    )
+    parser.add_argument("--start-mode", choices=("reset", "attach"))
     args = parser.parse_args()
     if _PACKAGE.fullmatch(args.package) is None:
         parser.error("--package must match ^[a-z][a-z0-9_]*$")
     if _ENVIRONMENT_ID.fullmatch(args.environment_id) is None:
         parser.error("--environment-id must be a generic identifier without paths or endpoints")
+    if args.access is None:
+        args.start_mode = args.start_mode or "reset"
+    else:
+        expected_start = "reset" if args.access == "source" else "attach"
+        if args.start_mode is not None and args.start_mode != expected_start:
+            parser.error(f"--access {args.access} requires --start-mode {expected_start}")
+        args.start_mode = expected_start
     output = Path(args.output).resolve()
     if output.exists() and any(output.iterdir()):
         parser.error(f"output directory is non-empty and will not be overwritten: {output}")
@@ -211,7 +337,9 @@ def main() -> int:
 
     training = _load_asset("training-config.json")
     training["lifecycle"]["start_mode"] = args.start_mode
-    if args.start_mode == "attach":
+    if args.access is not None:
+        training["bridge"]["required_capabilities"] = _required_capabilities(args.access)
+    elif args.start_mode == "attach":
         training["bridge"]["required_capabilities"] = [
             "authenticated",
             "live-attach",
@@ -223,6 +351,11 @@ def main() -> int:
     research["generated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     _write(output / "training.json", json.dumps(training, indent=2) + "\n")
+    if args.access is not None:
+        _write(
+            output / "runtime-integration.json",
+            json.dumps(_runtime_integration(args.engine, args.access), indent=2) + "\n",
+        )
     _write(
         output / "knowledge/research-manifest.json",
         json.dumps(research, indent=2) + "\n",
@@ -234,9 +367,18 @@ def main() -> int:
     )
     _write(output / "tests/test_adapter_contract.py", _test_module(args.package))
     _write(output / "pyproject.toml", _pyproject(args.package))
+    _write(output / "vx.toml", _vx_toml(args.package))
+    _write(output / "justfile", _justfile())
+    _write(output / ".gitignore", ".venv-glr/\n__pycache__/\n*.py[cod]\n")
     _write(
         output / "README.md",
-        _readme(args.package, args.environment_id, args.start_mode),
+        _readme(
+            args.package,
+            args.environment_id,
+            args.start_mode,
+            engine=args.engine,
+            access=args.access,
+        ),
     )
     print(f"Created synthetic-first GLR adapter lane at {output}")
     return 0

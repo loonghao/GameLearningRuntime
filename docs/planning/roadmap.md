@@ -16,11 +16,14 @@ This document describes future work, not current capability.
 - Add structured Gymnasium action-mask conformance fixtures.
 - Add freshness-aware knowledge snapshot validation and signed configuration
   bundles after real adapter requirements are measured.
+- Generate versioned Unity/C# and Unreal/C++ engine-plugin SDK templates from
+  `glr.runtime-integration.v1` and `glr.v1`.
+- Add an authorized external-attach reference driver with bounded rendered
+  observations, input leases, exact target binding, and post-state receipts.
 
 ## Later
 
-- Unity, Unreal, and native adapter SDK templates using the shared bridge
-  lifecycle rather than game-specific transport cores.
+- Optional Unity ML-Agents and Unreal Learning Agents interoperability packages.
 - JAX and RLlib integrations.
 - Reference BC, PPO, IMPALA/V-trace, and DAgger examples outside the core.
 - Evaluation suites, curriculum contracts, reward ablation reports, snapshots,
