@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.4.0...v0.5.0) (2026-08-31)
+
+
+### Features
+
+* add bounded knowledge injection ([08ca15f](https://github.com/loonghao/GameLearningRuntime/commit/08ca15fb2fd2e2dd74783300d16f69a633c3a4a4))
+* bind demonstration provenance to trajectory bytes ([fcb3e6e](https://github.com/loonghao/GameLearningRuntime/commit/fcb3e6ef6dfbab4bd5416d41a57794a7ea26f695))
+
 ## [0.4.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.3.0...v0.4.0) (2026-08-31)
 
 
