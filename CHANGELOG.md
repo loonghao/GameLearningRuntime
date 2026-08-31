@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.3.0...v0.4.0) (2026-08-31)
+
+
+### Features
+
+* **gymnasium:** expose verified capabilities ([8fa57dd](https://github.com/loonghao/GameLearningRuntime/commit/8fa57dd115188836c4ba24f672a0fb32b15bac90))
+* **torch:** support demonstration sample weights ([01c053e](https://github.com/loonghao/GameLearningRuntime/commit/01c053e9a5002fce935298e8f291c389cdd8be59))
+
 ## [0.3.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.2.0...v0.3.0) (2026-08-31)
 
 
