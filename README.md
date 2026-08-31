@@ -48,6 +48,14 @@ single implementation language or transport.
 - A fail-closed `ContractEnvironment` wrapper that validates every boundary.
 - Capability-gated live attachment for continuing games that cannot claim a
   physical or deterministic reset.
+- Transport-neutral `BridgeDriver`, `BridgeEnvironment`, and
+  `EnvironmentBridgeDriver` ports for authenticated local HTTP, socket,
+  named-pipe, gRPC, or native transports.
+- Strict `glr.training.v1` JSON configuration for bounded authoritative or
+  advisory knowledge sources, reset/attach collection policy, required bridge
+  capabilities, and auditable weighted reward terms.
+- A data-only `RewardComposer` that rejects missing, unknown, wrong-source, or
+  non-finite signals and never evaluates configuration as code.
 - Fixed-length or terminal-bounded actor `Unroll` collection suitable for
   custom PPO and IMPALA.
 - Versioned `glr.transition.v1` JSONL records for BC, replay, and offline data.
@@ -58,10 +66,13 @@ single implementation language or transport.
   IMPALA/V-trace custom learners.
 - A privacy-safe adapter conformance runner plus synthetic turn-based,
   real-time combat, FPS, and ARPG contract profiles.
+- A project-owned `glr-adapter-builder` Agent Skill that scaffolds a runnable
+  synthetic adapter lane, gameplay-research provenance, reward configuration,
+  and reset/attach conformance tests.
 
-Game-specific runtime adapters, generated C#/C++/Rust protocol SDKs,
-distributed actor transport, complete trainers, and reference model
-architectures remain roadmap items.
+Game-specific runtime adapters, concrete transport packages, generated
+C#/C++/Rust protocol SDKs, distributed actor transport, complete trainers, and
+reference model architectures remain roadmap items.
 
 ## Install
 
@@ -121,6 +132,24 @@ the game world was reset or seeded. `stop_on_done=True` keeps a long-running
 live-game unroll from silently continuing into a second physical episode; the
 default remains fixed-length collection across resets.
 
+Define knowledge and reward policy without executable expressions:
+
+```python
+from game_learning_runtime import RewardComposer, RewardSignal, load_training_config
+
+config = load_training_config("training.json")
+reward = RewardComposer(config).compose(
+    [RewardSignal(name="progress", source="runtime", value=0.25)]
+)
+print(reward.total, reward.contributions)
+```
+
+Runtime telemetry should be `authoritative`; web guides and strategy priors
+should be `advisory`. Reward terms require authoritative sources by default.
+The project Skill at `.agents/skills/glr-adapter-builder` shows new agents how
+to research current gameplay, preserve provenance, scaffold a trainable seam,
+and validate the bridge without publishing local or proprietary information.
+
 Run the complete example from a clone:
 
 ```powershell
@@ -162,7 +191,7 @@ Any uv-managed Python repository can call the public reusable workflow:
 ```yaml
 jobs:
   quality:
-    uses: loonghao/GameLearningRuntime/.github/workflows/reusable-python-ci.yml@v0.1.0
+    uses: loonghao/GameLearningRuntime/.github/workflows/reusable-python-ci.yml@v0.2.0
     with:
       python-versions: '["3.10", "3.12"]'
       sync-args: "--frozen --all-groups"
@@ -179,6 +208,8 @@ receives deployment secrets and only checks out/tests the calling repository.
 - [Adapt an existing Gymnasium environment](docs/guides/adapting-gymnasium.md)
 - [Compose custom Torch objectives](docs/guides/using-torch-objectives.md)
 - [Validate an adapter with the conformance runner](docs/guides/adapter-conformance.md)
+- [Build a reusable runtime bridge](docs/guides/runtime-bridges.md)
+- [Configure knowledge sources and rewards](docs/guides/knowledge-and-rewards.md)
 - [Architecture](docs/architecture/overview.md)
 - [Protocol and data flow](docs/architecture/data-flow.md)
 - [Local development](docs/runbooks/local-development.md)

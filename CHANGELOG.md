@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-31
+
 ### Added
 
 - Optional terminal-bounded synchronous collection with `stop_on_done=True`,
@@ -28,6 +30,15 @@ All notable changes to this project are documented here. The format follows
 - A reusable environment conformance runner and four synthetic contract
   profiles covering turn-based masks, real-time hybrid actions, FPS controls,
   and nested ARPG actions.
+- Transport-neutral client and server bridge ports with protocol/capability
+  negotiation, immutable reset/step requests, episode/step fencing, metadata
+  deny-by-default, and no implicit action retry.
+- Strict `glr.training.v1` knowledge-source, lifecycle, bridge-capability, and
+  reward configuration with source authority checks and immutable reward
+  contribution breakdowns.
+- A project-owned adapter-builder Agent Skill with a synthetic reset/attach
+  scaffold, provenance-first gameplay research workflow, and a privacy-safe
+  research-manifest validator.
 
 ### Fixed
 
@@ -45,5 +56,6 @@ All notable changes to this project are documented here. The format follows
 - Optional TorchRL environment adapter.
 - Counter environment example, documentation, reusable CI, and release CD.
 
-[Unreleased]: https://github.com/loonghao/GameLearningRuntime/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/loonghao/GameLearningRuntime/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/loonghao/GameLearningRuntime/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/loonghao/GameLearningRuntime/releases/tag/v0.1.0
