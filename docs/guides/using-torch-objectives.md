@@ -40,13 +40,16 @@ terms = behavior_cloning_loss(
     policy_logits,
     expert_actions,
     action_mask=action_mask,
+    sample_weight=demonstration_sample_weight,
     label_smoothing=0.05,
 )
 terms.loss.backward()
 ```
 
 The result also exposes negative log-likelihood, entropy, and detached accuracy.
-Label smoothing distributes probability only across valid actions.
+Label smoothing distributes probability only across valid actions. Pass the
+per-sample weight returned by `DemonstrationGate` to preserve its audited
+origin/outcome policy in the optimizer objective.
 
 ## PPO and GAE
 
