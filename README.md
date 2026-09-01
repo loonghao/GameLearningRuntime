@@ -8,12 +8,17 @@ English | [简体中文](README.zh-CN.md)
 [![Rust](https://img.shields.io/badge/Rust-1.98.0-000000.svg)](rust-toolchain.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Game Learning Runtime (GLR) is a learner-neutral contract between game runtimes
-and learning systems. Describe observations, actions, masks, rewards, events,
-and episode boundaries once; reuse that adapter with TorchRL, custom PPO or
-IMPALA, behavior cloning, offline datasets, evaluation, and automated QA.
+Game Learning Runtime (GLR) is an agent-first, learner-neutral control plane for
+game learning. It gives an agent one stable JSON CLI and strict contracts to
+start an authorized game bridge, train while recording review video, query prior
+runs and world knowledge, research guides, revise bounded training and reward
+plans, and reproduce a verified model bundle in a new game instance.
 
-> A universal runtime for connecting games to learning systems and AI agents.
+Define observations, actions, masks, rewards, events, and episode boundaries
+once. The same adapter remains reusable with TorchRL, custom PPO or IMPALA,
+behavior cloning, offline datasets, evaluation, and automated QA.
+
+> A game-learning runtime designed to be operated by agents.
 
 GLR is for games and test environments you own or are authorized to instrument.
 It does not include anti-cheat bypasses, stealth injection, or game-specific
@@ -68,7 +73,9 @@ engine, transport, or algorithm.
 | Collection | Fixed-length or terminal-bounded unrolls for PPO/IMPALA plus `glr.transition.v1` JSONL for BC/offline use |
 | Integrations | Optional Gymnasium, TorchRL 0.13, and model-neutral PyTorch BC/PPO/GAE/V-trace objectives |
 | Validation | Fail-closed contract wrapper and privacy-safe synthetic conformance profiles |
-| Agent workflow | `glr-adapter-builder` Skill for provenance-first research, bounded host scaffolding, deployment staging, training, and validation |
+| Agent control plane | Stable `glr` JSON CLI, strict project roles, bounded research/plan/train/evaluate goals, SQLite run queries, spatial knowledge transfer |
+| Review and supervised capture | Concurrent project-owned H.264 capture with checksummed episode/step-to-frame index |
+| Agent workflow | Separate `glr-adapter-builder` and `glr-cli` Skills for adapter construction versus operation |
 | Model reproduction | `glr.model-bundle.v1` copies config, source/lock inputs, seeds, versions, weights, metrics, and SHA-256 provenance |
 
 Game-specific adapters, authenticated target-bound local provider transport,
@@ -90,6 +97,29 @@ uv add "game-learning-runtime[torchrl]"
 uv add "game-learning-runtime[torch]"
 uv add "game-learning-runtime[gymnasium,torchrl]"
 ```
+
+### Agent-operated project
+
+Once an authorized project provides `glr-project.json` and its fixed bridge
+roles, an agent can use the same machine-readable interface for the complete
+workflow:
+
+```powershell
+glr --project . --json runtime start
+glr --project . --json train
+glr --project . --json goal run --goal goals/reach-destination.json
+glr --project . --json query entities --world forest --kind shrine
+glr --project . --json query routes --world forest --to-entity shrine.forest-1
+glr --project . --json query research --tag navigation
+glr --project . --json play --bundle artifacts/model-bundle
+```
+
+The project manifest owns exact executable paths, environment identity, data
+locations, and runtime/trainer/player/researcher/planner/evaluator/recorder
+roles. GLR validates and orchestrates those roles; it does not embed a
+game-specific launcher, scraper, or learning algorithm.
+
+### Library integration
 
 Collect a learner-neutral unroll:
 
@@ -115,6 +145,35 @@ unroll = collector.collect(policy, steps=128, stop_on_done=True)
 
 Attach starts a fresh logical GLR episode at step zero. It never claims that the
 physical game world was reset or seeded.
+
+## From a user goal to verified replay
+
+```text
+user goal + hard budgets
+          │
+          ▼
+allowed rules / text / video + prior runs / spatial knowledge
+          │
+          ▼
+research ──► plan ──► train + indexed video ──► authoritative evaluation
+                ▲                                      │
+                └──────── bounded revision ────────────┘
+                                                       │
+                                                       ▼
+                                   queryable evidence + model bundle
+                                                       │
+                                                       ▼
+                                      verified replay in a new instance
+```
+
+Training can run a project-owned small-window recorder concurrently and bind its
+H.264 output to episode/step IDs for human review and later supervised-data
+selection. Goal runs gather allowed official rules, text guides, video tutorials,
+and runtime traces through the configured researcher; adjust declarative reward
+plans between bounded trials; and stop only on matching authoritative runtime
+metrics. Guides and transferred knowledge remain advisory until fresh runtime
+evidence verifies them. See [Operate GLR as an agent-first control
+plane](docs/guides/agent-first-cli.md).
 
 ## Unity and Unreal integration lanes
 
@@ -292,6 +351,11 @@ reproduction environment. Replace the learner while preserving the
 `glr.model-bundle.v1` gate; see [reproducible model
 bundles](docs/guides/reproducible-model-bundles.md).
 
+For projects whose bridge already exists, use the separate
+[`glr-cli` Skill](.agents/skills/glr-cli/SKILL.md). It teaches agents to configure
+and operate runtime, training capture, goal loops, history queries, knowledge
+transfer, and verified playback without changing adapter internals.
+
 ## TorchRL and custom learners
 
 Use the optional TorchRL adapter:
@@ -353,6 +417,7 @@ runbook](docs/runbooks/release.md).
 ## Documentation
 
 - [Getting started](docs/guides/getting-started.md)
+- [Operate GLR as an agent-first control plane](docs/guides/agent-first-cli.md)
 - [Build a reusable runtime bridge](docs/guides/runtime-bridges.md)
 - [Connect Unity and Unreal runtimes](docs/guides/engine-runtime-integration.md)
 - [Use the Runtime Host and C#/C++ provider SDKs](docs/guides/runtime-host-and-provider-sdks.md)

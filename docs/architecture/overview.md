@@ -26,6 +26,7 @@ versioning, and low adoption cost for local vx/uv projects.
 │ TrainingConfig │ RewardComposer │ knowledge source policy     │
 │ RuntimeIntegrationProfile: engine │ loader │ external         │
 │ ModelBundleManifest: inputs │ seeds │ artifacts │ SHA-256       │
+│ Agent CLI │ goal loop │ run store │ indexed review capture    │
 │ privacy-safe adapter conformance runner                      │
 │ BridgeEnvironment (client) │ EnvironmentBridgeDriver (server)│
 ├─────────────────────────────────────────────────────────────┤
@@ -88,6 +89,21 @@ and per-file SHA-256. It contains portable relative paths only and fails closed
 on linked, missing, resized, or modified entries. It captures a reproduction
 environment without claiming hardware-level determinism or model quality.
 
+The local `glr` control plane composes project-owned roles without importing
+their implementations. `glr.project.v1` binds fixed argv commands to one
+project-relative bridge and exact environment/protocol identity. The SQLite run
+store is a query projection for lifecycle, scalar metrics, artifacts, spatial
+knowledge, and cited research; tensors, transitions, videos, and model bytes
+remain checksummed artifacts. The bounded goal loop can refresh research and
+adjust declarative reward terms between trials, but only persisted authoritative
+runtime metrics can satisfy its machine-readable criteria.
+
+Concurrent capture is also a port: a project recorder owns OS/window capture
+and emits H.264 plus a step/frame index. GLR validates and hashes those files;
+it does not choose a platform capture API or label policy output as expert data.
+Spatial imports require exact environment/protocol identity and become advisory
+until re-observed. Only cited family-scoped findings can cross game boundaries.
+
 Existing Gymnasium environments enter through a deny-by-default compatibility
 adapter. Native Rust now owns the bounded Runtime Host lifecycle/framing slice
 and remains reserved for benchmark-proven storage and actor data-plane work; it
@@ -130,6 +146,9 @@ environment IDs, metadata, paths, and timestamps never enter its report.
 | Policy output relabelled as expert | BC provenance/outcome allowlist fails closed | Deliberate distillation policy |
 | Loader mismatch or unknown action | Exact loader tag plus empty-deny vocabulary | Version-specific live acceptance matrix |
 | Model/config drift | Bundle verifier identifies the changed relative entry | Signed model and dataset attestations |
+| Guide or video claim treated as success | Goal evaluator requires matching persisted authoritative metrics | Signed runtime evidence receipts |
+| Stale imported world position | Import downgrades it to advisory and preserves source run | Runtime refresh/expiry policy |
+| Capture video lacks step alignment | Required capture fails without a valid frame index | Hardware timestamp calibration |
 | Oversized/stale Host request | Reject before provider execution; never retry mutation | Authenticated target-bound local IPC |
 | Host/provider SDK schema drift | Rust, Python, C#, and C++ contract gates | Generated SDK codecs after schema stabilizes |
 

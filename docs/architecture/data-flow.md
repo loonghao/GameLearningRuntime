@@ -100,6 +100,33 @@ then encodes the immutable context alongside observations. Snapshot provenance,
 freshness, payload bounds, and digest are checked before selection. The context
 cannot alter adapter masks or acknowledge runtime effects.
 
+## Agent-first goal flow
+
+```text
+glr.agent-goal.v1 + hard budgets
+        │
+        ├──▶ project researcher ──▶ cited research bundle (advisory)
+        ├──▶ project planner    ──▶ bounded trial/reward plan
+        ├──▶ project trainer    ──▶ transitions + persisted metrics
+        │                              └── concurrent MP4 + step/frame index
+        └──▶ project evaluator  ──▶ evidence matched to persisted metrics
+                                             │
+                  authoritative criteria met? ── yes: stop
+                                             └── no: refresh/adjust within budget
+```
+
+The roles are fixed project commands and remain outside the learner-neutral
+core. A research source can inform a plan but cannot acknowledge an action or
+prove success. Evaluator claims must match the active run's stored metric name,
+value, source, and authority. A trial, training-step, wall-clock, or unique
+source budget cannot be expanded by a role.
+
+The run database stores query projections and artifact hashes, not observation
+tensors. Exact-environment entity/route snapshots can move to a fresh instance
+only when environment and protocol match, and imports become advisory. Similar
+games can reuse family-scoped research findings, never coordinates, action
+authority, or model compatibility.
+
 ## Learning paths
 
 - PPO consumes fixed-length `Unroll` values; the optional PyTorch integration
@@ -122,4 +149,7 @@ Training policy uses `glr.training.v1`; the Runtime Host envelope uses
 `glr.host.v1`. Unknown fields fail closed so spelling
 mistakes do not silently change reward behavior. Gameplay research uses a
 separate `glr.knowledge-research.v1` design manifest and is never loaded as an
-executable runtime configuration.
+executable runtime configuration. Agent orchestration adds strict
+`glr.project.v1`, `glr.agent-goal.v1`, `glr.research-bundle.v1`,
+`glr.trial-plan.v1`, `glr.goal-evidence.v1`, `glr.capture.v1`, and
+`glr.spatial-knowledge.v1` contracts without changing the runtime protocol.

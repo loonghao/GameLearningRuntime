@@ -35,6 +35,9 @@ dependencies = [
   "numpy>=1.26,<2.3",
 ]
 
+[project.scripts]
+glr = "game_learning_runtime.cli:entrypoint"
+
 [project.optional-dependencies]
 torch = [
   "torch>=2.8",

@@ -200,7 +200,10 @@ class JsonLineHostChannel:
             self._process.wait(timeout=self._request_timeout_seconds)
         except subprocess.TimeoutExpired:
             self._process.kill()
-            self._process.wait(timeout=self._request_timeout_seconds)
+            # A request deadline can be only a few milliseconds. Windows process
+            # teardown is not a protocol request and needs enough time to reap the
+            # killed child under test/coverage load.
+            self._process.wait(timeout=max(self._request_timeout_seconds, 1.0))
 
     def _read_responses(self) -> None:
         try:
