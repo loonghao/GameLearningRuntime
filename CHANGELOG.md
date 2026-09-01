@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.7.0...v0.8.0) (2026-09-01)
+
+
+### Features
+
+* trace knowledge injection queries ([e6c067d](https://github.com/loonghao/GameLearningRuntime/commit/e6c067d24c4ce89c49d2909875c4d21242a5646f))
+
 ## [0.7.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.6.1...v0.7.0) (2026-09-01)
 
 
