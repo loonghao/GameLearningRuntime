@@ -4,6 +4,14 @@ Game Learning Runtime uses Release Please to turn English Conventional Commits
 on `main` into a reviewed release pull request. Maintainers do not edit the
 version, changelog, or tag by hand.
 
+The manifest uses Release Please's `python` strategy as the root version
+coordinator because GLR has a Python SDK plus a pure virtual Cargo workspace
+whose members inherit `workspace.package.version`. Release Please's Rust
+strategy requires scalar `package.version` values in every manifest and cannot
+update this workspace shape. The selected strategy does not change the primary
+runtime entrypoint: the same release workflow still builds and publishes the
+standalone Rust CLI and Runtime Host archives.
+
 ## Normal release
 
 1. Merge feature and fix pull requests only after all required checks pass.
