@@ -188,9 +188,30 @@ def test_ppo_loss_uses_masked_policy_and_explicit_components() -> None:
     assert result.loss.item() == pytest.approx(-1.25)
     assert result.approximate_kl.item() == pytest.approx(0.0)
     assert result.clip_fraction.item() == pytest.approx(0.0)
+    assert result.forced_action_ratio.item() == pytest.approx(0.5)
+    assert result.mean_valid_actions.item() == pytest.approx(1.5)
     result.loss.backward()
     assert torch.isfinite(logits.grad).all()
     assert torch.isfinite(values.grad).all()
+
+
+def test_ppo_reports_degenerate_one_hot_action_masks() -> None:
+    result = ppo_loss(
+        policy_logits=torch.zeros((3, 3)),
+        actions=torch.tensor([0, 1, 2]),
+        old_log_prob=torch.zeros(3),
+        advantages=torch.ones(3),
+        values=torch.zeros(3),
+        value_targets=torch.zeros(3),
+        action_mask=torch.tensor(
+            [[True, False, False], [True, True, False], [False, False, True]]
+        ),
+        normalize_advantage=False,
+        entropy_coefficient=0.0,
+    )
+
+    assert result.forced_action_ratio.item() == pytest.approx(2 / 3)
+    assert result.mean_valid_actions.item() == pytest.approx(4 / 3)
 
 
 def test_ppo_metrics_remain_finite_for_extreme_log_probability_drift() -> None:
