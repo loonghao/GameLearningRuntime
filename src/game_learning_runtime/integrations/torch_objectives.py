@@ -49,6 +49,8 @@ class PPOLoss:
     entropy: Tensor
     approximate_kl: Tensor
     clip_fraction: Tensor
+    forced_action_ratio: Tensor
+    mean_valid_actions: Tensor
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +352,17 @@ def ppo_loss(
     loss = policy_loss + value_coefficient * value_loss - entropy_coefficient * entropy
     approximate_kl = ((ratio - 1.0) - log_ratio).mean().detach()
     clip_fraction = ((ratio - 1.0).abs() > clip_epsilon).to(policy_logits.dtype).mean().detach()
+    if action_mask is None:
+        valid_action_counts = torch.full(
+            expected_shape,
+            policy_logits.shape[-1],
+            dtype=policy_logits.dtype,
+            device=policy_logits.device,
+        )
+    else:
+        valid_action_counts = action_mask.sum(dim=-1).to(policy_logits.dtype)
+    forced_action_ratio = (valid_action_counts < 2).to(policy_logits.dtype).mean().detach()
+    mean_valid_actions = valid_action_counts.mean().detach()
     return PPOLoss(
         loss=loss,
         policy_loss=policy_loss,
@@ -357,6 +370,8 @@ def ppo_loss(
         entropy=entropy,
         approximate_kl=approximate_kl,
         clip_fraction=clip_fraction,
+        forced_action_ratio=forced_action_ratio,
+        mean_valid_actions=mean_valid_actions,
     )
 
 
