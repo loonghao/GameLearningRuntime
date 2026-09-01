@@ -28,12 +28,22 @@ def test_release_metadata_tracks_package_version() -> None:
     assert manifest["."] == version.group("version")
 
 
+def test_release_strategy_supports_the_virtual_rust_workspace() -> None:
+    config = json.loads((ROOT / "release-please-config.json").read_text(encoding="utf-8"))
+    with (ROOT / "Cargo.toml").open("rb") as stream:
+        workspace = tomllib.load(stream)
+
+    assert "package" not in workspace
+    assert workspace["workspace"]["members"] == ["crates/glr-cli", "crates/glr-host"]
+    assert config["packages"]["."]["release-type"] == "python"
+
+
 def test_release_please_owns_all_version_surfaces() -> None:
     config = json.loads((ROOT / "release-please-config.json").read_text(encoding="utf-8"))
     package = config["packages"]["."]
     extra_files = {(entry["type"], entry["path"]) for entry in package["extra-files"]}
 
-    assert package["release-type"] == "rust"
+    assert package["release-type"] == "python"
     assert package["package-name"] == "game-learning-runtime"
     assert package["changelog-path"] == "CHANGELOG.md"
     assert ("toml", "pyproject.toml") in extra_files

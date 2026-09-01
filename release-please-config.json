@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/v17.11.2/schemas/config.json",
   "packages": {
     ".": {
-      "release-type": "rust",
+      "release-type": "python",
       "package-name": "game-learning-runtime",
       "changelog-path": "CHANGELOG.md",
       "include-v-in-tag": true,
