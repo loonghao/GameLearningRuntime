@@ -118,8 +118,9 @@ glr --project . --json report build <run-id> --output review/report
 ```
 
 The report builder rejects missing, symlinked, out-of-run, size-mismatched, or
-SHA-256-mismatched artifacts before writing. It registers the generated page as
-`run-report` and remains safe to rerun. Its timeline and panels are driven only
+SHA-256-mismatched evidence artifacts before writing. It omits prior
+`run-report` outputs to avoid a self-referential hash, registers the generated
+page as `run-report`, and remains safe to rerun. Its timeline and panels are driven only
 by persisted events: `navigation.route_sample` for route traces,
 `progression.item_unlocked` / `progression.catalog_snapshot` for unlocks, and
 `match.result` for completed matches. Treat `match_kind=pvp` as meaningful only

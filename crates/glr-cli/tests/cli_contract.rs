@@ -115,6 +115,7 @@ fn standalone_cli_is_the_project_entrypoint_and_persists_runs() {
     let report = stdout(&run(project.path(), &["report", "build", run_id]));
     assert_eq!(report["command"], "report.build");
     assert_eq!(report["data"]["schema_version"], "glr.run-report.v1");
+    let first_report_sha256 = report["data"]["sha256"].as_str().unwrap();
     let report_path = project
         .path()
         .join(".glr/runs")
@@ -131,6 +132,7 @@ fn standalone_cli_is_the_project_entrypoint_and_persists_runs() {
     assert!(report_html.contains("Checksummed artifacts"));
     let rebuilt = stdout(&run(project.path(), &["report", "build", run_id]));
     assert_eq!(rebuilt["command"], "report.build");
+    assert_eq!(rebuilt["data"]["sha256"], first_report_sha256);
     let custom_report = stdout(&run(
         project.path(),
         &["report", "build", run_id, "--output", "review/report"],

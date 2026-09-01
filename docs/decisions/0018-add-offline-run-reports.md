@@ -26,7 +26,9 @@ artifact bytes, emits an offline `index.html`, and registers it as a
 `run-report` artifact. The bundled UI is data-only and uses bounded, escaped
 runtime values. Namespaced adapter events provide optional projections for
 routes (`navigation.route_*`), progression (`progression.*`), and matches
-(`match.result`); unsupported projections remain visibly empty.
+(`match.result`); unsupported projections remain visibly empty. Existing
+`run-report` artifacts are omitted from the embedded artifact list so the
+generated report does not hash itself and remains stable on rerun.
 
 The report layer never starts a runtime, sends an action, infers semantic state
 from pixels, or changes tensor/learner contracts. Adapter semantics and
