@@ -169,6 +169,13 @@ the configured item budget, then binds the result to the exact payload digest.
 Preserve the snapshot files, `training.json`, query construction version, and
 learner encoder in the model bundle.
 
+The returned context metadata also contains a deterministic `query_sha256` and
+the normalized `observed_at` timestamp. Persist these values with the learner
+step or run manifest so an evaluation can distinguish a changed knowledge
+query from a changed model. The fingerprint covers intents, stage, tags,
+`max_items`, and `min_confidence`; it does not contain knowledge text or
+runtime identifiers.
+
 Snapshot text is untrusted advisory data. Do not execute it, treat it as a
 prompt with tool authority, use it to widen masks, or use it as proof that an
 action or upgrade succeeded. Runtime observation still decides what is
