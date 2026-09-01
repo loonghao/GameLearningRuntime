@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.5.0...v0.6.0) (2026-09-01)
+
+
+### Features
+
+* add agent-first training control plane ([240a02e](https://github.com/loonghao/GameLearningRuntime/commit/240a02e3e25f5575b710884891b28652cafa993d))
+* make rust cli the primary entrypoint ([b3da49e](https://github.com/loonghao/GameLearningRuntime/commit/b3da49ea44054ac96da0ca8336c764fb1ef7c26c))
+
+
+### Bug Fixes
+
+* support virtual workspace releases ([9f87d76](https://github.com/loonghao/GameLearningRuntime/commit/9f87d7649a9acd7866c0ca17c1caa59c054035ea))
+
 ## [0.5.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.4.0...v0.5.0) (2026-08-31)
 
 
