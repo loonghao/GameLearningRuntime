@@ -13,6 +13,13 @@ needed to inspect and rerun its training. A bundle contains:
 - copied model artifacts and aggregate metrics; and
 - relative path, byte size, and SHA-256 for every file.
 
+For an agent-first run, include the exact goal, research bundle, trial plans,
+training/safety configuration, selected transition manifests, and capture
+manifests as inputs. You may also include a `glr.spatial-knowledge.v1` export
+for a fresh instance of the same environment and protocol. Import that snapshot
+separately with `glr knowledge import`; GLR downgrades it to advisory until the
+new runtime observes it again.
+
 Build a bundle from an adapter trainer:
 
 ```python

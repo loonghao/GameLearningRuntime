@@ -11,6 +11,12 @@
 - 模型产物与聚合指标；
 - 每个文件的相对路径、字节数和 SHA-256。
 
+对于 Agent-first run，应把准确的 goal、research bundle、trial plan、训练/安全配置、
+选中的 transition manifest 和 capture manifest 一起作为 inputs。也可以为同一
+environment/protocol 的新实例加入 `glr.spatial-knowledge.v1` 导出文件；使用
+`glr knowledge import` 单独导入后，这些位置和路线会先降级为 advisory，直到新运行时
+再次观察确认。
+
 训练器可直接创建模型包：
 
 ```python

@@ -1,0 +1,169 @@
+# 使用 GLR Agent-first CLI
+
+当一个已授权的游戏项目已经提供经过审查的 GLR 桥接器时，使用 `glr` CLI 让 Agent
+启动项目角色、记录可查询证据、并发录制小窗视频、按预算追求目标，并在新实例中加载
+空间知识或模型包。若仍需实现观察、动作、传输、生命周期、目标绑定或动作后验证，请使用
+`glr-adapter-builder`，而不是把这些语义塞进 CLI。
+
+## 配置项目
+
+在项目根目录创建严格的 `glr-project.json`。路径必须相对项目，命令必须是固定 argv；
+GLR 不调用 shell。
+
+```json
+{
+  "schema_version": "glr.project.v1",
+  "environment_id": "example.adventure-v1",
+  "environment_family": "action-rpg",
+  "protocol_version": "1.0",
+  "data_dir": ".glr",
+  "bridge_path": "bridge",
+  "runtime": {"argv": ["python", "tools/runtime.py", "{bridge_path}"]},
+  "trainer": {"argv": ["python", "tools/train.py"]},
+  "player": {"argv": ["python", "tools/play.py", "{bundle}"]},
+  "researcher": {"argv": ["python", "tools/research.py", "{research_path}"]},
+  "planner": {"argv": ["python", "tools/plan.py", "{trial_path}"]},
+  "evaluator": {"argv": ["python", "tools/evaluate.py", "{evaluation_path}"]},
+  "capture": {
+    "argv": ["python", "tools/record_window.py", "{capture_video}", "{capture_index}"],
+    "required": true,
+    "stop": "stdin-q",
+    "video_file": "capture.mp4",
+    "index_file": "capture-index.jsonl",
+    "codec": "h264",
+    "frame_rate": 12,
+    "width": 640,
+    "height": 360
+  }
+}
+```
+
+录制器属于项目，因为只有项目知道经过审查的游戏窗口和采集接口。对于训练时的小窗，
+可以从 640×360、12 FPS 开始，以 UI 可辨认和训练可用为准，不追求展示级画质。
+
+项目角色会收到 `GLR_PROJECT_ROOT`、`GLR_BRIDGE_PATH`、`GLR_RUN_ID`、`GLR_RUN_DIR`、
+`GLR_STORE_PATH`、环境身份、录制输出路径和 goal loop 路径。每个角色仍需独立验证准确的
+游戏目标，不能依赖 CLI 猜测进程或窗口。
+
+## 启动与训练
+
+```powershell
+glr --project . --json runtime start
+glr --project . --json train
+```
+
+`train` 会先启动录制 sidecar，再启动训练器，结束后停止录制器。完整录制包含：
+
+- 供人 review 的小尺寸 H.264 MP4；
+- 把 `(episode_id, step_id)` 对齐到视频 frame/PTS 的 NDJSON 索引；
+- 记录 codec、FPS、分辨率、大小和 SHA-256 的 manifest。
+
+这样后续可以从视频中筛选人认可的片段，再与动作和 transition 对齐。但普通 policy
+rollout 不能自动标成专家示范；进入行为克隆或监督学习前，仍需通过 demonstration
+provenance 门禁。只有明确不需要 review/监督数据时才使用 `--no-capture`。
+
+## 让 Agent 按目标闭环
+
+目标使用 `glr.agent-goal.v1`，必须包含稳定的目标 ID、环境品类、机器可判断的成功指标，
+以及最大 trial、训练 step、总时长和资料源数量。例如：
+
+```json
+{
+  "schema_version": "glr.agent-goal.v1",
+  "goal_id": "goal.reach-destination",
+  "objective": "到达指定地点，并由运行时确认已经抵达。",
+  "environment_family": "action-rpg",
+  "success_criteria": [
+    {
+      "metric": "objective.arrived",
+      "operator": "gte",
+      "target": 1,
+      "source": "runtime.telemetry"
+    }
+  ],
+  "budget": {
+    "max_trials": 8,
+    "max_training_steps": 50000,
+    "max_wall_seconds": 14400,
+    "max_research_sources": 64
+  },
+  "allowed_research_media": ["official-rules", "text-guide", "video-tutorial"]
+}
+```
+
+执行：
+
+```powershell
+glr --project . --json goal run --goal goals/reach-destination.json
+```
+
+控制环顺序为：
+
+```text
+目标 + 硬预算
+  -> researcher：带来源的攻略/规则/教程结论
+  -> planner：本轮训练方案与声明式奖励项
+  -> trainer：训练、指标、视频与产物
+  -> evaluator：绑定已保存权威指标的证据
+  -> 达标则停止；未达标则补充资料并调整下一轮
+```
+
+失败后的 research/planner 会得到上一轮资料和评估路径，因此可以在遇到难点时再看文字
+攻略、修正视频教程假设或调整奖励。但所有轮次合计仍不能突破最初的资料源、trial、step
+和时长预算。
+
+官方规则、文字攻略和视频教程只能产生 advisory 结论。Evaluator 的 value、source、
+authority 和 run ID 必须与当前 trial 新写入 SQLite 的 metric 完全匹配；只有
+`authoritative` 运行时证据能满足成功条件。
+
+## 查询训练历史与世界知识
+
+```powershell
+glr --project . --json runs list --limit 20
+glr --project . --json runs show RUN_ID
+glr --project . --json query entities --world forest --kind shrine --name 土地庙
+glr --project . --json query routes --world forest --to-entity shrine.forest-1
+glr --project . --json query research --tag navigation --category strategy
+glr --project . --json query research --verified-only
+```
+
+输出采用稳定的 `glr.cli-output.v1`。`runs show` 返回事件、指标、产物角色、哈希与元数据。
+SQLite 只保存方便 Agent 查询的投影；transition、tensor、视频和模型仍是普通、可校验的
+训练产物。
+
+Research 查询会合并当前游戏、同品类和通用结论，并排除 rejected 结论。路线和攻略始终
+是建议；Agent 在当前实例中仍需重新观察，并验证每个动作的后置状态。
+
+## 在新实例迁移与复现
+
+导出已经探索到的实体和路线：
+
+```powershell
+glr --project . --json knowledge export --output artifacts/spatial-knowledge.json
+```
+
+在同一环境/协议的新 checkout 或新游戏实例中导入：
+
+```powershell
+glr --project . --json knowledge import --input artifacts/spatial-knowledge.json
+```
+
+环境或协议不一致时 GLR 会拒绝；导入后的坐标和路线会降级为 advisory，直到新实例再次
+观察确认。对于同品类但不同游戏，只复用 family-scoped 攻略/策略结论，不能迁移世界坐标、
+动作语义或默认认为模型兼容。
+
+加载经过校验的模型包：
+
+```powershell
+glr --project . --json play --bundle artifacts/model-bundle
+```
+
+`play` 会先逐文件校验哈希，并要求 environment/protocol 完全一致，再启动项目 player。
+“成功加载”不等于“成功复现”。必须在新实例再次运行权威 evaluator，并比较目标指标。
+
+## 失败边界
+
+以下情况 CLI 会停止：必需角色或录制失败、严格 JSON 无效、预算超限、资料类型未授权、
+奖励引用未知结论、空间/模型身份不匹配，或 evaluator 证据找不到对应的已保存 metric。
+
+使用返回的 run ID 执行 `runs show`。不要为了变绿而放松身份、权威性、来源或预算检查。

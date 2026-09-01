@@ -14,6 +14,7 @@
 - [ADR-0012: Use a Runtime Host and engine provider SDKs](0012-use-a-runtime-host-and-engine-provider-sdks.md)
 - [ADR-0013: Bind demonstration provenance to trajectory bytes](0013-bind-demonstration-provenance-to-trajectory-bytes.md)
 - [ADR-0014: Inject bounded advisory knowledge contexts](0014-inject-bounded-advisory-knowledge-contexts.md)
+- [ADR-0015: Add an agent-first local control plane](0015-add-an-agent-first-local-control-plane.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

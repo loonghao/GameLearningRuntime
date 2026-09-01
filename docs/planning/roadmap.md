@@ -26,14 +26,18 @@ This document describes future work, not current capability.
   upstream compatibility matrices and live acceptance fixtures exist.
 - Add signed model/dataset attestations and platform metadata without weakening
   the portable `glr.model-bundle.v1` core.
+- Add authenticated multi-machine coordination around the implemented local
+  agent control plane without turning project roles into remote script endpoints.
+- Add dataset-catalog projections that bind selected capture ranges to approved
+  demonstration provenance and exact transition bytes.
 
 ## Later
 
 - Optional Unity ML-Agents and Unreal Learning Agents interoperability packages.
 - JAX and RLlib integrations.
 - Reference BC, PPO, IMPALA/V-trace, and DAgger examples outside the core.
-- Evaluation suites, curriculum contracts, richer reward ablation reports, snapshots,
-  and benchmarks.
+- Multi-environment evaluation suites, richer curriculum/ablation reports, and
+  distributed goal benchmarks around the implemented bounded trial contract.
 
 Game-specific adapters remain separate packages so their engine/runtime
 dependencies never enter the core distribution.

@@ -8,11 +8,15 @@
 [![Rust](https://img.shields.io/badge/Rust-1.98.0-000000.svg)](rust-toolchain.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Game Learning Runtime（GLR）是连接游戏运行时与学习系统的学习器中立契约。
-只需定义一次观察、动作、掩码、奖励、事件和 episode 边界，同一个适配器即可
-复用于 TorchRL、自定义 PPO/IMPALA、行为克隆、离线数据集、评估与自动化 QA。
+Game Learning Runtime（GLR）是面向 Agent、同时保持学习器中立的游戏学习控制面。
+它为 Agent 提供稳定的 JSON CLI 与严格契约：启动已授权的游戏桥接器、边训练边录制
+review 视频、查询历史训练和世界知识、研究攻略、在预算内调整训练与奖励方案，并在新
+游戏实例中复现经过验证的模型包。
 
-> 一个把游戏连接到学习系统和 AI Agent 的通用运行时。
+观察、动作、掩码、奖励、事件和 episode 边界只需定义一次。同一个适配器仍可复用于
+TorchRL、自定义 PPO/IMPALA、行为克隆、离线数据集、评估与自动化 QA。
+
+> 一个专门设计为由 Agent 操作的游戏学习运行时。
 
 GLR 只适用于你拥有或已获授权进行集成的游戏与测试环境。项目不包含反作弊绕过、
 隐蔽注入或针对具体游戏的逆向代码。
@@ -63,7 +67,9 @@ Unity、Unreal、Source、原生程序还是测试模拟器。GLR 标准化的�
 | 采集 | 面向 PPO/IMPALA 的定长或终止边界 unroll，以及面向 BC/离线训练的 `glr.transition.v1` JSONL |
 | 集成 | 可选 Gymnasium、TorchRL 0.13 与模型中立的 PyTorch BC/PPO/GAE/V-trace objective |
 | 验证 | 失败即关闭的契约包装器与隐私安全的合成 conformance profiles |
-| Agent 工作流 | `glr-adapter-builder` Skill，用于带来源的玩法研究、有界宿主脚手架、部署暂存、训练和验证 |
+| Agent 控制面 | 稳定的 `glr` JSON CLI、严格项目角色、有预算的 research/plan/train/evaluate 闭环、SQLite 历史查询与空间知识迁移 |
+| Review 与监督采集 | 并发的项目自有 H.264 小窗录制，以及带校验和的 episode/step-to-frame 索引 |
+| Agent 工作流 | `glr-adapter-builder` 与 `glr-cli` 两个独立 Skill，分别负责适配器构建与日常操作 |
 | 模型复现 | `glr.model-bundle.v1` 保存配置、源码/锁文件、种子、版本、权重、指标与 SHA-256 溯源 |
 
 具体游戏适配器、经过认证且 target-bound 的本地 Provider 传输、分布式 actor 传输、
@@ -84,6 +90,27 @@ uv add "game-learning-runtime[torchrl]"
 uv add "game-learning-runtime[torch]"
 uv add "game-learning-runtime[gymnasium,torchrl]"
 ```
+
+### Agent 操作项目
+
+已授权项目提供 `glr-project.json` 和固定桥接角色后，Agent 可以通过同一套机器可读接口
+完成整个工作流：
+
+```powershell
+glr --project . --json runtime start
+glr --project . --json train
+glr --project . --json goal run --goal goals/reach-destination.json
+glr --project . --json query entities --world forest --kind shrine
+glr --project . --json query routes --world forest --to-entity shrine.forest-1
+glr --project . --json query research --tag navigation
+glr --project . --json play --bundle artifacts/model-bundle
+```
+
+项目清单负责声明准确的可执行文件路径、环境身份、数据位置，以及
+runtime/trainer/player/researcher/planner/evaluator/recorder 角色。GLR 负责验证和编排
+这些角色，但不会把具体游戏启动器、爬虫或学习算法写死在核心中。
+
+### 作为库接入
 
 采集一个与学习器无关的 unroll：
 
@@ -108,6 +135,32 @@ unroll = collector.collect(policy, steps=128, stop_on_done=True)
 
 Attach 会从 step 0 开始一个新的 GLR 逻辑 episode，但绝不声称物理游戏世界已被重置
 或设置了随机种子。
+
+## 从用户目标到验证复现
+
+```text
+用户目标 + 硬预算
+       │
+       ▼
+允许的规则 / 文字 / 视频 + 历史训练 / 空间知识
+       │
+       ▼
+研究 ──► 规划 ──► 训练 + 索引视频 ──► 权威运行时评估
+            ▲                              │
+            └──────── 有界调整 ────────────┘
+                                           │
+                                           ▼
+                              可查询证据 + 模型包
+                                           │
+                                           ▼
+                                   在新实例验证复现
+```
+
+训练时可以并发运行项目自有的小窗录制器，把 H.264 视频与 episode/step 对齐，既方便
+人 review，也方便后续筛选监督学习数据。Goal run 会通过配置的 researcher 获取允许的
+官方规则、文字攻略、视频教程和运行时 trace，在硬预算内调整声明式奖励与训练方案，且
+只有匹配已保存权威运行时指标时才判定成功。攻略和迁移知识在得到新运行时证据验证前
+始终只是 advisory。详见[使用 GLR Agent-first CLI](docs/guides/agent-first-cli.zh-CN.md)。
 
 ## Unity 与 Unreal 三条接入路径
 
@@ -259,6 +312,10 @@ vx run reproduce
 时仍应保留 `glr.model-bundle.v1` 校验门，详见
 [可复现模型包](docs/guides/reproducible-model-bundles.zh-CN.md)。
 
+如果项目已经有桥接器，请改用独立的
+[`glr-cli` Skill](.agents/skills/glr-cli/SKILL.md)。它负责 runtime、并发训练录制、目标闭环、
+历史查询、知识迁移和模型加载，不修改适配器内部语义。
+
 ## TorchRL 与自定义学习器
 
 使用可选 TorchRL 适配器：
@@ -317,6 +374,7 @@ macOS、Apple Silicon 的 Runtime Host 校验和压缩包及 C# Provider 包。�
 ## 文档
 
 - [入门指南](docs/guides/getting-started.md)
+- [使用 GLR Agent-first CLI](docs/guides/agent-first-cli.zh-CN.md)
 - [构建可复用运行时桥接](docs/guides/runtime-bridges.md)
 - [接入 Unity 与 Unreal 游戏运行时](docs/guides/engine-runtime-integration.zh-CN.md)
 - [使用 Runtime Host 与 C#/C++ Provider SDK](docs/guides/runtime-host-and-provider-sdks.zh-CN.md)
