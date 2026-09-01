@@ -41,6 +41,11 @@ pub enum Command {
         #[command(subcommand)]
         command: RunsCommand,
     },
+    /// Build an offline interactive report for a persisted run.
+    Report {
+        #[command(subcommand)]
+        command: ReportCommand,
+    },
     /// Query learned and observed experience.
     Query {
         #[command(subcommand)]
@@ -104,6 +109,17 @@ pub enum RunsCommand {
     },
     Show {
         run_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReportCommand {
+    Build {
+        /// Persisted run identifier to render.
+        run_id: String,
+        /// Optional report directory inside the run directory.
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 

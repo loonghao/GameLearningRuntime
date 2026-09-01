@@ -87,3 +87,26 @@ review media, not supervised-learning data.
 
 Do not claim live-game acceptance from synthetic tests, process exit, video presence, run status,
 or model hashes. Report the exact remaining runtime acceptance boundary.
+
+## Build an offline run report
+
+Generate a self-contained, interactive review page from one completed run:
+
+```powershell
+glr --project . --json report build <run-id>
+glr --project . --json report build <run-id> --output review/report
+```
+
+The default output is `.glr/runs/<run-id>/report/index.html`; a custom output
+must remain inside that run directory. Before writing, GLR verifies every
+registered artifact's portable path, byte size, and SHA-256 digest, then
+registers the HTML as a `run-report` artifact. The page is offline and
+filterable: it summarizes metrics, renders `navigation.route_sample` points,
+shows `progression.*` unlock/catalog events, lists explicit `match.result`
+records (including `match_kind=pvp`), and links authorized screenshots or
+videos by their checksummed artifact paths.
+
+Reports are projections over the run store, not a second source of truth. They
+do not mutate training data, infer missing unlocks or wins, widen action masks,
+or establish live-game acceptance. Keep unsupported panels empty and return to
+the adapter/runtime boundary when authoritative evidence is missing.

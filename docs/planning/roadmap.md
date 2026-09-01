@@ -30,6 +30,8 @@ This document describes future work, not current capability.
   agent control plane without turning project roles into remote script endpoints.
 - Add dataset-catalog projections that bind selected capture ranges to approved
   demonstration provenance and exact transition bytes.
+- Extend the implemented per-run HTML report with cross-run comparison,
+  reward-ablation views, and richer dataset provenance projections.
 - Add publisher signatures or keyless verification on top of the implemented
   exact-target `SHA256SUMS` self-update integrity check.
 
@@ -38,7 +40,7 @@ This document describes future work, not current capability.
 - Optional Unity ML-Agents and Unreal Learning Agents interoperability packages.
 - JAX and RLlib integrations.
 - Reference BC, PPO, IMPALA/V-trace, and DAgger examples outside the core.
-- Multi-environment evaluation suites, richer curriculum/ablation reports, and
+- Multi-environment evaluation suites, richer curriculum reports, and
   distributed goal benchmarks around the implemented bounded trial contract.
 
 Game-specific adapters remain separate packages so their engine/runtime

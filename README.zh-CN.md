@@ -69,6 +69,7 @@ Unity、Unreal、Source、原生程序还是测试模拟器。GLR 标准化的�
 | 验证 | 失败即关闭的契约包装器与隐私安全的合成 conformance profiles |
 | Agent 控制面 | 独立 Rust `glr` JSON CLI、严格项目角色、有预算的 research/plan/train/evaluate 闭环、SQLite 历史查询、空间知识迁移与二进制/Skill 受控更新 |
 | Review 与监督采集 | 并发的项目自有 H.264 小窗录制，以及带校验和的 episode/step-to-frame 索引 |
+| 运行回顾报告 | 离线交互式 `glr.run-report.v1` HTML，包含指标、事件时间线、跑图路线、解锁进度、明确的 PvP 结果和带校验和的媒体链接 |
 | Agent 工作流 | `glr-adapter-builder` 与 `glr-cli` 两个独立 Skill，分别负责适配器构建与日常操作 |
 | 模型复现 | `glr.model-bundle.v1` 保存配置、源码/锁文件、种子、版本、权重、指标与 SHA-256 溯源 |
 
@@ -117,6 +118,7 @@ glr --project . --json goal run --goal goals/reach-destination.json
 glr --project . --json query entities --world forest --kind shrine
 glr --project . --json query routes --world forest --to-entity shrine.forest-1
 glr --project . --json query research --tag navigation
+glr --project . --json report build run-0123456789abcdef
 glr --project . --json play --bundle artifacts/model-bundle
 ```
 
@@ -432,6 +434,7 @@ Runtime Host、安装清单和两套 GLR Skills；Release 还包含 C# Provider 
 - [使用 Runtime Host 与 C#/C++ Provider SDK](docs/guides/runtime-host-and-provider-sdks.zh-CN.md)
 - [接入获授权的 BepInEx 与 UE4SS Loader](docs/guides/loader-plugin-integration.zh-CN.md)
 - [复现训练模型](docs/guides/reproducible-model-bundles.zh-CN.md)
+- [构建离线交互式运行回顾报告](docs/guides/run-reports.zh-CN.md)
 - [配置知识源和奖励](docs/guides/knowledge-and-rewards.md)
 - [限制奖励并验证 BC 数据来源](docs/guides/training-safety.zh-CN.md)
 - [验证适配器](docs/guides/adapter-conformance.md)

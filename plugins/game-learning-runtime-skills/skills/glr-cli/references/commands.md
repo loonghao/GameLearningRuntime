@@ -100,11 +100,32 @@ glr --project . --json query research --verified-only
 glr --project . --json knowledge export --output artifacts/spatial-knowledge.json
 glr --project . --json knowledge import --input artifacts/spatial-knowledge.json
 glr --project . --json play --bundle artifacts/model-bundle
+glr --project . --json report build run-0123456789abcdef
 ```
 
 `train` and `goal run` record lifecycle, events, metrics, logs, capture artifacts, and hashes under
 the configured data directory. Training tensors and transitions remain checksummed artifacts or
 JSONL datasets; SQLite is the query projection, not the tensor store.
+
+## Offline run reports
+
+`report build` renders `glr.run-report.v1` as a self-contained HTML review
+projection under the selected run directory:
+
+```powershell
+glr --project . --json report build <run-id>
+glr --project . --json report build <run-id> --output review/report
+```
+
+The report builder rejects missing, symlinked, out-of-run, size-mismatched, or
+SHA-256-mismatched artifacts before writing. It registers the generated page as
+`run-report` and remains safe to rerun. Its timeline and panels are driven only
+by persisted events: `navigation.route_sample` for route traces,
+`progression.item_unlocked` / `progression.catalog_snapshot` for unlocks, and
+`match.result` for completed matches. Treat `match_kind=pvp` as meaningful only
+when the adapter has an authoritative PvP result. Screenshot and video links
+must point to authorized checksummed artifacts; no report panel is a claim of
+live-game acceptance.
 
 ## Goal loop files
 
