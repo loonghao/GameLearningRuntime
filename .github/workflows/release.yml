@@ -96,8 +96,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  host-binaries:
-    name: Build host / ${{ matrix.target }}
+  glr-binaries:
+    name: Build GLR distribution / ${{ matrix.target }}
     needs: release-please
     if: needs.release-please.outputs.publish_requested == 'true'
     runs-on: ${{ matrix.runner }}
@@ -110,16 +110,20 @@ jobs:
         include:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary: target/x86_64-unknown-linux-gnu/release/glr-hostd
+            cli_binary: target/x86_64-unknown-linux-gnu/release/glr
+            host_binary: target/x86_64-unknown-linux-gnu/release/glr-hostd
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
-            binary: target/x86_64-pc-windows-msvc/release/glr-hostd.exe
+            cli_binary: target/x86_64-pc-windows-msvc/release/glr.exe
+            host_binary: target/x86_64-pc-windows-msvc/release/glr-hostd.exe
           - runner: macos-15-intel
             target: x86_64-apple-darwin
-            binary: target/x86_64-apple-darwin/release/glr-hostd
+            cli_binary: target/x86_64-apple-darwin/release/glr
+            host_binary: target/x86_64-apple-darwin/release/glr-hostd
           - runner: macos-15
             target: aarch64-apple-darwin
-            binary: target/aarch64-apple-darwin/release/glr-hostd
+            cli_binary: target/aarch64-apple-darwin/release/glr
+            host_binary: target/aarch64-apple-darwin/release/glr-hostd
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -138,27 +142,29 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
         run: echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
-      - name: Build the native Runtime Host
+      - name: Build the standalone CLI and native Runtime Host
         run: >-
-          vx cargo build --package glr-host --bin glr-hostd
+          vx cargo build --package glr-cli --bin glr
+          --package glr-host --bin glr-hostd
           --release --locked --target "${{ matrix.target }}"
-      - name: Package the bounded conformance host
+      - name: Package the unified GLR distribution
         run: >-
-          vx python scripts/package_host.py
-          --binary "${{ matrix.binary }}"
+          vx python scripts/package_cli.py
+          --cli "${{ matrix.cli_binary }}"
+          --host "${{ matrix.host_binary }}"
           --target "${{ matrix.target }}"
           --version "${{ steps.package-version.outputs.version }}"
-      - name: Upload the Runtime Host archive
+      - name: Upload the GLR distribution archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: host-${{ matrix.target }}
+          name: glr-${{ matrix.target }}
           path: .glr-release/*.zip
           if-no-files-found: error
           retention-days: 7
 
   github-release:
     name: Attach GitHub Release assets
-    needs: [release-please, build, host-binaries]
+    needs: [release-please, build, glr-binaries]
     if: needs.release-please.outputs.publish_requested == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -177,10 +183,10 @@ jobs:
         with:
           name: csharp-provider-sdk
           path: release-assets/
-      - name: Download Runtime Host archives
+      - name: Download standalone GLR distributions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: host-*
+          pattern: glr-*
           path: release-assets/
           merge-multiple: true
       - name: Attest release assets

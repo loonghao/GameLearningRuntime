@@ -1,5 +1,41 @@
 # GLR CLI command and contract reference
 
+## Install and inspect the standalone distribution
+
+Download `glr-{version}-{rust-target}.zip` and `SHA256SUMS` from the matching
+GitHub Release, verify the archive digest, extract it, and put `glr` plus
+`glr-hostd` on `PATH`. The archive also contains both repository-owned Skills
+under `skills/`; no Python installation is required to run the CLI.
+
+Start every project operation with:
+
+```powershell
+glr --version
+glr --project . --json doctor
+glr --json update --check
+```
+
+`doctor` verifies the strict project file, bridge path, data directory, and
+configured executable roles. It does not prove a live bridge handshake or game
+acceptance.
+
+Only after an explicit user update request, apply the exact-target release:
+
+```powershell
+glr --json update --yes
+glr --json update --yes --skills-dir .agents/skills
+glr --json update --yes --no-skills
+```
+
+The default update scope is the CLI, sibling Runtime Host, and project Skills.
+The updater requires HTTPS, a matching target manifest, and the published
+`SHA256SUMS`; it never runs an installer script or changes project/trainer data.
+Re-run `--version`, `doctor`, and `update --check` after an update.
+
+The public release check is anonymous by default. On a GitHub API rate-limit
+response, provide an existing token only as the process-scoped
+`GLR_GITHUB_TOKEN`. Never echo it or store it in `glr-project.json`.
+
 ## Project configuration
 
 `glr-project.json` is strict `glr.project.v1`. Every command is a fixed argv array executed with
@@ -46,6 +82,7 @@ Project roles receive `GLR_PROJECT_ROOT`, `GLR_BRIDGE_PATH`, `GLR_RUN_ID`, `GLR_
 Use `--json` for compact `glr.cli-output.v1` output.
 
 ```powershell
+glr --project . --json doctor
 glr --project . --json runtime start
 glr --project . --json train
 glr --project . --json train --no-capture

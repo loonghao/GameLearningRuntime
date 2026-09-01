@@ -30,6 +30,8 @@ This document describes future work, not current capability.
   agent control plane without turning project roles into remote script endpoints.
 - Add dataset-catalog projections that bind selected capture ranges to approved
   demonstration provenance and exact transition bytes.
+- Add publisher signatures or keyless verification on top of the implemented
+  exact-target `SHA256SUMS` self-update integrity check.
 
 ## Later
 

@@ -67,7 +67,7 @@ Unity、Unreal、Source、原生程序还是测试模拟器。GLR 标准化的�
 | 采集 | 面向 PPO/IMPALA 的定长或终止边界 unroll，以及面向 BC/离线训练的 `glr.transition.v1` JSONL |
 | 集成 | 可选 Gymnasium、TorchRL 0.13 与模型中立的 PyTorch BC/PPO/GAE/V-trace objective |
 | 验证 | 失败即关闭的契约包装器与隐私安全的合成 conformance profiles |
-| Agent 控制面 | 稳定的 `glr` JSON CLI、严格项目角色、有预算的 research/plan/train/evaluate 闭环、SQLite 历史查询与空间知识迁移 |
+| Agent 控制面 | 独立 Rust `glr` JSON CLI、严格项目角色、有预算的 research/plan/train/evaluate 闭环、SQLite 历史查询、空间知识迁移与二进制/Skill 受控更新 |
 | Review 与监督采集 | 并发的项目自有 H.264 小窗录制，以及带校验和的 episode/step-to-frame 索引 |
 | Agent 工作流 | `glr-adapter-builder` 与 `glr-cli` 两个独立 Skill，分别负责适配器构建与日常操作 |
 | 模型复现 | `glr.model-bundle.v1` 保存配置、源码/锁文件、种子、版本、权重、指标与 SHA-256 溯源 |
@@ -77,7 +77,20 @@ Unity、Unreal、Source、原生程序还是测试模拟器。GLR 标准化的�
 
 ## 快速开始
 
-安装仅依赖 NumPy 的核心包：
+从[最新 GitHub Release](https://github.com/loonghao/GameLearningRuntime/releases/latest)
+下载当前平台对应的 `glr-{version}-{rust-target}.zip`，使用同一 Release 的
+`SHA256SUMS` 校验后，把 `glr` 与 `glr-hostd` 放入 `PATH`。压缩包还包含
+`glr-cli` 与 `glr-adapter-builder` 两个 Skills。
+
+CLI 是部署、接入、训练、查询和复现的主要入口，不依赖 Python：
+
+```powershell
+glr --version
+glr --project . --json doctor
+glr --json update --check
+```
+
+只有 Trainer、Adapter 或 Learner 需要导入 Python API 时，才安装 Python SDK：
 
 ```powershell
 uv add game-learning-runtime
@@ -97,6 +110,7 @@ uv add "game-learning-runtime[gymnasium,torchrl]"
 完成整个工作流：
 
 ```powershell
+glr --project . --json doctor
 glr --project . --json runtime start
 glr --project . --json train
 glr --project . --json goal run --goal goals/reach-destination.json
@@ -109,6 +123,11 @@ glr --project . --json play --bundle artifacts/model-bundle
 项目清单负责声明准确的可执行文件路径、环境身份、数据位置，以及
 runtime/trainer/player/researcher/planner/evaluator/recorder 角色。GLR 负责验证和编排
 这些角色，但不会把具体游戏启动器、爬虫或学习算法写死在核心中。
+
+`glr update --check` 只读检查最新稳定版本。用户明确要求更新后，
+`glr update --yes` 会校验准确平台的压缩包与 `SHA256SUMS`，随后更新 `glr`、同目录的
+`glr-hostd` 和项目 Skills；它不会修改游戏代码、Trainer 依赖、模型、数据集或项目配置。
+仅维护二进制时使用 `--no-skills`，指定 Skill 目录时使用 `--skills-dir`。
 
 ### 作为库接入
 
@@ -314,7 +333,8 @@ vx run reproduce
 
 如果项目已经有桥接器，请改用独立的
 [`glr-cli` Skill](.agents/skills/glr-cli/SKILL.md)。它负责 runtime、并发训练录制、目标闭环、
-历史查询、知识迁移和模型加载，不修改适配器内部语义。
+历史查询、知识迁移、模型加载和明确授权的受控更新，不修改适配器内部语义。每个 GLR
+独立分发包都会同时携带这两个 Skills。
 
 ## TorchRL 与自定义学习器
 
@@ -368,7 +388,8 @@ jobs:
 `main` 上的 Conventional Commits 会创建或更新 Release Please PR。合并经过审阅的
 Release PR 后，工作流会创建 tag 和 GitHub Release，校验并构建 tag 对应源码、附加
 provenance，通过 Trusted Publishing 发布 Python 包，并附加 Linux、Windows、Intel
-macOS、Apple Silicon 的 Runtime Host 校验和压缩包及 C# Provider 包。详见
+macOS、Apple Silicon 的统一 GLR 校验和压缩包。每个压缩包包含独立 Rust CLI、匹配的
+Runtime Host、安装清单和两套 GLR Skills；Release 还包含 C# Provider 包。详见
 [发布手册](docs/runbooks/release.md)。
 
 ## 文档

@@ -21,6 +21,9 @@ remote scripts, or treat a model hash as evidence that a gameplay objective succ
 
 Add an agent-first, local-only `glr` CLI and strict `glr.project.v1` project contract.
 
+ADR-0016 subsequently selects the standalone Rust implementation as the canonical
+distribution entrypoint before the Python prototype is published.
+
 The project declares exact environment/family/protocol identity, a project-relative bridge path,
 and fixed-argv runtime, trainer, player, researcher, planner, evaluator, and optional recorder
 roles. GLR executes each role without a shell and substitutes only fixed whole-argument

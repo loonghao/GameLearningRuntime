@@ -29,6 +29,13 @@ without game-engine dependencies.
 Uses the same adapter for deterministic scenarios, regression metrics, dataset
 capture, and automated gameplay checks without importing learner internals.
 
+### Agent operator
+
+Uses one standalone, machine-readable CLI to inspect a project, start its
+reviewed bridge, train with indexed video capture, pursue bounded goals, query
+prior evidence and world knowledge, load verified bundles, and keep the managed
+CLI/Runtime Host/Skills distribution current.
+
 ## Current requirements
 
 - Express nested observations and hybrid/hierarchical actions.
@@ -43,6 +50,9 @@ capture, and automated gameplay checks without importing learner internals.
 - Prevent dense shaping from making a terminal failure profitable.
 - Reject policy self-imitation and unknown provenance from BC datasets by default.
 - Bundle trained models with checksummed reproduction inputs and provenance.
+- Ship one standalone Rust CLI as the primary deployment and Agent entrypoint.
+- Distribute exact-target CLI, Runtime Host, and Skills in one checksummed archive.
+- Keep self-update explicit, checksummed, and outside project/game/trainer data.
 
 ## Non-goals for v0.1
 
@@ -57,3 +67,5 @@ capture, and automated gameplay checks without importing learner internals.
 - The packaged Protobuf schema compiles.
 - TorchRL's `check_env_specs` accepts the reference adapter.
 - A local project can install a release tag and call the reusable CI workflow.
+- An agent can run `glr doctor` without Python and receive stable JSON output.
+- A release archive can be checked, installed, and updated for its exact Rust target.
