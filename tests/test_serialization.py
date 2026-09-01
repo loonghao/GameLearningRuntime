@@ -38,6 +38,23 @@ def test_transition_record_round_trip_preserves_tensors() -> None:
     )
 
 
+def test_transition_provenance_round_trip() -> None:
+    original = _transition()
+    original = Transition(
+        episode_id=original.episode_id,
+        step_id=original.step_id,
+        observation=original.observation,
+        action=original.action,
+        reward=original.reward,
+        next_observation=original.next_observation,
+        terminated=original.terminated,
+        truncated=original.truncated,
+        provenance={"origin": "policy", "outcome": "neutral", "policy_id": "p1"},
+    )
+    restored = transition_from_record(transition_to_record(original))
+    assert dict(restored.provenance or {}) == dict(original.provenance or {})
+
+
 def test_jsonl_writer_and_streaming_reader(tmp_path: Path) -> None:
     path = tmp_path / "dataset" / "transitions.jsonl"
     transition = _transition()
@@ -64,3 +81,21 @@ def test_writer_requires_context_manager(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="context manager"):
         writer.write(_transition())
+
+
+def test_writer_batch_and_flush_configuration(tmp_path: Path) -> None:
+    path = tmp_path / "batch.jsonl"
+    transition = _transition()
+    with JsonlTransitionWriter(path, flush_every=10) as writer:
+        assert writer.write_many([transition, transition]) == 2
+    assert len(list(read_jsonl_transitions(path))) == 2
+    with pytest.raises(ValueError, match="flush_every"):
+        JsonlTransitionWriter(path, flush_every=0)
+
+
+def test_reader_non_strict_skips_corrupt_and_truncated_tail(tmp_path: Path) -> None:
+    path = tmp_path / "crashed.jsonl"
+    transition = _transition()
+    line = json.dumps(transition_to_record(transition), separators=(",", ":"))
+    path.write_text(line + "\n{}\n" + line[:30], encoding="utf-8")
+    assert len(list(read_jsonl_transitions(path, strict=False))) == 1

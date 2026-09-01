@@ -442,6 +442,21 @@ class DemonstrationGate:
             )
         )
 
+    def validate_transition(self, transition: Any) -> DemonstrationDecision:
+        """Validate provenance carried by a serialized/runtime transition."""
+        provenance = getattr(transition, "provenance", None)
+        if not isinstance(provenance, Mapping):
+            raise ContractViolation("transition is missing demonstration provenance")
+        try:
+            parsed = DemonstrationProvenance(
+                origin=DemonstrationOrigin(provenance["origin"]),
+                outcome=DemonstrationOutcome(provenance["outcome"]),
+                policy_id=provenance.get("policy_id"),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ContractViolation("invalid transition demonstration provenance") from error
+        return self.validate(parsed)
+
 
 def load_reward_safety_config(path: str | Path) -> RewardSafetyConfig:
     """Load a strict reward-safety JSON document."""
