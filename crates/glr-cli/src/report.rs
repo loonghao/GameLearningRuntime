@@ -43,6 +43,7 @@ pub fn build(
     let artifacts = store
         .list_artifacts(run_id)?
         .into_iter()
+        .filter(|artifact| artifact.role != "run-report")
         .map(|artifact| {
             let source = artifact_source(&run_dir, &artifact.path)?;
             if source.metadata()?.len() != artifact.size_bytes

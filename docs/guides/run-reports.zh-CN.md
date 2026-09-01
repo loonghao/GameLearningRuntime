@@ -8,8 +8,9 @@ glr --project . --json report build run-0123456789abcdef
 
 默认输出为 `.glr/runs/<run-id>/report/index.html`。`--output` 可以指定该
 run 目录内的其他目录。命令会读取 SQLite 运行投影，按文件大小和 SHA-256
-校验所有已登记物料，并把生成的 HTML 登记为 `run-report` artifact。它不会
-启动运行时、发送动作或修改训练数据集。
+校验所有运行证据物料，并把生成的 HTML 登记为 `run-report` artifact。之前生成的
+`run-report` 派生物料不会再次嵌入，避免重建时产生自引用摘要。它不会启动运行时、
+发送动作或修改训练数据集。
 
 报告完全离线、无需服务器，包含响应式总览卡片、指标条、可过滤事件时间线、
 路线样本、进度/解锁事件、对战结果，以及带校验和的录像和战后截图链接。浏览器

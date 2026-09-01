@@ -99,7 +99,8 @@ glr --project . --json report build <run-id> --output review/report
 
 The default output is `.glr/runs/<run-id>/report/index.html`; a custom output
 must remain inside that run directory. Before writing, GLR verifies every
-registered artifact's portable path, byte size, and SHA-256 digest, then
+registered evidence artifact's portable path, byte size, and SHA-256 digest,
+omits prior `run-report` outputs to avoid self-referential hashes, then
 registers the HTML as a `run-report` artifact. The page is offline and
 filterable: it summarizes metrics, renders `navigation.route_sample` points,
 shows `progression.*` unlock/catalog events, lists explicit `match.result`

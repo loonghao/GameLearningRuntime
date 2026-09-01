@@ -8,9 +8,12 @@ glr --project . --json report build run-0123456789abcdef
 
 The default output is `.glr/runs/<run-id>/report/index.html`. Use `--output`
 for another directory inside that run directory. The command reads the
-SQLite run projection, verifies every registered artifact against its size and
-SHA-256 digest, and registers the generated HTML as a `run-report` artifact.
-It never starts a runtime, sends an action, or changes a training dataset.
+SQLite run projection, verifies every registered evidence artifact against its
+size and SHA-256 digest, and registers the generated HTML as a `run-report`
+artifact. Previously generated `run-report` artifacts are excluded from the
+next report's embedded evidence list so reruns do not create a self-referential
+hash. It never starts a runtime, sends an action, or changes a training
+dataset.
 
 The report is offline and static. It includes responsive summary cards,
 metric bars, a filterable event timeline, route samples, progression events,
