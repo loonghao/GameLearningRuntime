@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import IO, Any
@@ -89,6 +89,7 @@ def transition_to_record(transition: Transition) -> dict[str, Any]:
             for event in transition.events
         ],
         "info": dict(transition.info),
+        "provenance": dict(transition.provenance) if transition.provenance is not None else None,
     }
     json.dumps(record, allow_nan=False)
     return record
@@ -104,6 +105,9 @@ def transition_from_record(record: Mapping[str, Any]) -> Transition:
     next_observation = _decode_tree(record["next_observation"])
     if observation is None or action is None or next_observation is None:
         raise ValueError("observation, action, and next_observation are required")
+    raw_provenance = record.get("provenance")
+    if raw_provenance is not None and not isinstance(raw_provenance, Mapping):
+        raise TypeError("provenance must be an object")
     return Transition(
         episode_id=UUID(record["episode_id"]),
         step_id=int(record["step_id"]),
@@ -125,14 +129,19 @@ def transition_from_record(record: Mapping[str, Any]) -> Transition:
             for item in record.get("events", [])
         ),
         info=record.get("info", {}),
+        provenance=raw_provenance,
     )
 
 
 class JsonlTransitionWriter:
     """Append-only writer for replayable transition datasets."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, flush_every: int = 1) -> None:
+        if flush_every < 1:
+            raise ValueError("flush_every must be at least 1")
         self._path = Path(path)
+        self._flush_every = flush_every
+        self._pending = 0
         self._stream: IO[str] | None = None
 
     def __enter__(self) -> JsonlTransitionWriter:
@@ -145,7 +154,24 @@ class JsonlTransitionWriter:
             raise RuntimeError("writer must be used as a context manager")
         json.dump(transition_to_record(transition), self._stream, separators=(",", ":"))
         self._stream.write("\n")
-        self._stream.flush()
+        self._pending += 1
+        if self._pending >= self._flush_every:
+            self._stream.flush()
+            self._pending = 0
+
+    def write_many(self, transitions: Iterable[Transition]) -> int:
+        """Append a batch and flush once after the batch is complete."""
+        if self._stream is None:
+            raise RuntimeError("writer must be used as a context manager")
+        count = 0
+        for transition in transitions:
+            json.dump(transition_to_record(transition), self._stream, separators=(",", ":"))
+            self._stream.write("\n")
+            count += 1
+        if count:
+            self._stream.flush()
+            self._pending = 0
+        return count
 
     def __exit__(
         self,
@@ -154,11 +180,12 @@ class JsonlTransitionWriter:
         traceback: TracebackType | None,
     ) -> None:
         if self._stream is not None:
+            self._stream.flush()
             self._stream.close()
             self._stream = None
 
 
-def read_jsonl_transitions(path: str | Path) -> Iterator[Transition]:
+def read_jsonl_transitions(path: str | Path, *, strict: bool = True) -> Iterator[Transition]:
     """Stream transitions from a GLR JSONL dataset."""
 
     with Path(path).open(encoding="utf-8") as stream:
@@ -168,4 +195,9 @@ def read_jsonl_transitions(path: str | Path) -> Iterator[Transition]:
             try:
                 yield transition_from_record(json.loads(line))
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                if not strict:
+                    # A final unterminated line is the expected result of a killed writer.
+                    if not line.endswith("\n"):
+                        return
+                    continue
                 raise ValueError(f"invalid transition record at line {line_number}") from error

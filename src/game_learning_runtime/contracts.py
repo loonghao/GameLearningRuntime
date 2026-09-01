@@ -99,6 +99,7 @@ class Transition:
     next_action_mask: TensorTree | None = None
     events: tuple[Event, ...] = ()
     info: Mapping[str, Any] = field(default_factory=dict)
+    provenance: Mapping[str, Any] | None = None
     timestamp_ns: int = field(default_factory=time_ns)
 
     def __post_init__(self) -> None:
@@ -114,6 +115,8 @@ class Transition:
             object.__setattr__(self, "next_action_mask", freeze_tree(self.next_action_mask))
         object.__setattr__(self, "events", tuple(self.events))
         object.__setattr__(self, "info", MappingProxyType(dict(self.info)))
+        if self.provenance is not None:
+            object.__setattr__(self, "provenance", MappingProxyType(dict(self.provenance)))
 
     @property
     def done(self) -> bool:
