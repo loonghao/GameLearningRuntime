@@ -106,6 +106,13 @@ from game_learning_runtime.run_store import (
     SpatialRoute,
     TrainingStore,
 )
+from game_learning_runtime.runtime_evidence import (
+    ArtifactLineage,
+    ModalNavigationBoundary,
+    ModalState,
+    RouteHealthTelemetry,
+    RouteTransitionEvidence,
+)
 from game_learning_runtime.runtime_integration import (
     RUNTIME_INTEGRATION_SCHEMA_VERSION,
     ActionMode,
@@ -186,6 +193,7 @@ __all__ = [
     "TRIAL_PLAN_SCHEMA_VERSION",
     "ActionMode",
     "AgentGoal",
+    "ArtifactLineage",
     "ArtifactRecord",
     "BridgeAttachRequest",
     "BridgeConfig",
@@ -244,6 +252,8 @@ __all__ = [
     "LifecycleConfig",
     "LoaderFamily",
     "MetricRecord",
+    "ModalNavigationBoundary",
+    "ModalState",
     "ModelBundleManifest",
     "ObservationMode",
     "OptionalDependencyError",
@@ -263,6 +273,8 @@ __all__ = [
     "RewardSignal",
     "RewardTerm",
     "RewardTermSpec",
+    "RouteHealthTelemetry",
+    "RouteTransitionEvidence",
     "RouteWaypoint",
     "RunEvent",
     "RunRecord",
