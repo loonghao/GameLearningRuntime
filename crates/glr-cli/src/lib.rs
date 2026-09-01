@@ -4,6 +4,7 @@ mod contracts;
 mod error;
 mod process;
 mod project;
+mod report;
 mod store;
 pub mod update;
 

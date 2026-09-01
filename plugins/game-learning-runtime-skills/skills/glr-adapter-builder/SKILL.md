@@ -179,6 +179,35 @@ deployment and control entrypoint; use `glr --project . --json doctor` to check
 the generated project boundary. Do not add a Python console-script wrapper or
 make an adapter depend on the CLI implementation.
 
+## Emit bounded review evidence
+
+Adapters may expose review projections as namespaced run-store events, but
+evidence never becomes action authority or replaces an authoritative terminal
+receipt. Keep the event vocabulary stable and learner-neutral:
+
+- `navigation.route_sample` carries a finite position (and optional route
+  metadata) for an RPG-style path trace;
+- `progression.item_unlocked` and `progression.catalog_snapshot` describe
+  observed map, hero, or item progression; and
+- `match.result` describes one completed match. Set `match_kind=pvp` only for
+  an explicitly authoritative player-versus-player result; do not infer wins
+  from a monster run, survival time, or a UI transition.
+
+For screenshots or video, use the project-owned authorized recorder. Register
+each file as a portable run artifact with its relative path, media type, byte
+size, and SHA-256 digest. Never inline media in host frames or persist account
+identifiers, process/window handles, machine paths, or credentials. The
+`runtime_evidence.py` contracts define route transitions, health telemetry,
+modal boundaries, and artifact lineage; keep their fields bounded and
+replayable.
+
+After a run, the separate `glr-cli` Skill can build the offline
+`glr.run-report.v1` HTML projection. A report is a read-only review aid: an
+empty route, progression, or PvP panel means the adapter did not emit verified
+evidence, and report generation never proves live-game acceptance. Start with
+synthetic/conformance traces, then add only the authorized runtime events that
+the adapter can verify.
+
 ## Validate in increasing-risk order
 
 Read [validation-gates.md](references/validation-gates.md) completely, then run:

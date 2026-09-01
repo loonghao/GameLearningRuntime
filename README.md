@@ -75,6 +75,7 @@ engine, transport, or algorithm.
 | Validation | Fail-closed contract wrapper and privacy-safe synthetic conformance profiles |
 | Agent control plane | Standalone Rust `glr` JSON CLI, strict project roles, bounded research/plan/train/evaluate goals, SQLite run queries, spatial knowledge transfer, managed binary/Skill updates |
 | Review and supervised capture | Concurrent project-owned H.264 capture with checksummed episode/step-to-frame index |
+| Run review reports | Offline interactive `glr.run-report.v1` HTML with metrics, event timeline, route traces, progression, explicit PvP results, and checksummed media links |
 | Agent workflow | Separate `glr-adapter-builder` and `glr-cli` Skills for adapter construction versus operation |
 | Model reproduction | `glr.model-bundle.v1` copies config, source/lock inputs, seeds, versions, weights, metrics, and SHA-256 provenance |
 
@@ -127,6 +128,7 @@ glr --project . --json goal run --goal goals/reach-destination.json
 glr --project . --json query entities --world forest --kind shrine
 glr --project . --json query routes --world forest --to-entity shrine.forest-1
 glr --project . --json query research --tag navigation
+glr --project . --json report build run-0123456789abcdef
 glr --project . --json play --bundle artifacts/model-bundle
 ```
 
@@ -491,6 +493,7 @@ runbook](docs/runbooks/release.md).
 - [Use the Runtime Host and C#/C++ provider SDKs](docs/guides/runtime-host-and-provider-sdks.md)
 - [Connect authorized BepInEx and UE4SS loaders](docs/guides/loader-plugin-integration.md)
 - [Reproduce trained models](docs/guides/reproducible-model-bundles.md)
+- [Build offline interactive run reports](docs/guides/run-reports.md)
 - [Configure knowledge sources and rewards](docs/guides/knowledge-and-rewards.md)
 - [Enforce reward budgets and BC provenance](docs/guides/training-safety.md)
 - [Validate an adapter](docs/guides/adapter-conformance.md)

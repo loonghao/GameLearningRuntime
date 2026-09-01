@@ -7,8 +7,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::args::{
-    Cli, Command as CliCommand, GoalCommand, KnowledgeCommand, QueryCommand, RunsCommand,
-    RuntimeCommand, UpdateArgs,
+    Cli, Command as CliCommand, GoalCommand, KnowledgeCommand, QueryCommand, ReportCommand,
+    RunsCommand, RuntimeCommand, UpdateArgs,
 };
 use crate::contracts::{
     AgentGoal, GoalEvaluation, GoalEvidenceBundle, ResearchBundle, SpatialKnowledgeBundle,
@@ -20,6 +20,7 @@ use crate::process::{
     run_command, start_capture,
 };
 use crate::project::{Project, ProjectCommand, find_project, load_project};
+use crate::report;
 use crate::store::{EntityQuery, RunRecord, Store};
 use crate::update::Updater;
 
@@ -104,6 +105,11 @@ pub fn execute(cli: Cli) -> Result<i32> {
                     cli.json,
                 )?;
                 Ok(0)
+            }
+        },
+        CliCommand::Report { command } => match command {
+            ReportCommand::Build { run_id, output } => {
+                report::build(&project, &store, &run_id, output.as_deref(), cli.json)
             }
         },
         CliCommand::Query { command } => match command {

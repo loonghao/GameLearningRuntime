@@ -78,6 +78,73 @@ fn standalone_cli_is_the_project_entrypoint_and_persists_runs() {
             .is_file()
     );
 
+    let evidence_connection = Connection::open(project.path().join(".glr/runs.sqlite3")).unwrap();
+    let next_sequence: i64 = evidence_connection
+        .query_row(
+            "SELECT COALESCE(MAX(sequence_id), -1) + 1 FROM events WHERE run_id = ?",
+            [run_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    for (offset, kind, payload) in [
+        (
+            0_i64,
+            "navigation.route_sample",
+            r#"{"position":[1.0,2.0,3.0],"route_id":"route.demo"}"#,
+        ),
+        (
+            1_i64,
+            "progression.item_unlocked",
+            r#"{"item_kind":"hero","item_id":"hero.demo","status":"unlocked"}"#,
+        ),
+        (
+            2_i64,
+            "match.result",
+            r#"{"match_kind":"pvp","outcome":"win","turns":3,"trophy_delta":1}"#,
+        ),
+    ] {
+        evidence_connection
+            .execute(
+                "INSERT INTO events(run_id, sequence_id, timestamp_ns, kind, episode_id, step_id, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                params![run_id, next_sequence + offset, offset, kind, "episode-demo", offset, payload],
+            )
+            .unwrap();
+    }
+    drop(evidence_connection);
+
+    let report = stdout(&run(project.path(), &["report", "build", run_id]));
+    assert_eq!(report["command"], "report.build");
+    assert_eq!(report["data"]["schema_version"], "glr.run-report.v1");
+    let report_path = project
+        .path()
+        .join(".glr/runs")
+        .join(run_id)
+        .join("report/index.html");
+    let report_html = fs::read_to_string(report_path).unwrap();
+    assert!(report_html.contains("GLR run report"));
+    assert!(report_html.contains("Event timeline"));
+    assert!(report_html.contains("navigation.route_sample"));
+    assert!(report_html.contains("progression.item_unlocked"));
+    assert!(report_html.contains("match.result"));
+    assert!(report_html.contains("Route trace"));
+    assert!(report_html.contains("Unlocks and progression"));
+    assert!(report_html.contains("Checksummed artifacts"));
+    let rebuilt = stdout(&run(project.path(), &["report", "build", run_id]));
+    assert_eq!(rebuilt["command"], "report.build");
+    let custom_report = stdout(&run(
+        project.path(),
+        &["report", "build", run_id, "--output", "review/report"],
+    ));
+    assert_eq!(custom_report["command"], "report.build");
+    assert!(
+        project
+            .path()
+            .join(".glr/runs")
+            .join(run_id)
+            .join("review/report/index.html")
+            .is_file()
+    );
+
     let runs = stdout(&run(project.path(), &["runs", "list"]));
     assert_eq!(runs["command"], "runs.list");
     assert_eq!(runs["data"][0]["run_id"], run_id);
