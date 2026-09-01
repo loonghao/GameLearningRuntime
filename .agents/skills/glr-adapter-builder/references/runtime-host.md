@@ -5,6 +5,8 @@ engine's supported loading boundary.
 
 ## Current reusable pieces
 
+- Rust `glr`: canonical standalone deployment and Agent control entrypoint. Its
+  release archive carries the matching Runtime Host and both GLR Skills.
 - Rust `glr-hostd`: strict `glr.host.v1`, serialized stdio, 1 MiB hard frame
   bound, episode/step fencing, synthetic conformance provider.
 - Python `HostBridgeDriver`: explicit absolute executable, no shell, bounded
@@ -17,6 +19,10 @@ engine's supported loading boundary.
 Run `vx just host-smoke` and `vx just provider-sdk-check` before adapting these
 surfaces. Preserve flattened dot-separated tensor paths and little-endian GLR
 v1 tensor bytes.
+
+Run `glr --project . --json doctor` before using an existing adapter project.
+Use the separate `glr-cli` Skill for training, capture, queries, knowledge
+transfer, playback, or explicitly authorized `glr update` maintenance.
 
 ## Bootstrap choice
 

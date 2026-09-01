@@ -21,16 +21,19 @@ version, changelog, or tag by hand.
    - runs Python, Rust, C#, and C++ quality/contract checks;
    - builds and checks one wheel/sdist pair;
    - builds the C# provider contract package;
-   - builds native `glr-hostd` conformance archives for Linux x64, Windows x64,
-     Intel macOS, and Apple Silicon;
+   - builds unified standalone `glr` distributions for Linux x64, Windows x64,
+     Intel macOS, and Apple Silicon; each archive includes `glr-hostd`, both GLR
+     Skills, the release manifest, license, and install guide;
    - attaches build provenance, deterministic `SHA256SUMS`, and all assets to
      the GitHub Release;
    - publishes those same distributions to PyPI through Trusted Publishing.
 
 5. Verify the workflow conclusion, tag/commit identity, non-draft GitHub
-   Release, four host archives, the C# package, `SHA256SUMS`, PyPI project page,
-   and installation/execution in clean temporary directories. The host smoke
-   proves only `synthetic-counter`, not a live engine provider.
+   Release, four GLR archives, the C# package, `SHA256SUMS`, PyPI project page,
+   and installation/execution in clean temporary directories. Run `glr
+   --version`, `glr --help`, `glr update --check`, and a local `glr doctor` from
+   the extracted archive. The host smoke proves only `synthetic-counter`, not a
+   live engine provider.
 
 The release-impacting Conventional Commit types are:
 
@@ -60,7 +63,7 @@ that token.
 First rerun failed jobs from the original workflow run. If its artifacts have
 expired, manually run the `Release` workflow from `main` and supply an existing
 immutable tag such as `v0.2.0`. The workflow checks out and verifies that tag,
-rebuilds the Python/C#/native-host distributions, replaces the GitHub Release
+rebuilds the Python/C#/standalone GLR distributions, replaces the GitHub Release
 assets, and attempts the same Trusted Publishing path.
 
 Do not use recovery to move a tag, change released source, or overwrite a PyPI

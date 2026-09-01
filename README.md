@@ -73,7 +73,7 @@ engine, transport, or algorithm.
 | Collection | Fixed-length or terminal-bounded unrolls for PPO/IMPALA plus `glr.transition.v1` JSONL for BC/offline use |
 | Integrations | Optional Gymnasium, TorchRL 0.13, and model-neutral PyTorch BC/PPO/GAE/V-trace objectives |
 | Validation | Fail-closed contract wrapper and privacy-safe synthetic conformance profiles |
-| Agent control plane | Stable `glr` JSON CLI, strict project roles, bounded research/plan/train/evaluate goals, SQLite run queries, spatial knowledge transfer |
+| Agent control plane | Standalone Rust `glr` JSON CLI, strict project roles, bounded research/plan/train/evaluate goals, SQLite run queries, spatial knowledge transfer, managed binary/Skill updates |
 | Review and supervised capture | Concurrent project-owned H.264 capture with checksummed episode/step-to-frame index |
 | Agent workflow | Separate `glr-adapter-builder` and `glr-cli` Skills for adapter construction versus operation |
 | Model reproduction | `glr.model-bundle.v1` copies config, source/lock inputs, seeds, versions, weights, metrics, and SHA-256 provenance |
@@ -84,7 +84,22 @@ distributed actor transport, production trainers, and reference policies remain
 
 ## Quick start
 
-Install the NumPy-only core:
+Install the matching standalone archive from the [latest GitHub
+Release](https://github.com/loonghao/GameLearningRuntime/releases/latest). Verify
+`glr-{version}-{rust-target}.zip` against `SHA256SUMS`, then put `glr` and
+`glr-hostd` on `PATH`. The archive also carries the `glr-cli` and
+`glr-adapter-builder` Skills.
+
+The CLI is the primary deployment, integration, training, query, and playback
+entrypoint. It does not require Python:
+
+```powershell
+glr --version
+glr --project . --json doctor
+glr --json update --check
+```
+
+Install the Python SDK only when a trainer, adapter, or learner imports it:
 
 ```powershell
 uv add game-learning-runtime
@@ -105,6 +120,7 @@ roles, an agent can use the same machine-readable interface for the complete
 workflow:
 
 ```powershell
+glr --project . --json doctor
 glr --project . --json runtime start
 glr --project . --json train
 glr --project . --json goal run --goal goals/reach-destination.json
@@ -118,6 +134,13 @@ The project manifest owns exact executable paths, environment identity, data
 locations, and runtime/trainer/player/researcher/planner/evaluator/recorder
 roles. GLR validates and orchestrates those roles; it does not embed a
 game-specific launcher, scraper, or learning algorithm.
+
+`glr update --check` only inspects the latest stable release. After an explicit
+update request, `glr update --yes` verifies the exact target archive and
+`SHA256SUMS`, then updates `glr`, its sibling `glr-hostd`, and the project-owned
+Skills. It never changes game code, trainer dependencies, models, datasets, or
+project configuration. Use `--no-skills` for binary-only maintenance or
+`--skills-dir` for an explicitly selected Skills directory.
 
 ### Library integration
 
@@ -354,7 +377,8 @@ bundles](docs/guides/reproducible-model-bundles.md).
 For projects whose bridge already exists, use the separate
 [`glr-cli` Skill](.agents/skills/glr-cli/SKILL.md). It teaches agents to configure
 and operate runtime, training capture, goal loops, history queries, knowledge
-transfer, and verified playback without changing adapter internals.
+transfer, verified playback, and explicitly authorized managed updates without
+changing adapter internals. Both Skills ship in every standalone GLR archive.
 
 ## TorchRL and custom learners
 
@@ -409,8 +433,10 @@ deployment secrets and only checks out and tests the calling repository.
 Conventional Commits on `main` create or update a Release Please pull request.
 Merging that reviewed PR creates the tag and GitHub Release, verifies and builds
 the tagged source, attaches provenance, publishes the Python distributions to
-PyPI through Trusted Publishing, and attaches checksummed Runtime Host archives
-for Linux, Windows, Intel macOS, and Apple Silicon plus the C# provider package.
+PyPI through Trusted Publishing, and attaches checksummed unified GLR archives
+for Linux, Windows, Intel macOS, and Apple Silicon. Each archive contains the
+standalone Rust CLI, matching Runtime Host, install manifest, and both GLR
+Skills; the release also includes the C# provider package.
 See the [release
 runbook](docs/runbooks/release.md).
 

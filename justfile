@@ -45,7 +45,7 @@ rust-test:
     vx cargo test --workspace --locked
 
 rust-build:
-    vx cargo build -p glr-host --bin glr-hostd --locked
+    vx cargo build --workspace --bins --locked
 
 host-smoke: rust-build
     vx uv run python scripts/run_host_smoke.py
@@ -64,6 +64,7 @@ provider-sdk-check: csharp-check cpp-check
 check: setup lock-check workflow-check core-check rust-check provider-sdk-check
 
 build:
+    vx cargo build --release --workspace --bins --locked
     vx uv run --no-sync python -m build --no-isolation
     vx uv run python scripts/check_dist.py
 

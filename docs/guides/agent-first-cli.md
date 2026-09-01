@@ -7,6 +7,46 @@ pursues bounded goals, and reuses exact-environment knowledge or model bundles.
 Use `glr-adapter-builder` instead when you need to implement observations, actions, transport,
 lifecycle, target binding, or post-action verification.
 
+## Install the primary entrypoint
+
+Download the matching `glr-{version}-{rust-target}.zip` and `SHA256SUMS` from
+the same GitHub Release. Verify the checksum, extract the archive, and put its
+`glr` and `glr-hostd` executables on `PATH`. The archive includes the
+`glr-cli` and `glr-adapter-builder` Skills. The Rust CLI is standalone; install
+the Python package only when project-owned roles use its SDK.
+
+Inspect the deployment before operating a project:
+
+```powershell
+glr --version
+glr --project . --json doctor
+glr --json update --check
+```
+
+`doctor` validates the project contract, paths, and configured executables. It
+does not prove a live bridge handshake or game acceptance.
+
+## Update managed GLR components
+
+`glr update --check` is read-only. When the user explicitly requests an update,
+run `glr update --yes`. The updater requires HTTPS, downloads the exact Rust
+target archive and `SHA256SUMS`, verifies the release manifest and digest, then
+replaces the CLI, sibling Runtime Host, and project Skills.
+
+```powershell
+glr --json update --yes
+glr --json update --yes --skills-dir .agents/skills
+glr --json update --yes --no-skills
+```
+
+It never runs an installer script or modifies game code, role dependencies,
+virtual environments, models, datasets, or `glr-project.json`. SHA-256 verifies
+same-release integrity; it is not publisher signature verification. Re-run
+`--version`, `doctor`, and `update --check` after applying an update.
+Checks are anonymous by default. If GitHub rate-limits the request, provide an
+existing token only through the process-scoped `GLR_GITHUB_TOKEN`; never print
+or persist it in the project.
+
 ## Configure the project
 
 Create `glr-project.json` at the project root. Use project-relative paths and fixed argv arrays.
@@ -51,6 +91,7 @@ environment variables. They must stay bounded and validate the exact game target
 ## Start the runtime and train
 
 ```powershell
+glr --project . --json doctor
 glr --project . --json runtime start
 glr --project . --json train
 ```

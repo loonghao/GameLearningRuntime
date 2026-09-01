@@ -162,6 +162,12 @@ provider over bounded stdio. Do not claim that a generated live C#/C++ provider
 is connected, authenticated, or target-bound until the local provider transport
 and a bounded authorized runtime trace prove those capabilities.
 
+For a project that already has a reviewed bridge, hand operation to the
+separate `glr-cli` Skill. The standalone Rust `glr` executable is the canonical
+deployment and control entrypoint; use `glr --project . --json doctor` to check
+the generated project boundary. Do not add a Python console-script wrapper or
+make an adapter depend on the CLI implementation.
+
 ## Validate in increasing-risk order
 
 Read [validation-gates.md](references/validation-gates.md) completely, then run:
@@ -199,4 +205,6 @@ integration, or model quality.
 Keep semantic integration and fast-changing contracts in the simplest safe
 language. Move serialization, shared-memory, framing, or batch conversion to
 Rust only after a reproducible benchmark shows that boundary dominates the
-target workload. Preserve Python reference behavior and cross-language fixtures.
+target workload. The standalone Rust CLI is a distribution/control-plane
+decision, not permission to move game semantics or learner algorithms into
+Rust. Preserve Python reference behavior and cross-language fixtures.

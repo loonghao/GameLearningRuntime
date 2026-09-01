@@ -4,7 +4,19 @@ import json
 import re
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
+
 ROOT = Path(__file__).parents[1]
+
+
+def test_python_distribution_does_not_publish_the_glr_cli() -> None:
+    with (ROOT / "pyproject.toml").open("rb") as stream:
+        project = tomllib.load(stream)["project"]
+
+    assert "scripts" not in project
 
 
 def test_release_metadata_tracks_package_version() -> None:
@@ -21,7 +33,7 @@ def test_release_please_owns_all_version_surfaces() -> None:
     package = config["packages"]["."]
     extra_files = {(entry["type"], entry["path"]) for entry in package["extra-files"]}
 
-    assert package["release-type"] == "python"
+    assert package["release-type"] == "rust"
     assert package["package-name"] == "game-learning-runtime"
     assert package["changelog-path"] == "CHANGELOG.md"
     assert ("toml", "pyproject.toml") in extra_files
@@ -53,17 +65,25 @@ def test_rust_workspace_and_lock_versions_match_manifest() -> None:
     workspace_match = re.search(
         r'^version = "(?P<version>\d+\.\d+\.\d+)"$', workspace, re.MULTILINE
     )
-    lock_match = re.search(
+    host_lock_match = re.search(
         r'^name = "glr-host"\n'
+        r'version = "(?P<version>\d+\.\d+\.\d+)" # x-release-please-version$',
+        lock,
+        re.MULTILINE,
+    )
+    cli_lock_match = re.search(
+        r'^name = "glr-cli"\n'
         r'version = "(?P<version>\d+\.\d+\.\d+)" # x-release-please-version$',
         lock,
         re.MULTILINE,
     )
 
     assert workspace_match is not None
-    assert lock_match is not None
+    assert host_lock_match is not None
+    assert cli_lock_match is not None
     assert workspace_match.group("version") == manifest["."]
-    assert lock_match.group("version") == manifest["."]
+    assert host_lock_match.group("version") == manifest["."]
+    assert cli_lock_match.group("version") == manifest["."]
 
 
 def test_bilingual_readme_release_pins_match_manifest() -> None:

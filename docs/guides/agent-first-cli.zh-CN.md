@@ -5,6 +5,41 @@
 空间知识或模型包。若仍需实现观察、动作、传输、生命周期、目标绑定或动作后验证，请使用
 `glr-adapter-builder`，而不是把这些语义塞进 CLI。
 
+## 安装主要入口
+
+从同一个 GitHub Release 下载当前平台对应的 `glr-{version}-{rust-target}.zip` 与
+`SHA256SUMS`。校验压缩包、解压，并把其中的 `glr` 和 `glr-hostd` 放入 `PATH`。
+压缩包同时包含 `glr-cli` 与 `glr-adapter-builder` Skills。Rust CLI 可以独立运行；
+只有项目角色需要 Python SDK 时才安装 Python 包。
+
+操作项目之前先检查部署：
+
+```powershell
+glr --version
+glr --project . --json doctor
+glr --json update --check
+```
+
+`doctor` 校验项目契约、路径和已配置的可执行角色，但不证明实时桥接握手或实机验收。
+
+## 更新 GLR 托管组件
+
+`glr update --check` 是只读操作。用户明确要求更新后，执行 `glr update --yes`。Updater
+只通过 HTTPS 下载准确 Rust target 的压缩包和 `SHA256SUMS`，校验 release manifest 与
+摘要后，替换 CLI、同目录 Runtime Host 和项目 Skills。
+
+```powershell
+glr --json update --yes
+glr --json update --yes --skills-dir .agents/skills
+glr --json update --yes --no-skills
+```
+
+它不会运行安装脚本，也不会修改游戏代码、角色依赖、虚拟环境、模型、数据集或
+`glr-project.json`。SHA-256 只验证同一 Release 的产物完整性，不等同于发布者签名。
+更新后重新执行 `--version`、`doctor` 和 `update --check`。
+检查默认匿名访问 GitHub。若遇到 API 限流，只通过当前进程的 `GLR_GITHUB_TOKEN`
+传入已有 token；不要打印它，也不要把它写入项目配置。
+
 ## 配置项目
 
 在项目根目录创建严格的 `glr-project.json`。路径必须相对项目，命令必须是固定 argv；
@@ -48,6 +83,7 @@ GLR 不调用 shell。
 ## 启动与训练
 
 ```powershell
+glr --project . --json doctor
 glr --project . --json runtime start
 glr --project . --json train
 ```

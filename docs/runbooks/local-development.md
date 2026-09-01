@@ -32,6 +32,20 @@ vx just provider-sdk-check
 vx just host-smoke
 ```
 
+Validate the standalone Rust control plane and its exact CLI contracts:
+
+```powershell
+vx cargo fmt --all --check
+vx cargo clippy --workspace --all-targets --locked -- -D warnings
+vx cargo test --workspace --locked
+vx cargo run --package glr-cli -- --help
+```
+
+The CLI is the canonical deployment entrypoint; the Python package remains an
+optional SDK. A release distribution is produced with `scripts/package_cli.py`
+and must contain `glr`, `glr-hostd`, `glr-release.json`, `install.md`, `LICENSE`,
+and both repository Skills.
+
 Run the complete local pre-push surface with `vx just ci`. CI selects Python
 3.10 through 3.13 through `vx just ci-core <version>` in isolated jobs.
 

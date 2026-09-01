@@ -26,7 +26,8 @@ versioning, and low adoption cost for local vx/uv projects.
 │ TrainingConfig │ RewardComposer │ knowledge source policy     │
 │ RuntimeIntegrationProfile: engine │ loader │ external         │
 │ ModelBundleManifest: inputs │ seeds │ artifacts │ SHA-256       │
-│ Agent CLI │ goal loop │ run store │ indexed review capture    │
+│ Rust Agent CLI │ goal loop │ run store │ indexed review capture│
+│ exact-target updater: CLI │ hostd │ project Skills             │
 │ privacy-safe adapter conformance runner                      │
 │ BridgeEnvironment (client) │ EnvironmentBridgeDriver (server)│
 ├─────────────────────────────────────────────────────────────┤
@@ -97,6 +98,14 @@ knowledge, and cited research; tensors, transitions, videos, and model bytes
 remain checksummed artifacts. The bounded goal loop can refresh research and
 adjust declarative reward terms between trials, but only persisted authoritative
 runtime metrics can satisfy its machine-readable criteria.
+
+The control plane is a standalone Rust executable and the primary distribution
+entrypoint. A unified, target-specific release archive contains `glr`, the
+matching `glr-hostd`, a strict release manifest, and both operating Skills.
+`glr update` resolves only that exact target, verifies the archive against the
+same Release's `SHA256SUMS`, and updates those managed components. Python stays
+an optional learner/adapter SDK and is not required to boot the CLI. The updater
+does not own project dependencies, game code, configuration, models, or data.
 
 Concurrent capture is also a port: a project recorder owns OS/window capture
 and emits H.264 plus a step/frame index. GLR validates and hashes those files;

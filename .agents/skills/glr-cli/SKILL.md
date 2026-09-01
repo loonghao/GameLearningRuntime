@@ -5,7 +5,10 @@ description: Configure and operate the GameLearningRuntime agent-first CLI for b
 
 # GLR CLI
 
-Operate GLR as an agent control plane while preserving the adapter/learner boundary.
+Operate GLR through the standalone Rust control plane while preserving the
+adapter/learner boundary. The `glr` executable is the canonical deployment and
+Agent entrypoint; Python is an optional SDK for project roles, not a CLI runtime
+dependency.
 
 Read [references/commands.md](references/commands.md) before creating a project config,
 running a goal, transferring knowledge, or claiming reproduction.
@@ -21,7 +24,8 @@ running a goal, transferring knowledge, or claiming reproduction.
 
 ## Operate agent-first
 
-1. Resolve the nearest `glr-project.json`; do not guess a bridge path or game target.
+1. Run `glr --version`, resolve the nearest `glr-project.json`, and run
+   `glr --project . --json doctor`; do not guess a bridge path or game target.
 2. Inspect the strict project roles and exact `environment_id`, `environment_family`, and
    `protocol_version` before execution.
 3. Use `glr runtime start` only for the configured fixed-argv runtime command. Its process exit
@@ -35,6 +39,25 @@ running a goal, transferring knowledge, or claiming reproduction.
    Route and guide results are hints; re-observe and verify postconditions in the live runtime.
 7. Use a verified model bundle for playback. A valid hash proves artifact integrity and config
    identity, not policy quality, hardware determinism, or successful live gameplay.
+
+## Keep the managed runtime current
+
+- `glr update --check` is a read-only release check and is safe to use when
+  diagnosing version drift.
+- Run `glr update --yes` only when the user explicitly asks to update GLR. It
+  verifies the exact platform archive and `SHA256SUMS`, then updates the `glr`
+  executable, its sibling `glr-hostd`, and the repository-owned `glr-cli` and
+  `glr-adapter-builder` Skills.
+- Use `--skills-dir` only for an explicitly selected project Skills directory.
+  Use `--no-skills` when the user requested binary-only maintenance.
+- The updater does not modify game code, project role dependencies, Python
+  environments, models, datasets, `glr-project.json`, or trainer configuration.
+- SHA-256 protects same-release artifact integrity; it is not publisher
+  signature verification. Report the first unified-release smoke boundary when
+  no matching target archive exists yet.
+- Public checks use the GitHub API anonymously. If GitHub returns a rate-limit
+  error, pass an existing token only through the process-scoped
+  `GLR_GITHUB_TOKEN`; never print, persist, or add it to project configuration.
 
 ## Preserve knowledge scope
 
