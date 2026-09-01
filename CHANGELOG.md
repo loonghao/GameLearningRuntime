@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.1](https://github.com/loonghao/GameLearningRuntime/compare/v0.6.0...v0.6.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* upload hidden release archives ([68a1d12](https://github.com/loonghao/GameLearningRuntime/commit/68a1d12dde856e3524d3938facc846b1ec25a67a))
+
 ## [0.6.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.5.0...v0.6.0) (2026-09-01)
 
 
