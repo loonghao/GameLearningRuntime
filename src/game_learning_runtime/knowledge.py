@@ -305,6 +305,19 @@ class KnowledgeInjector:
         digest = hashlib.sha256()
         for snapshot in ordered_snapshots:
             digest.update(bytes.fromhex(snapshot.payload_sha256))
+        query_digest = hashlib.sha256(
+            json.dumps(
+                {
+                    "intents": sorted(intent.value for intent in query.intents),
+                    "stage": query.stage,
+                    "tags": sorted(query.tags),
+                    "max_items": query.max_items,
+                    "min_confidence": query.min_confidence,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
         return KnowledgeContext(
             items=tuple(selected[:limit]),
             source_ids=tuple(snapshot.source_id for snapshot in ordered_snapshots),
@@ -314,6 +327,8 @@ class KnowledgeInjector:
                 "schema_version": KNOWLEDGE_SNAPSHOT_SCHEMA_VERSION,
                 "stage": query.stage,
                 "selected_count": min(len(selected), limit),
+                "query_sha256": query_digest,
+                "observed_at": now.isoformat().replace("+00:00", "Z"),
             },
         )
 

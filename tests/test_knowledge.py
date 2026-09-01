@@ -132,6 +132,31 @@ def test_injector_selects_ranked_stage_and_tag_relevant_context() -> None:
     assert context.items[0].summary == "Prioritize the core module after stage two."
     assert context.items[0].source_id == "strategy-kb"
     assert context.items[0].snapshot_id == "build-42"
+    assert len(context.metadata["query_sha256"]) == 64
+    assert context.metadata["observed_at"] == "2026-09-01T00:30:00Z"
+
+
+def test_injector_query_fingerprint_is_deterministic_and_query_bound() -> None:
+    injector = KnowledgeInjector(TrainingConfig.from_mapping(_training_mapping()))
+    now = datetime(2026, 9, 1, 0, 30, tzinfo=timezone.utc)
+    first = injector.inject(
+        [_payload()],
+        KnowledgeQuery(intents=frozenset({KnowledgeIntent.UPGRADE}), stage=3),
+        observed_at=now,
+    )
+    equivalent = injector.inject(
+        [_payload()],
+        KnowledgeQuery(intents=frozenset({KnowledgeIntent.UPGRADE}), stage=3),
+        observed_at=now,
+    )
+    changed = injector.inject(
+        [_payload()],
+        KnowledgeQuery(intents=frozenset({KnowledgeIntent.UPGRADE}), stage=4),
+        observed_at=now,
+    )
+
+    assert first.metadata["query_sha256"] == equivalent.metadata["query_sha256"]
+    assert first.metadata["query_sha256"] != changed.metadata["query_sha256"]
 
 
 def test_injector_applies_policy_limits_and_query_intent() -> None:
