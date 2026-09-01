@@ -81,6 +81,15 @@ def test_internal_github_actions_execute_the_same_just_recipes() -> None:
     assert "SHA256SUMS" in release
 
 
+def test_release_upload_includes_the_hidden_glr_archive_directory() -> None:
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    upload_step = release.split("- name: Upload the GLR distribution archive", maxsplit=1)[1]
+    upload_step = upload_step.split("\n\n", maxsplit=1)[0]
+
+    assert "path: .glr-release/*.zip" in upload_step
+    assert "include-hidden-files: true" in upload_step
+
+
 def test_public_reusable_python_workflow_stays_uv_compatible() -> None:
     workflow = (ROOT / ".github/workflows/reusable-python-ci.yml").read_text(encoding="utf-8")
 

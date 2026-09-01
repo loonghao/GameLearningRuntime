@@ -159,6 +159,8 @@ jobs:
         with:
           name: glr-${{ matrix.target }}
           path: .glr-release/*.zip
+          # The exact ZIP glob is inside an intentionally gitignored hidden directory.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
