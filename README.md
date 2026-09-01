@@ -380,6 +380,43 @@ and operate runtime, training capture, goal loops, history queries, knowledge
 transfer, verified playback, and explicitly authorized managed updates without
 changing adapter internals. Both Skills ship in every standalone GLR archive.
 
+### Distribute the skills as an Agent Plugin
+
+For plugin-capable agents, this repository also ships the self-contained
+[`game-learning-runtime-skills` plugin](plugins/game-learning-runtime-skills).
+Its `.codex-plugin/plugin.json` follows the Agent Plugin manifest contract and
+its `skills/` payload contains the repository's `glr-adapter-builder` and
+`glr-cli` Skills. Copy or archive the plugin directory without changing its
+internal layout; a compatible host should resolve each Skill relative to the
+plugin's `skills/` directory. Pin the repository to a release tag or commit
+SHA when sharing it with a team.
+
+The repo-local `.agents/plugins/marketplace.json` exposes the plugin as
+`game-learning-runtime-skills` for hosts that support Agent Plugin
+marketplaces. Point that host at the repository marketplace, then install the
+plugin by that name; other Agent Skills-compatible hosts can consume the same
+plugin directory directly.
+
+For Codex CLI, the equivalent commands are:
+
+```powershell
+codex plugin marketplace add loonghao/GameLearningRuntime
+codex plugin add game-learning-runtime-skills@game-learning-runtime
+```
+
+Before publishing a change, verify that the distributable payload has not
+drifted from the repository-owned Skills:
+
+```powershell
+vx uv run python scripts/package_agent_plugin.py --check
+```
+
+Maintainers can intentionally refresh the payload after editing a source Skill
+with `--sync`, then rerun the check and the normal `vx run check` gates. The
+Skills' bundled scripts and references are resolved from each installed Skill
+root, so user-level plugin installs do not depend on a `.agents/skills` path in
+the consuming project.
+
 ## TorchRL and custom learners
 
 Use the optional TorchRL adapter:

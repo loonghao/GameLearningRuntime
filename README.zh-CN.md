@@ -336,6 +336,37 @@ vx run reproduce
 历史查询、知识迁移、模型加载和明确授权的受控更新，不修改适配器内部语义。每个 GLR
 独立分发包都会同时携带这两个 Skills。
 
+### 按 Agent Plugin 规范分发
+
+面向支持插件规范的 Agent，仓库还提供自包含的
+[`game-learning-runtime-skills` 插件](plugins/game-learning-runtime-skills)。
+其中 `.codex-plugin/plugin.json` 遵循 Agent Plugin manifest 契约，`skills/`
+里包含与仓库源目录一致的 `glr-adapter-builder` 和 `glr-cli`。复制或归档
+整个插件目录，不要改变内部布局；兼容的宿主应以插件内的 `skills/` 为根
+发现各个 `SKILL.md`。团队分发时请将仓库 URL 固定到 release tag 或 commit SHA。
+
+仓库内的 `.agents/plugins/marketplace.json` 以
+`game-learning-runtime-skills` 暴露该插件，支持 Agent Plugin marketplace
+的宿主可指向此仓库后按名称安装；其他兼容 Agent Skills 标准的宿主则可
+直接消费同一个插件目录。
+
+Codex CLI 对应命令为：
+
+```powershell
+codex plugin marketplace add loonghao/GameLearningRuntime
+codex plugin add game-learning-runtime-skills@game-learning-runtime
+```
+
+发布前可检查分发副本是否与仓库 Skills 漂移：
+
+```powershell
+vx uv run python scripts/package_agent_plugin.py --check
+```
+
+维护者在修改源 Skill 后可明确执行 `--sync` 刷新副本，再运行上述检查和
+`vx run check`。Skills 中的脚本和参考资料均从安装后的 Skill 根目录解析，
+因此用户级插件安装不依赖消费项目里的 `.agents/skills` 路径。
+
 ## TorchRL 与自定义学习器
 
 使用可选 TorchRL 适配器：
