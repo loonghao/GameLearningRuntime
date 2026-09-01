@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.6.1...v0.7.0) (2026-09-01)
+
+
+### Features
+
+* distribute skills as agent plugin ([af70610](https://github.com/loonghao/GameLearningRuntime/commit/af7061092994a4f4a35094b5a6d3157bd4081606))
+
 ## [0.6.1](https://github.com/loonghao/GameLearningRuntime/compare/v0.6.0...v0.6.1) (2026-09-01)
 
 
