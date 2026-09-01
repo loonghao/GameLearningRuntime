@@ -61,7 +61,10 @@ cpp-check:
 
 provider-sdk-check: csharp-check cpp-check
 
-check: setup lock-check workflow-check core-check rust-check provider-sdk-check
+agent-plugin-check:
+    vx uv run python scripts/package_agent_plugin.py --check
+
+check: setup lock-check workflow-check core-check rust-check provider-sdk-check agent-plugin-check
 
 build:
     vx cargo build --release --workspace --bins --locked

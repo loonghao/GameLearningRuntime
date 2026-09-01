@@ -1,0 +1,40 @@
+{
+  "name": "game-learning-runtime-skills",
+  "version": "0.6.1",
+  "description": "Portable GameLearningRuntime skills for building and operating truthful, learner-neutral game adapters.",
+  "author": {
+    "name": "loonghao",
+    "email": "hal.long@outlook.com",
+    "url": "https://github.com/loonghao"
+  },
+  "homepage": "https://github.com/loonghao/GameLearningRuntime#readme",
+  "repository": "https://github.com/loonghao/GameLearningRuntime",
+  "license": "MIT",
+  "keywords": [
+    "game-learning-runtime",
+    "game-ai",
+    "reinforcement-learning",
+    "imitation-learning",
+    "adapter",
+    "agent-skills"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "GameLearningRuntime Skills",
+    "shortDescription": "Build and operate bounded game adapters.",
+    "longDescription": "Provides GLR adapter-builder and CLI workflows for provenance-first research, truthful runtime lifecycle design, fenced actions, training safety, goal-driven operation, and reproducible validation across compatible agents.",
+    "developerName": "loonghao",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/loonghao/GameLearningRuntime",
+    "defaultPrompt": [
+      "Build a bounded GLR adapter for an authorized game runtime.",
+      "Operate an existing GLR project through its agent-first CLI.",
+      "Validate adapter safety, provenance, and reproducibility artifacts."
+    ],
+    "brandColor": "#2563EB"
+  }
+}
