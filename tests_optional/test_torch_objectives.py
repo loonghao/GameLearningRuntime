@@ -203,9 +203,7 @@ def test_ppo_reports_degenerate_one_hot_action_masks() -> None:
         advantages=torch.ones(3),
         values=torch.zeros(3),
         value_targets=torch.zeros(3),
-        action_mask=torch.tensor(
-            [[True, False, False], [True, True, False], [False, False, True]]
-        ),
+        action_mask=torch.tensor([[True, False, False], [True, True, False], [False, False, True]]),
         normalize_advantage=False,
         entropy_coefficient=0.0,
     )
