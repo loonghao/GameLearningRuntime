@@ -16,6 +16,7 @@
 - [ADR-0014: Inject bounded advisory knowledge contexts](0014-inject-bounded-advisory-knowledge-contexts.md)
 - [ADR-0015: Add an agent-first local control plane](0015-add-an-agent-first-local-control-plane.md)
 - [ADR-0016: Make the Rust CLI the distribution entrypoint](0016-make-the-rust-cli-the-distribution-entrypoint.md)
+- [ADR-0017: Keep runtime evidence and artifact lineage learner-neutral](0017-runtime-evidence-and-artifact-lineage.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

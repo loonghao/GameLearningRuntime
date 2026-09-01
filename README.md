@@ -299,6 +299,11 @@ print(reward.total, reward.contributions)
 
 Runtime telemetry should be `authoritative`; web guides and strategy priors
 should be `advisory`. Reward terms require authoritative sources by default.
+Adapters may also use the learner-neutral [runtime evidence contracts](docs/guides/runtime-evidence.md)
+to record settled route edges, stall/oscillation telemetry, modal navigation
+boundaries, and trajectory/recording lineage. These records never control the
+adapter, widen action masks, or replace authoritative reward and terminal
+evidence.
 Configuration is data only: GLR does not evaluate reward expressions as code.
 `KnowledgeInjector` additionally validates bounded `glr.knowledge-snapshot.v1`
 payloads and selects stage/tag-relevant `acquire`, `engage`, `upgrade`, and
