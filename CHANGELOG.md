@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.8.0...v0.9.0) (2026-09-01)
+
+
+### Features
+
+* add offline interactive run reports ([3c7a32e](https://github.com/loonghao/GameLearningRuntime/commit/3c7a32ea68a6500ea4e3bf3d6b84e8eebf967f33))
+* add runtime evidence contracts ([313f677](https://github.com/loonghao/GameLearningRuntime/commit/313f677be595c47261a05359c57f6cd3ffe9c6a0))
+
+
+### Bug Fixes
+
+* harden transition persistence and batching ([4a85190](https://github.com/loonghao/GameLearningRuntime/commit/4a85190703820733b77f9fd23d6cf5c3b2d9a0cf))
+* report forced actions in PPO metrics ([6c62985](https://github.com/loonghao/GameLearningRuntime/commit/6c62985550cc2881d321d5400ef16990aeeef958)), closes [#41](https://github.com/loonghao/GameLearningRuntime/issues/41)
+* stabilize repeated run reports ([ace373c](https://github.com/loonghao/GameLearningRuntime/commit/ace373c8d52b4a66f14abeeedb547277cf59672a))
+
 ## [0.8.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.7.0...v0.8.0) (2026-09-01)
 
 
