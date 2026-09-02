@@ -58,9 +58,12 @@ H.264 MP4 plus `glr.capture-frame.v1` records mapping environment steps to video
 checksummed `glr.capture.v1` manifest binds both artifacts. This makes the same capture useful for
 human review and later supervised-data selection without putting OS capture code in GLR core.
 
-Spatial snapshots use `glr.spatial-knowledge.v1`. Export/import requires the exact environment and
-protocol. Imported coordinates and routes are advisory until observed again. Research findings may
-transfer at `family` scope, but models still require exact environment/protocol compatibility.
+Spatial snapshots use `glr.spatial-knowledge.v1`. The optional `glr.spatial-knowledge.v2` graph adds
+directed edges, bounded 3D projection fields, expiry, and negative traversal evidence. Export/import
+requires the exact environment and protocol. Imported coordinates, routes, and graph evidence are
+advisory until observed again; blocked or stale edges are excluded from frontier queries. Research
+findings may transfer at `family` scope, but models still require exact environment/protocol
+compatibility.
 
 ## Consequences
 

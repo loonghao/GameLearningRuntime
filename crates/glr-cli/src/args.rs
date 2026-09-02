@@ -170,6 +170,20 @@ pub enum QueryCommand {
         #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=1000))]
         limit: u32,
     },
+    Edges {
+        #[arg(long)]
+        world: String,
+        #[arg(long)]
+        from_node: Option<String>,
+        #[arg(long)]
+        to_node: Option<String>,
+        #[arg(long)]
+        status: Option<EdgeStatusArg>,
+        #[arg(long, default_value_t = 0)]
+        at_ns: u64,
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=1000))]
+        limit: u32,
+    },
     Research {
         #[arg(long = "tag")]
         tags: Vec<String>,
@@ -192,6 +206,25 @@ pub enum KnowledgeCommand {
         #[arg(long = "input")]
         source: PathBuf,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum EdgeStatusArg {
+    Unknown,
+    Traversable,
+    Blocked,
+    Stale,
+}
+
+impl EdgeStatusArg {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Traversable => "traversable",
+            Self::Blocked => "blocked",
+            Self::Stale => "stale",
+        }
+    }
 }
 
 #[derive(Debug, Args)]

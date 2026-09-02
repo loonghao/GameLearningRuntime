@@ -326,3 +326,154 @@ fn playback_verifies_the_exact_model_bundle_before_launch() {
     let error: Value = serde_json::from_slice(&rejected.stderr).unwrap();
     assert_eq!(error["command"], "error");
 }
+
+#[test]
+fn spatial_graph_import_preserves_negative_evidence_and_filters_frontier_edges() {
+    let project = create_project();
+    let source = project.path().join("spatial-v2.json");
+    let graph = json!({
+        "schema_version": "glr.spatial-knowledge.v2",
+        "environment_id": "example.adventure-v1",
+        "protocol_version": "1.0",
+        "exported_at_ns": 100,
+        "nodes": [
+            {
+                "node_id": "node.start",
+                "world_id": "forest",
+                "position": [0.0, 0.0, 1.0],
+                "coordinate_frame": "world",
+                "ground_z": 0.0,
+                "nav_z": 1.0,
+                "observed_at_ns": 100,
+                "source_run_id": "run.source",
+                "authority": "authoritative",
+                "confidence": 1.0,
+                "metadata": {}
+            },
+            {
+                "node_id": "node.goal",
+                "world_id": "forest",
+                "position": [5.0, 0.0, 1.0],
+                "coordinate_frame": "world",
+                "ground_z": 0.0,
+                "nav_z": 1.0,
+                "observed_at_ns": 100,
+                "source_run_id": "run.source",
+                "authority": "authoritative",
+                "confidence": 1.0,
+                "metadata": {}
+            }
+        ],
+        "edges": [
+            {
+                "edge_id": "edge.good",
+                "world_id": "forest",
+                "from_node_id": "node.start",
+                "to_node_id": "node.goal",
+                "coordinate_frame": "world",
+                "source_run_id": "run.source",
+                "passability": "traversable",
+                "cost": 5.0,
+                "success_count": 1,
+                "failure_count": 0,
+                "last_verified_at_ns": 100,
+                "expires_at_ns": 500,
+                "ground_projection": [2.5, 0.0, 1.0],
+                "nav_projection": [2.5, 0.0, 1.0],
+                "vertical_delta": 0.0,
+                "slope": 0.0,
+                "clearance": 2.0,
+                "hazard_reasons": [],
+                "negative_evidence": [],
+                "transform": null,
+                "authority": "authoritative",
+                "confidence": 1.0,
+                "metadata": {}
+            },
+            {
+                "edge_id": "edge.blocked",
+                "world_id": "forest",
+                "from_node_id": "node.start",
+                "to_node_id": "node.goal",
+                "coordinate_frame": "world",
+                "source_run_id": "run.source",
+                "passability": "blocked",
+                "cost": null,
+                "success_count": 0,
+                "failure_count": 1,
+                "last_verified_at_ns": 120,
+                "expires_at_ns": null,
+                "ground_projection": null,
+                "nav_projection": null,
+                "vertical_delta": null,
+                "slope": 80.0,
+                "clearance": 0.5,
+                "hazard_reasons": ["steep-slope"],
+                "negative_evidence": [
+                    {
+                        "reason": "steep-slope",
+                        "observed_at_ns": 120,
+                        "source_run_id": "run.source",
+                        "expires_at_ns": null,
+                        "detail": "blocked by slope"
+                    }
+                ],
+                "transform": null,
+                "authority": "authoritative",
+                "confidence": 1.0,
+                "metadata": {}
+            }
+        ],
+        "transforms": []
+    });
+    fs::write(&source, serde_json::to_vec_pretty(&graph).unwrap()).unwrap();
+
+    let imported = stdout(&run(
+        project.path(),
+        &["knowledge", "import", "--input", source.to_str().unwrap()],
+    ));
+    assert_eq!(imported["command"], "knowledge.graph-import");
+    assert_eq!(imported["data"]["nodes"], 2);
+    assert_eq!(imported["data"]["edges"], 2);
+
+    let all_edges = stdout(&run(
+        project.path(),
+        &[
+            "query",
+            "edges",
+            "--world",
+            "forest",
+            "--from-node",
+            "node.start",
+            "--at-ns",
+            "200",
+        ],
+    ));
+    assert_eq!(all_edges["data"].as_array().unwrap().len(), 2);
+    let blocked = all_edges["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|edge| edge["edge_id"] == "edge.blocked")
+        .unwrap();
+    assert_eq!(blocked["advisory"], true);
+    assert_eq!(blocked["status"], "blocked");
+
+    let frontier = stdout(&run(
+        project.path(),
+        &[
+            "query",
+            "edges",
+            "--world",
+            "forest",
+            "--from-node",
+            "node.start",
+            "--status",
+            "traversable",
+            "--at-ns",
+            "200",
+        ],
+    ));
+    assert_eq!(frontier["data"].as_array().unwrap().len(), 1);
+    assert_eq!(frontier["data"][0]["edge_id"], "edge.good");
+}

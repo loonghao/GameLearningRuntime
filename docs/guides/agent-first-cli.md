@@ -168,6 +168,7 @@ glr --project . --json runs list --limit 20
 glr --project . --json runs show RUN_ID
 glr --project . --json query entities --world forest --kind shrine --name shrine
 glr --project . --json query routes --world forest --to-entity shrine.forest-1
+glr --project . --json query edges --world forest --from-node node.spawn --at-ns 0
 glr --project . --json query research --tag navigation --category strategy
 glr --project . --json query research --verified-only
 ```
@@ -193,6 +194,11 @@ Import them in another checkout or fresh game instance with the same environment
 ```powershell
 glr --project . --json knowledge import --input artifacts/spatial-knowledge.json
 ```
+
+The optional `glr.spatial-knowledge.v2` graph uses the same import command. Query directed edges
+with `query edges`; pass `--status traversable` to obtain frontier candidates while blocked and stale
+edges remain visible only when explicitly requested. Negative traversal evidence is retained as
+advisory provenance and never grants action authority.
 
 GLR rejects a different environment or protocol and downgrades imported observations to advisory.
 For another game in the same genre, query family-scoped research instead; never transfer world

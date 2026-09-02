@@ -12,7 +12,8 @@ use crate::args::{
 };
 use crate::contracts::{
     AgentGoal, GoalEvaluation, GoalEvidenceBundle, ResearchBundle, SpatialKnowledgeBundle,
-    TrialPlan, read_json, verify_model_bundle, write_json,
+    SpatialKnowledgeGraph, TraversabilityStatus, TrialPlan, read_json, verify_model_bundle,
+    write_json,
 };
 use crate::error::{Error, Result};
 use crate::process::{
@@ -176,6 +177,57 @@ pub fn execute(cli: Cli) -> Result<i32> {
                     })
                     .collect::<Result<Vec<_>>>()?;
                 emit("query.routes", &routes, cli.json)?;
+                Ok(0)
+            }
+            QueryCommand::Edges {
+                world,
+                from_node,
+                to_node,
+                status,
+                at_ns,
+                limit,
+            } => {
+                let graph = store
+                    .latest_spatial_graph(&project.environment_id, &project.protocol_version)?;
+                let mut edges = graph
+                    .map(|graph| {
+                        graph
+                            .edges
+                            .into_iter()
+                            .filter(|edge| {
+                                edge.world_id == world
+                                    && from_node
+                                        .as_deref()
+                                        .is_none_or(|value| edge.from_node_id == value)
+                                    && to_node
+                                        .as_deref()
+                                        .is_none_or(|value| edge.to_node_id == value)
+                            })
+                            .filter_map(|edge| {
+                                let resolved = edge.status_at(at_ns);
+                                if status.is_none_or(|expected| {
+                                    expected.as_str() == status_name(resolved)
+                                }) {
+                                    let mut value = serde_json::to_value(edge).ok()?;
+                                    let object = value.as_object_mut()?;
+                                    object.insert(
+                                        "status".into(),
+                                        Value::String(status_name(resolved).into()),
+                                    );
+                                    object.insert("advisory".into(), Value::Bool(true));
+                                    Some(value)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                edges.sort_by(|left, right| {
+                    left["edge_id"].as_str().cmp(&right["edge_id"].as_str())
+                });
+                edges.truncate(limit as usize);
+                emit("query.edges", &edges, cli.json)?;
                 Ok(0)
             }
             QueryCommand::Research {
@@ -1031,7 +1083,15 @@ fn export_knowledge(project: &Project, store: &Store, output: &Path, as_json: bo
 }
 
 fn import_knowledge(project: &Project, store: &Store, source: &Path, as_json: bool) -> Result<i32> {
-    let bundle: SpatialKnowledgeBundle = read_json(source, "spatial knowledge")?;
+    let value: Value = read_json(source, "spatial knowledge")?;
+    if value
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .is_some_and(|version| version == crate::contracts::SPATIAL_KNOWLEDGE_V2_SCHEMA_VERSION)
+    {
+        return import_spatial_graph(project, store, source, value, as_json);
+    }
+    let bundle: SpatialKnowledgeBundle = serde_json::from_value(value)?;
     bundle.validate()?;
     if bundle.environment_id != project.environment_id {
         return Err(Error::Contract(
@@ -1084,6 +1144,77 @@ fn import_knowledge(project: &Project, store: &Store, source: &Path, as_json: bo
         as_json,
     )?;
     Ok(0)
+}
+
+fn import_spatial_graph(
+    project: &Project,
+    store: &Store,
+    source: &Path,
+    value: Value,
+    as_json: bool,
+) -> Result<i32> {
+    let graph: SpatialKnowledgeGraph = serde_json::from_value(value)?;
+    graph.validate()?;
+    if graph.environment_id != project.environment_id {
+        return Err(Error::Contract(
+            "spatial graph environment_id does not match".into(),
+        ));
+    }
+    if graph.protocol_version != project.protocol_version {
+        return Err(Error::Contract(
+            "spatial graph protocol_version does not match".into(),
+        ));
+    }
+    let run = store.create_run(
+        &project.environment_id,
+        &project.protocol_version,
+        "knowledge-graph-import",
+        json!({"source": source.file_name().and_then(|value| value.to_str())}),
+    )?;
+    let run_dir = project.data_dir.join("runs").join(&run.run_id);
+    fs::create_dir_all(&run_dir)?;
+    let imported = run_dir.join("spatial-knowledge-v2.json");
+    let graph = match store.import_spatial_graph(&graph, &run.run_id) {
+        Ok(graph) => graph,
+        Err(error) => {
+            let _ = store.finish_run(&run.run_id, "failed", Some(1));
+            return Err(error);
+        }
+    };
+    write_json(&imported, &graph)?;
+    store.append_event(
+        &run.run_id,
+        "knowledge.graph-imported",
+        json!({"nodes": graph.nodes.len(), "edges": graph.edges.len(), "advisory": true}),
+    )?;
+    store.register_artifact(
+        &run.run_id,
+        "spatial-knowledge-v2.json",
+        &imported,
+        "spatial-knowledge-v2",
+        "application/json",
+    )?;
+    let finished = store.finish_run(&run.run_id, "succeeded", Some(0))?;
+    emit(
+        "knowledge.graph-import",
+        &json!({
+            "run": finished,
+            "nodes": graph.nodes.len(),
+            "edges": graph.edges.len(),
+            "authority": "advisory",
+        }),
+        as_json,
+    )?;
+    Ok(0)
+}
+
+fn status_name(status: TraversabilityStatus) -> &'static str {
+    match status {
+        TraversabilityStatus::Unknown => "unknown",
+        TraversabilityStatus::Traversable => "traversable",
+        TraversabilityStatus::Blocked => "blocked",
+        TraversabilityStatus::Stale => "stale",
+    }
 }
 
 fn remaining(deadline: Instant) -> Result<Duration> {
