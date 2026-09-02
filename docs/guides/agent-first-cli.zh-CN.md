@@ -59,6 +59,11 @@ GLR 不调用 shell。
   "researcher": {"argv": ["python", "tools/research.py", "{research_path}"]},
   "planner": {"argv": ["python", "tools/plan.py", "{trial_path}"]},
   "evaluator": {"argv": ["python", "tools/evaluate.py", "{evaluation_path}"]},
+  "progress": {
+    "signal": "day_counter",
+    "window_steps": 256,
+    "max_stalled_rounds": 3
+  },
   "capture": {
     "argv": ["python", "tools/record_window.py", "{capture_video}", "{capture_index}"],
     "required": true,
@@ -79,6 +84,27 @@ GLR 不调用 shell。
 项目角色会收到 `GLR_PROJECT_ROOT`、`GLR_BRIDGE_PATH`、`GLR_RUN_ID`、`GLR_RUN_DIR`、
 `GLR_STORE_PATH`、环境身份、录制输出路径和 goal loop 路径。每个角色仍需独立验证准确的
 游戏目标，不能依赖 CLI 猜测进程或窗口。
+
+进度检测默认关闭。声明 `progress` 后，完成的 trainer 必须在 `trainer.result.json` 中回传：
+
+```json
+{
+  "schema_version": "glr.trainer-result.v1",
+  "status": "completed",
+  "metrics": {},
+  "progress": {
+    "signal": "day_counter",
+    "first_value": 12,
+    "last_value": 12,
+    "steps_since_change": 256,
+    "accepted_steps": 256
+  }
+}
+```
+
+声明的值在配置窗口内不变化时，CLI 将 trial 标为 `stalled`；达到连续轮次阈值后以退出码
+`76` 中止 goal。结果包含 signal、首末值和未变化步数。没有 `progress` 时不会猜测信号，
+也不会执行 stall 检测。
 
 ## 启动与训练
 

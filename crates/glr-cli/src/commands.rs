@@ -20,13 +20,14 @@ use crate::process::{
     CaptureLifecycle, CaptureSession, CaptureState, CommandInvocation, executable_available,
     finish_capture, relative_portable, run_command, start_capture,
 };
-use crate::project::{Project, ProjectCommand, find_project, load_project};
+use crate::project::{ProgressConfig, Project, ProjectCommand, find_project, load_project};
 use crate::report;
 use crate::store::{CheckpointPromotionRequest, EntityQuery, RunRecord, Store};
 use crate::update::Updater;
 
 pub const CLI_OUTPUT_SCHEMA_VERSION: &str = "glr.cli-output.v1";
 const TRAINER_NO_DATA_EXIT_CODE: i32 = 75;
+const GOAL_STALLED_EXIT_CODE: i32 = 76;
 const TRAINER_RESULT_SCHEMA_VERSION: &str = "glr.trainer-result.v1";
 
 #[derive(Debug, Deserialize)]
@@ -36,6 +37,34 @@ struct TrainerResult {
     status: String,
     #[serde(default)]
     metrics: HashMap<String, f64>,
+    #[serde(default)]
+    progress: Option<ProgressReport>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct ProgressReport {
+    /// The adapter-owned state field being tracked.
+    signal: String,
+    /// Authoritative value at the beginning of the trial.
+    first_value: Value,
+    /// Authoritative value at the end of the trial.
+    last_value: Value,
+    /// Accepted steps since the signal last changed.
+    steps_since_change: u64,
+    /// Number of accepted steps observed by the trainer.
+    accepted_steps: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct StallVerdict {
+    status: &'static str,
+    signal: String,
+    first_value: Value,
+    last_value: Value,
+    steps_since_change: u64,
+    window_steps: u64,
+    accepted_steps: u64,
 }
 
 #[derive(Debug)]
@@ -43,6 +72,7 @@ struct TrainerOutcome {
     log: PathBuf,
     status: &'static str,
     metrics: HashMap<String, f64>,
+    stall: Option<StallVerdict>,
 }
 
 pub fn execute(cli: Cli) -> Result<i32> {
@@ -565,6 +595,9 @@ fn run_goal(
         trainer_statuses,
         promotion,
         captures,
+        stall,
+        stalled_rounds,
+        stall_abort,
     } = match result {
         Ok(value) => value,
         Err(error) => {
@@ -572,7 +605,13 @@ fn run_goal(
             return Err(error);
         }
     };
-    let exit_code = if satisfied { 0 } else { 3 };
+    let exit_code = if stall_abort {
+        GOAL_STALLED_EXIT_CODE
+    } else if satisfied {
+        0
+    } else {
+        3
+    };
     let finished = store.finish_run(
         &run.run_id,
         if satisfied { "succeeded" } else { "failed" },
@@ -590,6 +629,8 @@ fn run_goal(
             "trainer_statuses": trainer_statuses,
             "promotion": promotion,
             "captures": captures,
+            "stall": stall,
+            "consecutive_stalled_rounds": stalled_rounds,
         }),
         as_json,
     )?;
@@ -619,6 +660,9 @@ struct GoalRunResult {
     trainer_statuses: Vec<String>,
     promotion: Option<Value>,
     captures: Vec<CaptureLifecycle>,
+    stall: Option<StallVerdict>,
+    stalled_rounds: u32,
+    stall_abort: bool,
 }
 
 fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
@@ -679,6 +723,8 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
     let mut trainer_statuses = Vec::new();
     let mut last_promotion = None;
     let mut captures = Vec::new();
+    let mut consecutive_stalled_rounds = 0_u32;
+    let mut last_stall = None;
     for trial_number in 1..=goal.budget.max_trials {
         remaining(deadline)?;
         let trial_id = format!("trial-{trial_number}");
@@ -812,6 +858,7 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             &trial_dir,
             context.clone(),
             deadline,
+            project.progress.as_ref(),
         );
         let capture = if let Some(session) = capture {
             Some(finish_capture(
@@ -848,6 +895,44 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             "trial.trainer",
             json!({"trial_id": trial_id, "status": trainer_outcome.status}),
         )?;
+        if let Some(stall) = trainer_outcome.stall.clone() {
+            let (updated_rounds, abort) = observe_stall(
+                consecutive_stalled_rounds,
+                true,
+                project
+                    .progress
+                    .as_ref()
+                    .map_or(u32::MAX, |config| config.max_stalled_rounds),
+            );
+            consecutive_stalled_rounds = updated_rounds;
+            last_stall = Some(stall.clone());
+            trials_completed = trial_number;
+            store.append_event(
+                &run.run_id,
+                "trial.stalled",
+                json!({
+                    "trial_id": trial_id,
+                    "verdict": stall,
+                    "consecutive_stalled_rounds": consecutive_stalled_rounds,
+                }),
+            )?;
+            if abort {
+                return Ok(GoalRunResult {
+                    satisfied: false,
+                    trials_completed,
+                    total_steps,
+                    evaluation: last_evaluation,
+                    trainer_statuses,
+                    promotion: last_promotion,
+                    captures,
+                    stall: last_stall,
+                    stalled_rounds: consecutive_stalled_rounds,
+                    stall_abort: true,
+                });
+            }
+            continue;
+        }
+        consecutive_stalled_rounds = observe_stall(consecutive_stalled_rounds, false, 0).0;
         let promotion = if let Some(config) = &goal.promotion {
             let candidate = trial_dir.join("checkpoint.candidate");
             let live = project
@@ -978,6 +1063,9 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
         trainer_statuses,
         promotion: last_promotion,
         captures,
+        stall: last_stall,
+        stalled_rounds: consecutive_stalled_rounds,
+        stall_abort: false,
     })
 }
 
@@ -1016,6 +1104,7 @@ fn run_trainer_role(
     role_dir: &Path,
     context: HashMap<String, PathBuf>,
     deadline: Instant,
+    progress_config: Option<&ProgressConfig>,
 ) -> Result<TrainerOutcome> {
     let log = role_dir.join("trainer.log");
     let exit_code = run_command(CommandInvocation {
@@ -1029,7 +1118,7 @@ fn run_trainer_role(
         timeout: Some(remaining(deadline)?),
     })?;
     let result_path = role_dir.join("trainer.result.json");
-    let (parsed_status, metrics) = if result_path.is_file() {
+    let (parsed_status, metrics, progress) = if result_path.is_file() {
         let result: TrainerResult = read_json(&result_path, "trainer result")?;
         if result.schema_version != TRAINER_RESULT_SCHEMA_VERSION {
             return Err(Error::Contract(
@@ -1041,9 +1130,9 @@ fn run_trainer_role(
                 "trainer result metrics must be finite".into(),
             ));
         }
-        (Some(result.status), result.metrics)
+        (Some(result.status), result.metrics, result.progress)
     } else {
-        (None, HashMap::new())
+        (None, HashMap::new(), None)
     };
     let status = match (exit_code, parsed_status.as_deref()) {
         (0, None) | (0, Some("completed")) => "completed",
@@ -1059,11 +1148,84 @@ fn run_trainer_role(
             )));
         }
     };
+    let stall = if status == "completed" {
+        progress_config
+            .map(|config| progress_verdict(progress.as_ref(), config))
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
+    let status = if stall.is_some() { "stalled" } else { status };
     Ok(TrainerOutcome {
         log,
         status,
         metrics,
+        stall,
     })
+}
+
+fn progress_verdict(
+    report: Option<&ProgressReport>,
+    config: &ProgressConfig,
+) -> Result<Option<StallVerdict>> {
+    let report = report.ok_or_else(|| {
+        Error::Contract(format!(
+            "declared progress signal {:?} is missing from trainer.result.json",
+            config.signal
+        ))
+    })?;
+    if report.signal != config.signal {
+        return Err(Error::Contract(format!(
+            "trainer progress signal {:?} does not match declared signal {:?}",
+            report.signal, config.signal
+        )));
+    }
+    validate_progress_value(&report.first_value, "progress.first_value")?;
+    validate_progress_value(&report.last_value, "progress.last_value")?;
+    if report.accepted_steps == 0 {
+        return Ok(None);
+    }
+    if report.steps_since_change > report.accepted_steps {
+        return Err(Error::Contract(
+            "progress.steps_since_change cannot exceed accepted_steps".into(),
+        ));
+    }
+    if report.first_value != report.last_value || report.steps_since_change < config.window_steps {
+        return Ok(None);
+    }
+    Ok(Some(StallVerdict {
+        status: "stalled",
+        signal: report.signal.clone(),
+        first_value: report.first_value.clone(),
+        last_value: report.last_value.clone(),
+        steps_since_change: report.steps_since_change,
+        window_steps: config.window_steps,
+        accepted_steps: report.accepted_steps,
+    }))
+}
+
+fn validate_progress_value(value: &Value, path: &str) -> Result<()> {
+    match value {
+        Value::Bool(_) => Ok(()),
+        Value::Number(number) if number.as_f64().is_some_and(f64::is_finite) => Ok(()),
+        Value::String(text)
+            if !text.is_empty() && text.len() <= 256 && !text.chars().any(char::is_control) =>
+        {
+            Ok(())
+        }
+        _ => Err(Error::Invalid(format!(
+            "{path} must be a finite number, boolean, or bounded string"
+        ))),
+    }
+}
+
+fn observe_stall(previous_rounds: u32, stalled: bool, threshold: u32) -> (u32, bool) {
+    if !stalled {
+        return (0, false);
+    }
+    let rounds = previous_rounds.saturating_add(1);
+    (rounds, threshold > 0 && rounds >= threshold)
 }
 
 fn validate_goal_research(
@@ -1293,5 +1455,79 @@ fn absolute(path: &Path) -> Result<PathBuf> {
         Ok(path.to_path_buf())
     } else {
         Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProgressConfig, ProgressReport, observe_stall, progress_verdict};
+    use serde_json::json;
+
+    fn config(window_steps: u64) -> ProgressConfig {
+        ProgressConfig {
+            signal: "day".into(),
+            window_steps,
+            max_stalled_rounds: 2,
+        }
+    }
+
+    fn report(
+        first: i64,
+        last: i64,
+        steps_since_change: u64,
+        accepted_steps: u64,
+    ) -> ProgressReport {
+        ProgressReport {
+            signal: "day".into(),
+            first_value: json!(first),
+            last_value: json!(last),
+            steps_since_change,
+            accepted_steps,
+        }
+    }
+
+    #[test]
+    fn progress_signal_advancement_is_not_stalled() {
+        assert!(
+            progress_verdict(Some(&report(1, 2, 256, 256)), &config(256))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            progress_verdict(Some(&report(1, 1, 3, 3)), &config(4))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn frozen_progress_signal_is_stalled_with_actionable_values() {
+        let verdict = progress_verdict(Some(&report(7, 7, 256, 256)), &config(256))
+            .unwrap()
+            .unwrap();
+        assert_eq!(verdict.signal, "day");
+        assert_eq!(verdict.first_value, json!(7));
+        assert_eq!(verdict.last_value, json!(7));
+        assert_eq!(verdict.steps_since_change, 256);
+    }
+
+    #[test]
+    fn declared_progress_requires_a_matching_report() {
+        let error = progress_verdict(None, &config(1)).unwrap_err();
+        assert!(error.to_string().contains("progress signal"));
+        let mismatched = ProgressReport {
+            signal: "level".into(),
+            ..report(1, 1, 1, 1)
+        };
+        let error = progress_verdict(Some(&mismatched), &config(1)).unwrap_err();
+        assert!(error.to_string().contains("does not match"));
+    }
+
+    #[test]
+    fn consecutive_stalls_reset_on_progress_and_abort_at_threshold() {
+        assert_eq!(observe_stall(0, true, 2), (1, false));
+        assert_eq!(observe_stall(1, true, 2), (2, true));
+        assert_eq!(observe_stall(2, false, 2), (0, false));
+        assert_eq!(observe_stall(u32::MAX, true, u32::MAX), (u32::MAX, true));
     }
 }

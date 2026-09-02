@@ -110,6 +110,44 @@ pub struct CaptureConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ProgressConfig {
+    /// Adapter-owned authoritative state field reported by the trainer.
+    pub signal: String,
+    /// Number of accepted steps allowed without a signal change.
+    #[serde(default = "default_progress_window_steps")]
+    pub window_steps: u64,
+    /// Consecutive stalled trials before the goal is aborted.
+    #[serde(default = "default_progress_stalled_rounds")]
+    pub max_stalled_rounds: u32,
+}
+
+fn default_progress_window_steps() -> u64 {
+    256
+}
+
+fn default_progress_stalled_rounds() -> u32 {
+    3
+}
+
+impl ProgressConfig {
+    fn validate(&self) -> Result<()> {
+        validate_text(&self.signal, "project.progress.signal")?;
+        if self.window_steps == 0 {
+            return Err(Error::Invalid(
+                "project.progress.window_steps must be positive".into(),
+            ));
+        }
+        if self.max_stalled_rounds == 0 {
+            return Err(Error::Invalid(
+                "project.progress.max_stalled_rounds must be positive".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CaptureSessionConfig {
     #[serde(default = "default_capture_status_file")]
     pub status_file: String,
@@ -221,6 +259,7 @@ struct ProjectFile {
     planner: Option<ProjectCommand>,
     evaluator: Option<ProjectCommand>,
     capture: Option<CaptureConfig>,
+    progress: Option<ProgressConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +277,7 @@ pub struct Project {
     pub planner: Option<ProjectCommand>,
     pub evaluator: Option<ProjectCommand>,
     pub capture: Option<CaptureConfig>,
+    pub progress: Option<ProgressConfig>,
 }
 
 pub fn find_project(start: &Path) -> Result<PathBuf> {
@@ -309,6 +349,9 @@ pub fn load_project(requested: &Path) -> Result<Project> {
     if let Some(capture) = &value.capture {
         capture.validate()?;
     }
+    if let Some(progress) = &value.progress {
+        progress.validate()?;
+    }
     let data_dir = inside_project(&root, &value.data_dir, "project.data_dir")?;
     let bridge_path = inside_project(&root, &value.bridge_path, "project.bridge_path")?;
     if !bridge_path.exists() {
@@ -328,6 +371,7 @@ pub fn load_project(requested: &Path) -> Result<Project> {
         planner: value.planner,
         evaluator: value.evaluator,
         capture: value.capture,
+        progress: value.progress,
     })
 }
 
