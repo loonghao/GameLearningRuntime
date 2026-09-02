@@ -18,6 +18,7 @@
 - [ADR-0016: Make the Rust CLI the distribution entrypoint](0016-make-the-rust-cli-the-distribution-entrypoint.md)
 - [ADR-0017: Keep runtime evidence and artifact lineage learner-neutral](0017-runtime-evidence-and-artifact-lineage.md)
 - [ADR-0018: Add offline interactive run reports](0018-add-offline-run-reports.md)
+- [ADR-0019: Add an optional DeepSeek Harness provider boundary](0019-add-optional-deepseek-harness-provider.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

@@ -272,6 +272,17 @@ not yet claim authenticated or target-bound IPC and cannot yet connect a live
 external C#/C++ provider. See the [Runtime Host and provider SDK guide](docs/guides/runtime-host-and-provider-sdks.md)
 for the exact current boundary and Unity/Unreal implementation path.
 
+### Optional DeepSeek Harness
+
+`DeepSeekHarnessProvider` is a separate, disabled-by-default control-plane
+provider for structured analysis, completion, or planning tasks. It does not
+alter learner-facing environment contracts, discover credentials, or grant
+runtime action authority. Explicit handlers receive bounded JSON tasks with
+permissions, deadlines, and idempotency keys; failures and timeouts are
+cached, and ordered events/state snapshots can be recovered through the
+optional `LocalHarnessOrchestrator`. See the [DeepSeek Harness guide](docs/guides/deepseek-harness.md)
+and [configuration sample](docs/examples/deepseek-harness.json).
+
 ## Reproducible local development
 
 GLR pins Python, uv, just, rustup, Rust, and .NET SDK inputs. Local development
