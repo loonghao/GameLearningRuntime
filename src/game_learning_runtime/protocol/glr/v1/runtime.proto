@@ -24,6 +24,16 @@ enum SpaceKind {
   SPACE_KIND_BINARY = 4;
 }
 
+enum ActionOutcome {
+  ACTION_OUTCOME_UNSPECIFIED = 0;
+  ACTION_OUTCOME_ACCEPTED = 1;
+  ACTION_OUTCOME_REJECTED = 2;
+  ACTION_OUTCOME_UNKNOWN = 3;
+  ACTION_OUTCOME_NO_EFFECT = 4;
+  ACTION_OUTCOME_PARTIAL = 5;
+  ACTION_OUTCOME_BLOCKED = 6;
+}
+
 message TensorSpec {
   string path = 1;
   repeated int64 shape = 2; // -1 denotes a dynamic dimension.
@@ -75,6 +85,19 @@ message RuntimeEvent {
   bytes json_payload = 3;
 }
 
+message ActionReceipt {
+  string action_id = 1;
+  string episode_id = 2;
+  uint64 step_id = 3;
+  ActionOutcome outcome = 4;
+  uint64 issued_timestamp_ns = 5;
+  uint64 observed_timestamp_ns = 6;
+  string postcondition = 7;
+  optional double progress_delta = 8;
+  optional uint64 authoritative_observation_sequence = 9;
+  bool retryable = 10;
+}
+
 message TimeStep {
   string episode_id = 1;
   uint64 step_id = 2;
@@ -86,6 +109,7 @@ message TimeStep {
   map<string, Tensor> action_mask = 8;
   repeated RuntimeEvent events = 9;
   bytes json_info = 10;
+  optional ActionReceipt action_receipt = 11;
 }
 
 service GameRuntime {

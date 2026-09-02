@@ -175,6 +175,43 @@ def test_host_driver_maps_the_wire_contract_to_the_standard_environment() -> Non
     assert channel.closed
 
 
+def test_host_driver_parses_and_binds_action_receipt() -> None:
+    class _ReceiptChannel(_ScriptedChannel):
+        def exchange(self, request: Mapping[str, object]) -> Mapping[str, object]:
+            response = copy.deepcopy(dict(super().exchange(request)))
+            if request["operation"] == "step":
+                result = response["result"]
+                assert isinstance(result, dict)
+                result["action_receipt"] = {
+                    "action_id": "move-1",
+                    "episode_id": str(self.episode_id),
+                    "step_id": 1,
+                    "outcome": "no_effect",
+                    "issued_timestamp_ns": 10,
+                    "observed_timestamp_ns": 20,
+                    "postcondition": "blocked",
+                    "progress_delta": 0.0,
+                    "authoritative_observation_sequence": 3,
+                    "retryable": False,
+                }
+            return response
+
+    driver = HostBridgeDriver(_ReceiptChannel())
+    initial = driver.reset(BridgeResetRequest())
+    result = driver.step(
+        BridgeStepRequest(
+            episode_id=initial.episode_id,
+            expected_step_id=1,
+            action={"choice": np.array([1], dtype=np.int64)},
+        )
+    )
+
+    assert result.action_receipt is not None
+    assert result.action_receipt.outcome.value == "no_effect"
+    assert result.action_receipt.authoritative_observation_sequence == 3
+    driver.close()
+
+
 def test_host_driver_surfaces_structured_remote_errors_without_retry() -> None:
     channel = _ScriptedChannel()
     driver = HostBridgeDriver(channel)

@@ -5,6 +5,111 @@ using System.Linq;
 
 namespace GameLearningRuntime.Provider
 {
+    /// <summary>Typed outcome of one mutating realtime action.</summary>
+    public enum ActionOutcome
+    {
+        /// <summary>The provider consumed the action and observed its postcondition.</summary>
+        Accepted,
+        /// <summary>The provider rejected the action before mutation.</summary>
+        Rejected,
+        /// <summary>The provider cannot determine whether mutation occurred.</summary>
+        Unknown,
+        /// <summary>The action was consumed but produced no observed progress.</summary>
+        NoEffect,
+        /// <summary>The action produced only part of its requested postcondition.</summary>
+        Partial,
+        /// <summary>The action was prevented by a known runtime blocker.</summary>
+        Blocked,
+    }
+
+    /// <summary>Authoritative receipt tied to a provider post-state.</summary>
+    public sealed class ActionReceipt
+    {
+        /// <summary>Create a bounded action receipt.</summary>
+        public ActionReceipt(
+            string actionId,
+            Guid episodeId,
+            ulong stepId,
+            ActionOutcome outcome,
+            ulong issuedTimestampNanoseconds,
+            ulong observedTimestampNanoseconds,
+            string postcondition = "unknown",
+            double? progressDelta = null,
+            ulong? authoritativeObservationSequence = null,
+            bool retryable = false)
+        {
+            if (string.IsNullOrWhiteSpace(actionId) || actionId.Length > 128)
+            {
+                throw new ArgumentException("Action ID must contain 1-128 characters.", nameof(actionId));
+            }
+
+            if (stepId == 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(stepId), "Step ID must be positive.");
+            }
+
+            if (observedTimestampNanoseconds < issuedTimestampNanoseconds)
+            {
+                throw new ArgumentException(
+                    "Observed timestamp cannot precede issued timestamp.",
+                    nameof(observedTimestampNanoseconds));
+            }
+
+            if (string.IsNullOrWhiteSpace(postcondition) || postcondition.Length > 128)
+            {
+                throw new ArgumentException(
+                    "Postcondition must contain 1-128 characters.",
+                    nameof(postcondition));
+            }
+
+            if (progressDelta.HasValue && (double.IsNaN(progressDelta.Value) || double.IsInfinity(progressDelta.Value)))
+            {
+                throw new ArgumentException("Progress delta must be finite.", nameof(progressDelta));
+            }
+
+            ActionId = actionId;
+            EpisodeId = episodeId;
+            StepId = stepId;
+            Outcome = outcome;
+            IssuedTimestampNanoseconds = issuedTimestampNanoseconds;
+            ObservedTimestampNanoseconds = observedTimestampNanoseconds;
+            Postcondition = postcondition;
+            ProgressDelta = progressDelta;
+            AuthoritativeObservationSequence = authoritativeObservationSequence;
+            Retryable = retryable;
+        }
+
+        /// <summary>Provider action identity.</summary>
+        public string ActionId { get; }
+
+        /// <summary>Logical episode identity.</summary>
+        public Guid EpisodeId { get; }
+
+        /// <summary>Authoritative post-state step identity.</summary>
+        public ulong StepId { get; }
+
+        /// <summary>Typed action outcome.</summary>
+        public ActionOutcome Outcome { get; }
+
+        /// <summary>Provider action issue timestamp.</summary>
+        public ulong IssuedTimestampNanoseconds { get; }
+
+        /// <summary>Provider post-state observation timestamp.</summary>
+        public ulong ObservedTimestampNanoseconds { get; }
+
+        /// <summary>Bounded postcondition status.</summary>
+        public string Postcondition { get; }
+
+        /// <summary>Optional bounded progress delta.</summary>
+        public double? ProgressDelta { get; }
+
+        /// <summary>Optional authoritative observation sequence.</summary>
+        public ulong? AuthoritativeObservationSequence { get; }
+
+        /// <summary>Whether a provider explicitly permits retry.</summary>
+        public bool Retryable { get; }
+    }
+
     /// <summary>An immutable tensor payload using the GLR little-endian wire layout.</summary>
     public sealed class TensorBuffer
     {
@@ -223,7 +328,8 @@ namespace GameLearningRuntime.Provider
             TensorBuffer truncated,
             IReadOnlyDictionary<string, TensorBuffer>? actionMask = null,
             IEnumerable<ProviderEvent>? events = null,
-            byte[]? infoJsonUtf8 = null)
+            byte[]? infoJsonUtf8 = null,
+            ActionReceipt? actionReceipt = null)
         {
             EpisodeId = episodeId;
             StepId = stepId;
@@ -237,6 +343,14 @@ namespace GameLearningRuntime.Provider
                 nameof(actionMask));
             Events = Array.AsReadOnly((events ?? Array.Empty<ProviderEvent>()).ToArray());
             this.infoJsonUtf8 = (infoJsonUtf8 ?? Array.Empty<byte>()).ToArray();
+            if (actionReceipt != null && (actionReceipt.EpisodeId != episodeId || actionReceipt.StepId != stepId))
+            {
+                throw new ArgumentException(
+                    "Action receipt must match the provider time step identity.",
+                    nameof(actionReceipt));
+            }
+
+            ActionReceipt = actionReceipt;
         }
 
         /// <summary>Logical GLR episode identity.</summary>
@@ -265,6 +379,9 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>Semantic events.</summary>
         public IReadOnlyList<ProviderEvent> Events { get; }
+
+        /// <summary>Optional typed receipt for the mutating action producing this state.</summary>
+        public ActionReceipt? ActionReceipt { get; }
 
         /// <summary>Strict UTF-8 JSON object bytes for reviewed auxiliary info.</summary>
         public byte[] InfoJsonUtf8 => infoJsonUtf8.ToArray();

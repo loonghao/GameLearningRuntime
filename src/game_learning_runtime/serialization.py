@@ -13,7 +13,13 @@ from uuid import UUID
 import numpy as np
 from numpy.typing import NDArray
 
-from game_learning_runtime.contracts import Event, TensorTree, Transition
+from game_learning_runtime.contracts import (
+    ActionOutcome,
+    ActionReceipt,
+    Event,
+    TensorTree,
+    Transition,
+)
 
 RECORD_SCHEMA = "glr.transition.v1"
 
@@ -78,6 +84,7 @@ def transition_to_record(transition: Transition) -> dict[str, Any]:
         "reward": _encode_array(transition.reward),
         "next_observation": _encode_tree(transition.next_observation),
         "next_action_mask": _encode_tree(transition.next_action_mask),
+        "action_receipt": _action_receipt_to_record(transition.action_receipt),
         "terminated": _encode_array(transition.terminated),
         "truncated": _encode_array(transition.truncated),
         "events": [
@@ -93,6 +100,46 @@ def transition_to_record(transition: Transition) -> dict[str, Any]:
     }
     json.dumps(record, allow_nan=False)
     return record
+
+
+def _action_receipt_to_record(receipt: ActionReceipt | None) -> dict[str, Any] | None:
+    if receipt is None:
+        return None
+    return {
+        "action_id": receipt.action_id,
+        "episode_id": str(receipt.episode_id),
+        "step_id": receipt.step_id,
+        "outcome": receipt.outcome.value,
+        "issued_timestamp_ns": receipt.issued_timestamp_ns,
+        "observed_timestamp_ns": receipt.observed_timestamp_ns,
+        "postcondition": receipt.postcondition,
+        "progress_delta": receipt.progress_delta,
+        "authoritative_observation_sequence": receipt.authoritative_observation_sequence,
+        "retryable": receipt.retryable,
+    }
+
+
+def _action_receipt_from_record(value: object) -> ActionReceipt | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("action_receipt must be an object or null")
+    return ActionReceipt(
+        action_id=str(value["action_id"]),
+        episode_id=UUID(str(value["episode_id"])),
+        step_id=int(value["step_id"]),
+        outcome=ActionOutcome(str(value["outcome"])),
+        issued_timestamp_ns=int(value["issued_timestamp_ns"]),
+        observed_timestamp_ns=int(value["observed_timestamp_ns"]),
+        postcondition=str(value.get("postcondition", "unknown")),
+        progress_delta=value.get("progress_delta"),
+        authoritative_observation_sequence=(
+            int(value["authoritative_observation_sequence"])
+            if value.get("authoritative_observation_sequence") is not None
+            else None
+        ),
+        retryable=bool(value.get("retryable", False)),
+    )
 
 
 def transition_from_record(record: Mapping[str, Any]) -> Transition:
@@ -118,6 +165,7 @@ def transition_from_record(record: Mapping[str, Any]) -> Transition:
         reward=_decode_array(record["reward"]),
         next_observation=next_observation,
         next_action_mask=_decode_tree(record.get("next_action_mask")),
+        action_receipt=_action_receipt_from_record(record.get("action_receipt")),
         terminated=_decode_array(record["terminated"]),
         truncated=_decode_array(record["truncated"]),
         events=tuple(
