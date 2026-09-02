@@ -94,6 +94,26 @@ pub enum GoalOperator {
     Eq,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PromotionMode {
+    Max,
+    Min,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointPromotion {
+    pub metric: String,
+    pub mode: PromotionMode,
+}
+
+impl CheckpointPromotion {
+    pub fn validate(&self) -> Result<()> {
+        validate_identifier(&self.metric, "goal.promotion.metric")
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum ResearchMediaType {
@@ -173,6 +193,8 @@ pub struct AgentGoal {
     pub success_criteria: Vec<SuccessCriterion>,
     pub budget: GoalBudget,
     pub allowed_research_media: Vec<ResearchMediaType>,
+    #[serde(default)]
+    pub promotion: Option<CheckpointPromotion>,
 }
 
 impl AgentGoal {
@@ -216,6 +238,9 @@ impl AgentGoal {
                     "success_criteria contains duplicate metric/source pairs".into(),
                 ));
             }
+        }
+        if let Some(promotion) = &self.promotion {
+            promotion.validate()?;
         }
         Ok(())
     }

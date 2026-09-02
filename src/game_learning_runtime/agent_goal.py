@@ -26,6 +26,11 @@ class GoalOperator(str, Enum):
     EQ = "eq"
 
 
+class PromotionMode(str, Enum):
+    MAX = "max"
+    MIN = "min"
+
+
 class ResearchMediaType(str, Enum):
     OFFICIAL_RULES = "official-rules"
     TEXT_GUIDE = "text-guide"
@@ -57,6 +62,27 @@ class Volatility(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointPromotion:
+    metric: str
+    mode: PromotionMode
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> CheckpointPromotion:
+        _fields(value, expected=frozenset({"metric", "mode"}), path="goal.promotion")
+        try:
+            mode = PromotionMode(value["mode"])
+        except ValueError as error:
+            raise ValueError("goal.promotion.mode must be 'max' or 'min'") from error
+        return cls(
+            metric=_identifier(value["metric"], path="goal.promotion.metric"),
+            mode=mode,
+        )
+
+    def to_mapping(self) -> dict[str, str]:
+        return {"metric": self.metric, "mode": self.mode.value}
 
 
 def _mapping(value: object, *, path: str) -> Mapping[str, Any]:
@@ -250,12 +276,15 @@ class AgentGoal:
     success_criteria: tuple[SuccessCriterion, ...]
     budget: GoalBudget
     allowed_research_media: tuple[ResearchMediaType, ...]
+    promotion: CheckpointPromotion | None = None
     schema_version: str = AGENT_GOAL_SCHEMA_VERSION
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> AgentGoal:
+        fields = dict(value)
+        fields.pop("promotion", None)
         _fields(
-            value,
+            fields,
             expected=frozenset(
                 {
                     "schema_version",
@@ -301,10 +330,17 @@ class AgentGoal:
             success_criteria=criteria,
             budget=GoalBudget.from_mapping(_mapping(value["budget"], path="goal.budget")),
             allowed_research_media=media,
+            promotion=(
+                None
+                if value.get("promotion") is None
+                else CheckpointPromotion.from_mapping(
+                    _mapping(value["promotion"], path="goal.promotion")
+                )
+            ),
         )
 
     def to_mapping(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "schema_version": self.schema_version,
             "goal_id": self.goal_id,
             "objective": self.objective,
@@ -326,6 +362,9 @@ class AgentGoal:
             },
             "allowed_research_media": [media.value for media in self.allowed_research_media],
         }
+        if self.promotion is not None:
+            result["promotion"] = self.promotion.to_mapping()
+        return result
 
     def evaluate(self, evidence: Iterable[GoalEvidence]) -> GoalEvaluation:
         by_key: dict[tuple[str, str], GoalEvidence] = {}
@@ -751,12 +790,14 @@ __all__ = [
     "RESEARCH_BUNDLE_SCHEMA_VERSION",
     "TRIAL_PLAN_SCHEMA_VERSION",
     "AgentGoal",
+    "CheckpointPromotion",
     "CriterionEvaluation",
     "GoalBudget",
     "GoalEvaluation",
     "GoalEvidence",
     "GoalEvidenceBundle",
     "GoalOperator",
+    "PromotionMode",
     "ResearchBundle",
     "ResearchCategory",
     "ResearchFinding",

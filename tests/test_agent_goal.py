@@ -186,6 +186,18 @@ def test_goal_operators_and_advisory_evidence_fail_closed() -> None:
         )
 
 
+def test_goal_checkpoint_promotion_is_optional_and_validated() -> None:
+    value = _goal_value()
+    value["promotion"] = {"metric": "victories", "mode": "max"}
+    goal = AgentGoal.from_mapping(value)
+    assert goal.promotion is not None
+    assert goal.promotion.metric == "victories"
+    assert goal.to_mapping()["promotion"] == {"metric": "victories", "mode": "max"}
+    value["promotion"] = {"metric": "victories", "mode": "sideways"}
+    with pytest.raises(ValueError, match="max.*min"):
+        AgentGoal.from_mapping(value)
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
