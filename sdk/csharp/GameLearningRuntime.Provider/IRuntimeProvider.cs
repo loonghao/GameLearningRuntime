@@ -43,6 +43,27 @@ namespace GameLearningRuntime.Provider
         public IReadOnlyDictionary<string, string> Options { get; }
     }
 
+    /// <summary>A reconnect request for an existing logical episode.</summary>
+    public sealed class ResumeRequest
+    {
+        /// <summary>Create an immutable reconnect request.</summary>
+        public ResumeRequest(Guid episodeId, ulong lastCommittedStepId, string? targetId = null)
+        {
+            EpisodeId = episodeId;
+            LastCommittedStepId = lastCommittedStepId;
+            TargetId = targetId;
+        }
+
+        /// <summary>Logical episode identity to resume.</summary>
+        public Guid EpisodeId { get; }
+
+        /// <summary>Last action step durably committed by the caller.</summary>
+        public ulong LastCommittedStepId { get; }
+
+        /// <summary>Optional stable target identity for multi-runtime routing.</summary>
+        public string? TargetId { get; }
+    }
+
     /// <summary>One episode- and step-fenced semantic action.</summary>
     public sealed class StepRequest
     {
@@ -97,6 +118,13 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>Apply one fenced semantic action and return authoritative post-state.</summary>
         ProviderTimeStep Step(StepRequest request);
+    }
+
+    /// <summary>Optional provider capability for reconnect and action reconciliation.</summary>
+    public interface IResumableRuntimeProvider : IRuntimeProvider
+    {
+        /// <summary>Resume an existing episode and reconcile any interrupted action.</summary>
+        ProviderResumeResult Resume(ResumeRequest request);
     }
 
     /// <summary>Engine-owned dispatcher used by a thin bootstrap to marshal provider calls.</summary>

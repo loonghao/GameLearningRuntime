@@ -5,7 +5,16 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from game_learning_runtime import ActionOutcome, ActionReceipt, Event, TimeStep, Transition, Unroll
+from game_learning_runtime import (
+    ActionOutcome,
+    ActionReceipt,
+    ActionReconciliation,
+    Event,
+    ReconciliationOutcome,
+    TimeStep,
+    Transition,
+    Unroll,
+)
 
 
 def _timestep(*, step_id: int = 0) -> TimeStep:
@@ -96,3 +105,66 @@ def test_action_receipt_is_typed_and_counted_without_info_parsing() -> None:
             issued_timestamp_ns=1,
             observed_timestamp_ns=2,
         ).validate_against(_timestep(step_id=1))
+
+
+def test_action_receipt_validation_guards() -> None:
+    episode_id = uuid4()
+
+    def make(**overrides: object) -> ActionReceipt:
+        values: dict[str, object] = {
+            "action_id": "move",
+            "episode_id": episode_id,
+            "step_id": 1,
+            "outcome": ActionOutcome.ACCEPTED,
+            "issued_timestamp_ns": 1,
+            "observed_timestamp_ns": 2,
+        }
+        values.update(overrides)
+        return ActionReceipt(**values)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="action_id"):
+        make(action_id="")
+    with pytest.raises(TypeError, match="episode_id"):
+        make(episode_id="bad")
+    with pytest.raises(ValueError, match="step_id"):
+        make(step_id=0)
+    assert make(outcome="accepted").outcome is ActionOutcome.ACCEPTED
+    with pytest.raises(ValueError, match="unsupported action outcome"):
+        make(outcome="invalid")
+    with pytest.raises(ValueError, match="issued_timestamp_ns"):
+        make(issued_timestamp_ns=-1)
+    with pytest.raises(ValueError, match="observed_timestamp_ns"):
+        make(observed_timestamp_ns=0)
+    with pytest.raises(ValueError, match="postcondition"):
+        make(postcondition="")
+    with pytest.raises(ValueError, match="progress_delta"):
+        make(progress_delta=float("inf"))
+    with pytest.raises(ValueError, match="authoritative_observation_sequence"):
+        make(authoritative_observation_sequence=-1)
+    with pytest.raises(TypeError, match="retryable"):
+        make(retryable=1)
+
+
+def test_action_reconciliation_validates_the_cursor_and_outcome() -> None:
+    episode_id = uuid4()
+    reconciliation = ActionReconciliation(
+        episode_id=episode_id,
+        expected_step_id=1,
+        outcome="unknown",
+        authoritative_step_id=0,
+        timestamp_ns=7,
+    )
+    assert reconciliation.outcome is ReconciliationOutcome.UNKNOWN
+
+    with pytest.raises(TypeError, match="episode_id"):
+        ActionReconciliation("not-a-uuid", 1, ReconciliationOutcome.UNKNOWN, 0, 0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="expected_step_id"):
+        ActionReconciliation(episode_id, 0, ReconciliationOutcome.UNKNOWN, 0, 0)
+    with pytest.raises(ValueError, match="unsupported reconciliation"):
+        ActionReconciliation(episode_id, 1, "invalid", 0, 0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="authoritative_step_id"):
+        ActionReconciliation(episode_id, 1, ReconciliationOutcome.UNKNOWN, -1, 0)
+    with pytest.raises(ValueError, match="timestamp_ns"):
+        ActionReconciliation(episode_id, 1, ReconciliationOutcome.UNKNOWN, 0, -1)
+    with pytest.raises(TypeError, match="retryable"):
+        ActionReconciliation(episode_id, 1, ReconciliationOutcome.UNKNOWN, 0, 0, retryable=1)  # type: ignore[arg-type]

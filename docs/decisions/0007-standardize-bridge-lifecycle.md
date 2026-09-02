@@ -32,6 +32,11 @@ Provide two transport-neutral Python boundaries:
   `GameEnvironment`. It serializes calls, reuses `ContractEnvironment`, and
   rejects mismatched episode or step identities before an action reaches the
   adapter.
+- `BridgeEnvironment.resume` and the optional `reconnect-resume-v1` capability
+  provide a read-only reconnect handshake. Providers return an authoritative
+  cursor and may include an `ActionReconciliation` verdict for a lost in-flight
+  action. Resume never retries a mutation and rejects stale episode/cursor
+  results.
 
 Concrete transports remain separate integrations. They must map the existing
 `glr.v1` Describe/Reset/Step contract and own loopback or local-IPC restriction,
@@ -65,7 +70,8 @@ or anti-cheat bypass enters the shared contract.
   to `EnvironmentSpec` and `TimeStep`.
 - Native C#/C++/Rust runtimes cannot reuse Python code directly; they implement
   the equivalent versioned protocol until generated SDKs are available.
-- Reconnect/resume and async streaming remain future decisions.
+- Authenticated target-bound reconnect transports remain a future decision;
+  the current resume contract is transport-neutral and opt-in.
 
 ### Neutral
 

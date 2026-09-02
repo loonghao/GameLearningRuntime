@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,6 +17,7 @@ inline constexpr std::string_view environment_protocol_version = "1.0";
 enum class dtype { boolean, uint8, int32, int64, float32, float64 };
 enum class space_kind { continuous, discrete, multi_discrete, binary };
 enum class action_outcome { accepted, rejected, unknown, no_effect, partial, blocked };
+enum class reconciliation_outcome { applied, not_applied, unknown };
 
 struct tensor_buffer final {
   std::vector<std::uint64_t> shape;
@@ -77,6 +79,21 @@ struct provider_time_step final {
   std::optional<glr::action_receipt> action_receipt;
 };
 
+struct action_reconciliation final {
+  std::string episode_id;
+  std::uint64_t expected_step_id;
+  reconciliation_outcome outcome;
+  std::uint64_t authoritative_step_id;
+  std::uint64_t timestamp_ns;
+  bool retryable{false};
+};
+
+struct provider_resume_result final {
+  provider_time_step timestep;
+  std::uint64_t committed_step_id;
+  std::optional<action_reconciliation> reconciliation;
+};
+
 struct reset_request final {
   std::optional<std::uint64_t> seed;
   std::map<std::string, std::string> options;
@@ -92,6 +109,12 @@ struct step_request final {
   std::map<std::string, tensor_buffer> action;
 };
 
+struct resume_request final {
+  std::string episode_id;
+  std::uint64_t last_committed_step_id;
+  std::optional<std::string> target_id;
+};
+
 class runtime_provider {
  public:
   runtime_provider() = default;
@@ -105,6 +128,10 @@ class runtime_provider {
   [[nodiscard]] virtual provider_time_step reset(const reset_request& request) = 0;
   [[nodiscard]] virtual provider_time_step attach(const attach_request& request) = 0;
   [[nodiscard]] virtual provider_time_step step(const step_request& request) = 0;
+  [[nodiscard]] virtual provider_resume_result resume(
+      const resume_request& /*request*/) {
+    throw std::logic_error("provider does not support reconnect-resume-v1");
+  }
   virtual void close() noexcept = 0;
 };
 

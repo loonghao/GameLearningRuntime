@@ -1,4 +1,8 @@
-use glr_host::{HOST_SCHEMA, Host, SyntheticCounterProvider};
+use glr_host::{
+    HOST_SCHEMA, Host, ProviderError, ProviderResumeRequest, ProviderStepRequest,
+    ReconciliationOutcome, RuntimeProvider, SyntheticCounterProvider, WireActionReconciliation,
+    WireEnvironmentDescriptor, WireResumeResult, WireTimeStep,
+};
 use serde_json::{Value, json};
 
 fn request(request_id: &str, operation: &str, payload: Value) -> Vec<u8> {
@@ -151,4 +155,102 @@ fn unsupported_attach_and_post_close_work_are_rejected() {
     let after_close = send(&mut host, "describe-2", "describe", json!({}));
     assert_eq!(after_close["ok"], false);
     assert_eq!(after_close["error"]["code"], "host_closed");
+}
+
+struct ResumableProvider {
+    inner: SyntheticCounterProvider,
+    current: Option<WireTimeStep>,
+}
+
+impl ResumableProvider {
+    fn new() -> Self {
+        Self {
+            inner: SyntheticCounterProvider::new(2),
+            current: None,
+        }
+    }
+}
+
+impl RuntimeProvider for ResumableProvider {
+    fn describe(&self) -> WireEnvironmentDescriptor {
+        let mut descriptor = self.inner.describe();
+        descriptor.capabilities.push("reconnect-resume-v1".into());
+        descriptor
+    }
+
+    fn reset(
+        &mut self,
+        seed: Option<u64>,
+        options: &std::collections::BTreeMap<String, String>,
+    ) -> Result<WireTimeStep, ProviderError> {
+        let timestep = self.inner.reset(seed, options)?;
+        self.current = Some(timestep.clone());
+        Ok(timestep)
+    }
+
+    fn attach(
+        &mut self,
+        options: &std::collections::BTreeMap<String, String>,
+    ) -> Result<WireTimeStep, ProviderError> {
+        let timestep = self.inner.attach(options)?;
+        self.current = Some(timestep.clone());
+        Ok(timestep)
+    }
+
+    fn step(&mut self, request: ProviderStepRequest) -> Result<WireTimeStep, ProviderError> {
+        let timestep = self.inner.step(request)?;
+        self.current = Some(timestep.clone());
+        Ok(timestep)
+    }
+
+    fn resume(
+        &mut self,
+        request: ProviderResumeRequest,
+    ) -> Result<WireResumeResult, ProviderError> {
+        let timestep = self
+            .current
+            .clone()
+            .ok_or_else(|| ProviderError::Runtime("resume requires an active episode".into()))?;
+        Ok(WireResumeResult {
+            committed_step_id: timestep.step_id,
+            reconciliation: Some(WireActionReconciliation {
+                episode_id: request.episode_id,
+                expected_step_id: request.last_committed_step_id + 1,
+                outcome: ReconciliationOutcome::Unknown,
+                authoritative_step_id: timestep.step_id,
+                timestamp_ns: 42,
+                retryable: false,
+            }),
+            timestep,
+        })
+    }
+
+    fn close(&mut self) -> Result<(), ProviderError> {
+        self.inner.close()
+    }
+}
+
+#[test]
+fn resumable_provider_returns_authoritative_cursor_and_reconciliation() {
+    let mut host = Host::new(Box::new(ResumableProvider::new()));
+    let reset = send(&mut host, "reset-1", "reset", json!({}));
+    let episode_id = reset["result"]["episode_id"]
+        .as_str()
+        .expect("reset should return an episode id");
+
+    let resumed = send(
+        &mut host,
+        "resume-1",
+        "resume",
+        json!({
+            "episode_id": episode_id,
+            "last_committed_step_id": 0,
+            "target_id": "runtime-1"
+        }),
+    );
+
+    assert_eq!(resumed["ok"], true);
+    assert_eq!(resumed["result"]["committed_step_id"], 0);
+    assert_eq!(resumed["result"]["reconciliation"]["outcome"], "unknown");
+    assert_eq!(resumed["result"]["reconciliation"]["retryable"], false);
 }

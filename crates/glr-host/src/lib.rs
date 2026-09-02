@@ -195,6 +195,35 @@ pub struct WireEvent {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReconciliationOutcome {
+    Applied,
+    NotApplied,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireActionReconciliation {
+    pub episode_id: String,
+    pub expected_step_id: u64,
+    pub outcome: ReconciliationOutcome,
+    pub authoritative_step_id: u64,
+    pub timestamp_ns: u64,
+    #[serde(default)]
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireResumeResult {
+    pub timestep: WireTimeStep,
+    pub committed_step_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciliation: Option<WireActionReconciliation>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WireActionReceipt {
@@ -308,11 +337,47 @@ impl WireTimeStep {
     }
 }
 
+impl WireResumeResult {
+    fn validate(&self) -> Result<bool, ProviderError> {
+        let done = self.timestep.validate()?;
+        if self.committed_step_id != self.timestep.step_id {
+            return Err(ProviderError::InvalidData(
+                "resume committed_step_id does not match timestep.step_id".into(),
+            ));
+        }
+        if let Some(reconciliation) = &self.reconciliation {
+            Uuid::parse_str(&reconciliation.episode_id).map_err(|_| {
+                ProviderError::InvalidData("resume reconciliation episode_id must be a UUID".into())
+            })?;
+            if reconciliation.expected_step_id == 0 {
+                return Err(ProviderError::InvalidData(
+                    "resume reconciliation expected_step_id must be positive".into(),
+                ));
+            }
+            if reconciliation.episode_id != self.timestep.episode_id
+                || reconciliation.authoritative_step_id != self.committed_step_id
+            {
+                return Err(ProviderError::InvalidData(
+                    "resume reconciliation does not match authoritative cursor".into(),
+                ));
+            }
+        }
+        Ok(done)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderStepRequest {
     pub episode_id: String,
     pub expected_step_id: u64,
     pub action: BTreeMap<String, WireTensor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderResumeRequest {
+    pub episode_id: String,
+    pub last_committed_step_id: u64,
+    pub target_id: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -340,6 +405,15 @@ pub trait RuntimeProvider: Send {
     -> Result<WireTimeStep, ProviderError>;
 
     fn step(&mut self, request: ProviderStepRequest) -> Result<WireTimeStep, ProviderError>;
+
+    fn resume(
+        &mut self,
+        _request: ProviderResumeRequest,
+    ) -> Result<WireResumeResult, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "provider does not support reconnect-resume-v1".into(),
+        ))
+    }
 
     fn close(&mut self) -> Result<(), ProviderError>;
 }
@@ -389,6 +463,15 @@ struct StepPayload {
     episode_id: String,
     expected_step_id: u64,
     action: BTreeMap<String, WireTensor>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResumePayload {
+    episode_id: String,
+    last_committed_step_id: u64,
+    #[serde(default)]
+    target_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -553,6 +636,11 @@ impl Host {
                 let timestep = self.step(payload)?;
                 serde_json::to_value(timestep).map_err(internal_serialization_failure)
             }
+            "resume" => {
+                let payload = parse_payload::<ResumePayload>(request.payload)?;
+                let result = self.resume(payload)?;
+                serde_json::to_value(result).map_err(internal_serialization_failure)
+            }
             "close" => {
                 parse_payload::<EmptyPayload>(request.payload)?;
                 self.provider.close().map_err(provider_failure)?;
@@ -654,6 +742,53 @@ impl Host {
             done,
         });
         Ok(timestep)
+    }
+
+    fn resume(&mut self, payload: ResumePayload) -> Result<WireResumeResult, HostFailure> {
+        let active = self.current.clone();
+        if let Some(current) = &active {
+            if payload.episode_id != current.episode_id {
+                return Err(HostFailure::new(
+                    "lifecycle_violation",
+                    "resume episode_id does not match the active episode",
+                ));
+            }
+            if payload.last_committed_step_id > current.step_id {
+                return Err(HostFailure::new(
+                    "lifecycle_violation",
+                    "resume cursor is ahead of the active authoritative cursor",
+                ));
+            }
+        }
+        let result = self
+            .provider
+            .resume(ProviderResumeRequest {
+                episode_id: payload.episode_id.clone(),
+                last_committed_step_id: payload.last_committed_step_id,
+                target_id: payload.target_id,
+            })
+            .map_err(provider_failure)?;
+        let done = result.validate().map_err(provider_failure)?;
+        if result.timestep.episode_id != payload.episode_id
+            || result.committed_step_id < payload.last_committed_step_id
+            || active
+                .as_ref()
+                .is_some_and(|current| result.committed_step_id < current.step_id)
+        {
+            return Err(HostFailure::new(
+                "provider_contract_violation",
+                "resume returned a stale episode or cursor",
+            ));
+        }
+        self.current = Some(SessionCursor {
+            episode_id: result.timestep.episode_id.clone(),
+            step_id: result.committed_step_id,
+            done,
+        });
+        if active.is_none() {
+            self.previous_episode_id = Some(result.timestep.episode_id.clone());
+        }
+        Ok(result)
     }
 
     fn error_response(&self, request_id: Option<String>, error: HostFailure) -> Vec<u8> {

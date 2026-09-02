@@ -52,6 +52,18 @@ contract test, not live Unity/Unreal acceptance. A response timeout or malformed
 frame fail-closes that child session; callers must start a fresh host rather
 than risk pairing a late response with another action.
 
+## Reconnect and reconcile an in-flight action
+
+Providers that can prove durable episode state may advertise
+`reconnect-resume-v1` and implement the optional resumable provider contract.
+The caller sends the episode ID and its last committed step. The provider
+returns the authoritative `ProviderTimeStep` plus an optional
+`ActionReconciliation` for the action that was in flight when transport was
+lost. `applied`, `not_applied`, and `unknown` are authoritative outcomes;
+`retryable` is only true when the provider can prove a retry is safe. A
+reconnect result never advances the cursor beyond the returned authoritative
+step, and a provider must reject episode or cursor mismatches.
+
 ## Implement a Unity provider
 
 Build or download `GameLearningRuntime.Provider`, reference the .NET Standard
@@ -97,6 +109,7 @@ bundle. Never store authentication material or local executable/game paths.
 | Synthetic process smoke | Implemented; aggregate-only evidence |
 | C# Unity/provider contract | Implemented; .NET Standard 2.0 |
 | C++ Unreal/provider contract | Implemented; header-only C++20 |
+| Reconnect/resume reconciliation | Implemented as opt-in `reconnect-resume-v1` |
 | Authenticated target-bound local IPC | Not implemented |
 | Live external C#/C++ provider connection | Not implemented |
 | Shared memory / asynchronous actor queue | Benchmark-gated, not implemented |

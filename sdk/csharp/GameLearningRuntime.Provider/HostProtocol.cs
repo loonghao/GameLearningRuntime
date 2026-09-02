@@ -39,4 +39,15 @@ namespace GameLearningRuntime.Provider
         /// <summary>Boolean values.</summary>
         Binary,
     }
+
+    /// <summary>Authoritative result used to reconcile an action after reconnect.</summary>
+    public enum ReconciliationOutcome
+    {
+        /// <summary>The runtime confirms that the action was applied.</summary>
+        Applied,
+        /// <summary>The runtime confirms that the action was not applied.</summary>
+        NotApplied,
+        /// <summary>The runtime cannot determine whether the action was applied.</summary>
+        Unknown,
+    }
 }

@@ -26,12 +26,16 @@ from numpy.typing import NDArray
 from game_learning_runtime.bridge import (
     BridgeAttachRequest,
     BridgeResetRequest,
+    BridgeResumeRequest,
+    BridgeResumeResult,
     BridgeStepRequest,
 )
 from game_learning_runtime.contracts import (
     ActionOutcome,
     ActionReceipt,
+    ActionReconciliation,
     Event,
+    ReconciliationOutcome,
     TensorTree,
     TimeStep,
 )
@@ -280,6 +284,15 @@ class HostBridgeDriver:
             )
         )
 
+    def resume(self, request: BridgeResumeRequest) -> BridgeResumeResult:
+        payload: dict[str, object] = {
+            "episode_id": str(request.episode_id),
+            "last_committed_step_id": request.last_committed_step_id,
+        }
+        if request.target_id is not None:
+            payload["target_id"] = request.target_id
+        return self._resume_result(self._request("resume", payload))
+
     def close(self) -> None:
         if self._closed:
             return
@@ -362,6 +375,59 @@ class HostBridgeDriver:
             action_receipt=action_receipt,
             events=tuple(events),
             info=_mapping(value.get("info", {}), path="timestep.info"),
+        )
+
+    def _resume_result(self, value: Mapping[str, object]) -> BridgeResumeResult:
+        timestep = self._time_step(_mapping(value.get("timestep"), path="resume.timestep"))
+        committed_step_id = _non_negative_int(
+            value.get("committed_step_id"), path="resume.committed_step_id"
+        )
+        if timestep.step_id != committed_step_id:
+            raise HostProtocolError("resume committed_step_id does not match timestep.step_id")
+        raw_reconciliation = value.get("reconciliation")
+        reconciliation = None
+        if raw_reconciliation is not None:
+            item = _mapping(raw_reconciliation, path="resume.reconciliation")
+            try:
+                retryable = item.get("retryable", False)
+                if not isinstance(retryable, bool):
+                    raise HostProtocolError("resume.reconciliation.retryable must be bool")
+                reconciliation = ActionReconciliation(
+                    episode_id=UUID(
+                        _string(
+                            item.get("episode_id"),
+                            path="resume.reconciliation.episode_id",
+                        )
+                    ),
+                    expected_step_id=_positive_int(
+                        item.get("expected_step_id"),
+                        path="resume.reconciliation.expected_step_id",
+                    ),
+                    outcome=ReconciliationOutcome(
+                        _string(item.get("outcome"), path="resume.reconciliation.outcome")
+                    ),
+                    authoritative_step_id=_non_negative_int(
+                        item.get("authoritative_step_id"),
+                        path="resume.reconciliation.authoritative_step_id",
+                    ),
+                    timestamp_ns=_non_negative_int(
+                        item.get("timestamp_ns"),
+                        path="resume.reconciliation.timestamp_ns",
+                    ),
+                    retryable=retryable,
+                )
+            except (TypeError, ValueError) as error:
+                raise HostProtocolError(f"invalid resume.reconciliation: {error}") from error
+            if reconciliation.episode_id != timestep.episode_id:
+                raise HostProtocolError("resume reconciliation episode_id does not match timestep")
+            if reconciliation.authoritative_step_id != committed_step_id:
+                raise HostProtocolError(
+                    "resume reconciliation authoritative_step_id does not match committed_step_id"
+                )
+        return BridgeResumeResult(
+            timestep=timestep,
+            committed_step_id=committed_step_id,
+            reconciliation=reconciliation,
         )
 
     def _ensure_open(self) -> None:

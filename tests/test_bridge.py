@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -11,12 +12,14 @@ from game_learning_runtime import (
     BridgeAttachRequest,
     BridgeEnvironment,
     BridgeResetRequest,
+    BridgeResumeRequest,
+    BridgeResumeResult,
     BridgeStepRequest,
     ContractEnvironment,
     ContractViolation,
     EnvironmentBridgeDriver,
 )
-from game_learning_runtime.contracts import TimeStep
+from game_learning_runtime.contracts import ActionReconciliation, ReconciliationOutcome, TimeStep
 from game_learning_runtime.examples import CounterEnvironment
 from game_learning_runtime.specs import EnvironmentSpec
 
@@ -38,6 +41,8 @@ class _ScriptedDriver:
         self._delegate = CounterEnvironment(target=1)
         self.reset_requests: list[BridgeResetRequest] = []
         self.step_requests: list[BridgeStepRequest] = []
+        self.resume_requests: list[BridgeResumeRequest] = []
+        self._current: TimeStep | None = None
         self.close_count = 0
 
     def describe(self) -> EnvironmentSpec:
@@ -45,14 +50,23 @@ class _ScriptedDriver:
 
     def reset(self, request: BridgeResetRequest) -> TimeStep:
         self.reset_requests.append(request)
-        return self._delegate.reset(seed=request.seed, options=request.options)
+        self._current = self._delegate.reset(seed=request.seed, options=request.options)
+        return self._current
 
     def attach(self, request: BridgeAttachRequest) -> TimeStep:
-        return self._delegate.reset(options=request.options)
+        self._current = self._delegate.reset(options=request.options)
+        return self._current
 
     def step(self, request: BridgeStepRequest) -> TimeStep:
         self.step_requests.append(request)
-        return self._delegate.step(request.action)
+        self._current = self._delegate.step(request.action)
+        return self._current
+
+    def resume(self, request: BridgeResumeRequest) -> BridgeResumeResult:
+        self.resume_requests.append(request)
+        if self._current is None:
+            raise ContractViolation("resume requires reset first")
+        return BridgeResumeResult(self._current, self._current.step_id)
 
     def close(self) -> None:
         self.close_count += 1
@@ -233,6 +247,98 @@ def test_environment_bridge_driver_rejects_stale_request_before_action() -> None
     )
     assert current.step_id == 1
     driver.close()
+
+
+def test_bridge_environment_reconciles_an_in_flight_action() -> None:
+    class _ResumableDriver(_ScriptedDriver):
+        def __init__(self) -> None:
+            super().__init__()
+            source = self._spec
+            self._spec = EnvironmentSpec(
+                environment_id=source.environment_id,
+                observation=source.observation,
+                action=source.action,
+                reward=source.reward,
+                done=source.done,
+                action_mask=source.action_mask,
+                protocol_version=source.protocol_version,
+                capabilities=source.capabilities | frozenset({"reconnect-resume-v1"}),
+            )
+
+        def resume(self, request: BridgeResumeRequest) -> BridgeResumeResult:
+            self.resume_requests.append(request)
+            assert self._current is not None
+            return BridgeResumeResult(
+                timestep=self._current,
+                committed_step_id=self._current.step_id,
+                reconciliation=ActionReconciliation(
+                    episode_id=request.episode_id,
+                    expected_step_id=request.last_committed_step_id + 1,
+                    outcome=ReconciliationOutcome.UNKNOWN,
+                    authoritative_step_id=self._current.step_id,
+                    timestamp_ns=99,
+                ),
+            )
+
+    driver = _ResumableDriver()
+    environment = BridgeEnvironment(driver)
+    initial = environment.reset()
+
+    result = environment.resume(
+        episode_id=initial.episode_id,
+        last_committed_step_id=0,
+        target_id="runtime-1",
+    )
+
+    assert result.timestep == initial
+    assert result.reconciliation is not None
+    assert result.reconciliation.outcome is ReconciliationOutcome.UNKNOWN
+    assert driver.resume_requests == [
+        BridgeResumeRequest(
+            episode_id=initial.episode_id,
+            last_committed_step_id=0,
+            target_id="runtime-1",
+        )
+    ]
+    environment.close()
+
+
+def test_bridge_environment_requires_resume_capability() -> None:
+    driver = _ScriptedDriver()
+    environment = BridgeEnvironment(driver)
+    initial = environment.reset()
+
+    with pytest.raises(ContractViolation, match="reconnect-resume-v1"):
+        environment.resume(episode_id=initial.episode_id, last_committed_step_id=0)
+
+    assert driver.resume_requests == []
+    environment.close()
+
+
+def test_bridge_resume_result_validates_authoritative_cursor() -> None:
+    timestep = CounterEnvironment(target=1).reset()
+    with pytest.raises(TypeError, match="timestep"):
+        BridgeResumeResult(timestep=object(), committed_step_id=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="non-negative"):
+        BridgeResumeResult(timestep=timestep, committed_step_id=-1)
+    with pytest.raises(ValueError, match="match timestep"):
+        BridgeResumeResult(timestep=timestep, committed_step_id=1)
+    reconciliation = ActionReconciliation(
+        episode_id=UUID(int=2),
+        expected_step_id=1,
+        outcome=ReconciliationOutcome.UNKNOWN,
+        authoritative_step_id=0,
+        timestamp_ns=0,
+    )
+    with pytest.raises(ValueError, match="episode_id"):
+        BridgeResumeResult(
+            timestep=timestep,
+            committed_step_id=0,
+            reconciliation=reconciliation,
+        )
+
+    current = replace(timestep, step_id=1)
+    assert BridgeResumeResult(current, committed_step_id=1).committed_step_id == 1
 
 
 def test_bridge_round_trips_declared_live_attach_without_claiming_reset() -> None:
