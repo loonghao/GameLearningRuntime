@@ -24,6 +24,7 @@ const PLACEHOLDERS: &[&str] = &[
     "run_id",
     "trial_id",
     "trial_path",
+    "trainer_result_path",
 ];
 
 #[derive(Debug, Clone, Deserialize)]
