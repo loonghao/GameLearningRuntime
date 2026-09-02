@@ -194,7 +194,7 @@ def test_goal_checkpoint_promotion_is_optional_and_validated() -> None:
     assert goal.promotion.metric == "victories"
     assert goal.to_mapping()["promotion"] == {"metric": "victories", "mode": "max"}
     value["promotion"] = {"metric": "victories", "mode": "sideways"}
-    with pytest.raises(ValueError, match="max.*min"):
+    with pytest.raises(ValueError, match=r"max.*min"):
         AgentGoal.from_mapping(value)
 
 
