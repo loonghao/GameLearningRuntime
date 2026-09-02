@@ -7,6 +7,8 @@ import numpy as np
 import pytest
 
 from game_learning_runtime import (
+    ActionOutcome,
+    ActionReceipt,
     ContractEnvironment,
     JsonlTransitionWriter,
     SyncCollector,
@@ -36,6 +38,38 @@ def test_transition_record_round_trip_preserves_tensors() -> None:
     np.testing.assert_array_equal(
         restored.next_observation["position"], original.next_observation["position"]
     )
+
+
+def test_action_receipt_round_trip_preserves_typed_outcome() -> None:
+    original = _transition()
+    receipt = ActionReceipt(
+        action_id="step-1",
+        episode_id=original.episode_id,
+        step_id=1,
+        outcome=ActionOutcome.BLOCKED,
+        issued_timestamp_ns=100,
+        observed_timestamp_ns=120,
+        postcondition="blocked",
+        progress_delta=0.0,
+        authoritative_observation_sequence=7,
+    )
+    original = Transition(
+        episode_id=original.episode_id,
+        step_id=original.step_id,
+        observation=original.observation,
+        action=original.action,
+        reward=original.reward,
+        next_observation=original.next_observation,
+        terminated=original.terminated,
+        truncated=original.truncated,
+        action_mask=original.action_mask,
+        next_action_mask=original.next_action_mask,
+        action_receipt=receipt,
+    )
+
+    restored = transition_from_record(transition_to_record(original))
+
+    assert restored.action_receipt == receipt
 
 
 def test_transition_provenance_round_trip() -> None:

@@ -28,7 +28,13 @@ from game_learning_runtime.bridge import (
     BridgeResetRequest,
     BridgeStepRequest,
 )
-from game_learning_runtime.contracts import Event, TensorTree, TimeStep
+from game_learning_runtime.contracts import (
+    ActionOutcome,
+    ActionReceipt,
+    Event,
+    TensorTree,
+    TimeStep,
+)
 from game_learning_runtime.errors import HostProtocolError, HostRemoteError
 from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKind, TensorSpec
 
@@ -337,9 +343,14 @@ class HostBridgeDriver:
                     payload=payload,
                 )
             )
+        episode_id = UUID(_string(value.get("episode_id"), path="timestep.episode_id"))
+        step_id = _non_negative_int(value.get("step_id"), path="timestep.step_id")
+        action_receipt = _action_receipt_from_wire(
+            value.get("action_receipt"), episode_id=episode_id, step_id=step_id
+        )
         return TimeStep(
-            episode_id=UUID(_string(value.get("episode_id"), path="timestep.episode_id")),
-            step_id=_non_negative_int(value.get("step_id"), path="timestep.step_id"),
+            episode_id=episode_id,
+            step_id=step_id,
             timestamp_ns=_non_negative_int(value.get("timestamp_ns"), path="timestep.timestamp_ns"),
             observation=_tree_from_wire(
                 _mapping(value.get("observation"), path="timestep.observation")
@@ -348,6 +359,7 @@ class HostBridgeDriver:
             terminated=_tensor_from_wire(value.get("terminated"), path="timestep.terminated"),
             truncated=_tensor_from_wire(value.get("truncated"), path="timestep.truncated"),
             action_mask=parsed_action_mask,
+            action_receipt=action_receipt,
             events=tuple(events),
             info=_mapping(value.get("info", {}), path="timestep.info"),
         )
@@ -373,6 +385,70 @@ def _non_negative_int(value: object, *, path: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise HostProtocolError(f"{path} must be a non-negative integer")
     return value
+
+
+def _action_receipt_from_wire(
+    value: object, *, episode_id: UUID, step_id: int
+) -> ActionReceipt | None:
+    if value is None:
+        return None
+    receipt = _mapping(value, path="timestep.action_receipt")
+    try:
+        receipt_episode_id = UUID(
+            _string(receipt.get("episode_id"), path="timestep.action_receipt.episode_id")
+        )
+        progress_delta = receipt.get("progress_delta")
+        if progress_delta is not None and (
+            isinstance(progress_delta, bool) or not isinstance(progress_delta, (int, float))
+        ):
+            raise HostProtocolError(
+                "timestep.action_receipt.progress_delta must be numeric or null"
+            )
+        retryable = receipt.get("retryable", False)
+        if not isinstance(retryable, bool):
+            raise HostProtocolError("timestep.action_receipt.retryable must be bool")
+        parsed = ActionReceipt(
+            action_id=_string(receipt.get("action_id"), path="timestep.action_receipt.action_id"),
+            episode_id=receipt_episode_id,
+            step_id=_positive_int(receipt.get("step_id"), path="timestep.action_receipt.step_id"),
+            outcome=ActionOutcome(
+                _string(receipt.get("outcome"), path="timestep.action_receipt.outcome")
+            ),
+            issued_timestamp_ns=_non_negative_int(
+                receipt.get("issued_timestamp_ns"),
+                path="timestep.action_receipt.issued_timestamp_ns",
+            ),
+            observed_timestamp_ns=_non_negative_int(
+                receipt.get("observed_timestamp_ns"),
+                path="timestep.action_receipt.observed_timestamp_ns",
+            ),
+            postcondition=_string(
+                receipt.get("postcondition", "unknown"),
+                path="timestep.action_receipt.postcondition",
+            ),
+            progress_delta=progress_delta,
+            authoritative_observation_sequence=(
+                _non_negative_int(
+                    receipt["authoritative_observation_sequence"],
+                    path="timestep.action_receipt.authoritative_observation_sequence",
+                )
+                if receipt.get("authoritative_observation_sequence") is not None
+                else None
+            ),
+            retryable=retryable,
+        )
+    except (TypeError, ValueError) as error:
+        raise HostProtocolError(f"invalid timestep.action_receipt: {error}") from error
+    if parsed.episode_id != episode_id or parsed.step_id != step_id:
+        raise HostProtocolError("timestep.action_receipt does not match the timestep identity")
+    return parsed
+
+
+def _positive_int(value: object, *, path: str) -> int:
+    result = _non_negative_int(value, path=path)
+    if result == 0:
+        raise HostProtocolError(f"{path} must be positive")
+    return result
 
 
 def _tensor_from_wire(value: object, *, path: str) -> NDArray[Any]:

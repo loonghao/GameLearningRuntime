@@ -15,6 +15,7 @@ inline constexpr std::string_view environment_protocol_version = "1.0";
 
 enum class dtype { boolean, uint8, int32, int64, float32, float64 };
 enum class space_kind { continuous, discrete, multi_discrete, binary };
+enum class action_outcome { accepted, rejected, unknown, no_effect, partial, blocked };
 
 struct tensor_buffer final {
   std::vector<std::uint64_t> shape;
@@ -49,6 +50,19 @@ struct provider_event final {
   std::vector<std::uint8_t> payload_json_utf8;
 };
 
+struct action_receipt final {
+  std::string action_id;
+  std::string episode_id;
+  std::uint64_t step_id;
+  action_outcome outcome;
+  std::uint64_t issued_timestamp_ns;
+  std::uint64_t observed_timestamp_ns;
+  std::string postcondition;
+  std::optional<double> progress_delta;
+  std::optional<std::uint64_t> authoritative_observation_sequence;
+  bool retryable;
+};
+
 struct provider_time_step final {
   std::string episode_id;
   std::uint64_t step_id;
@@ -60,6 +74,7 @@ struct provider_time_step final {
   std::map<std::string, tensor_buffer> action_mask;
   std::vector<provider_event> events;
   std::vector<std::uint8_t> info_json_utf8;
+  std::optional<glr::action_receipt> action_receipt;
 };
 
 struct reset_request final {

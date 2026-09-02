@@ -85,6 +85,7 @@ class SyncCollector:
                     reward=following.reward,
                     next_observation=following.observation,
                     next_action_mask=following.action_mask,
+                    action_receipt=following.action_receipt,
                     terminated=following.terminated,
                     truncated=following.truncated,
                     events=following.events,

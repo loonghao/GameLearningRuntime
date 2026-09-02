@@ -45,7 +45,14 @@ from game_learning_runtime.capture import (
     verify_capture_manifest,
 )
 from game_learning_runtime.collector import Policy, SyncCollector
-from game_learning_runtime.contracts import Event, TimeStep, Transition, Unroll
+from game_learning_runtime.contracts import (
+    ActionOutcome,
+    ActionReceipt,
+    Event,
+    TimeStep,
+    Transition,
+    Unroll,
+)
 from game_learning_runtime.demonstration_artifact import (
     DEMONSTRATION_ARTIFACT_SCHEMA_VERSION,
     DemonstrationArtifactFile,
@@ -212,6 +219,8 @@ __all__ = [
     "TRAINING_SCHEMA_VERSION",
     "TRIAL_PLAN_SCHEMA_VERSION",
     "ActionMode",
+    "ActionOutcome",
+    "ActionReceipt",
     "AgentGoal",
     "ArtifactLineage",
     "ArtifactRecord",

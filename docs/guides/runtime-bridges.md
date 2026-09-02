@@ -107,3 +107,14 @@ Configure source authority and reward composition separately using
 [`glr.training.v1`](knowledge-and-rewards.md). Web research and cached strategy
 knowledge can guide the policy, but cannot acknowledge a bridge action or
 satisfy an authoritative reward term.
+
+### Optional action receipts
+
+Realtime providers that advertise `action-receipt-v1` may attach an
+`action_receipt` to each post-action time step. The receipt is bound to the
+returned `episode_id` and `step_id` and reports one of `accepted`, `rejected`,
+`unknown`, `no_effect`, `partial`, or `blocked`, with bounded timestamps and an
+optional progress delta. `unknown` is preserved across transport failures and
+is never retried implicitly. Collectors expose typed counts through
+`Unroll.action_outcome_counts`; adapters that do not advertise the capability
+remain wire-compatible and return no receipt.

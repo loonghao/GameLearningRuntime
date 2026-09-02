@@ -143,6 +143,17 @@ pub enum SpaceKind {
     Binary,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionOutcome {
+    Accepted,
+    Rejected,
+    Unknown,
+    NoEffect,
+    Partial,
+    Blocked,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WireTensorSpec {
@@ -186,6 +197,62 @@ pub struct WireEvent {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct WireActionReceipt {
+    pub action_id: String,
+    pub episode_id: String,
+    pub step_id: u64,
+    pub outcome: ActionOutcome,
+    pub issued_timestamp_ns: u64,
+    pub observed_timestamp_ns: u64,
+    pub postcondition: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_delta: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authoritative_observation_sequence: Option<u64>,
+    pub retryable: bool,
+}
+
+impl WireActionReceipt {
+    fn validate_against(&self, timestep: &WireTimeStep) -> Result<(), ProviderError> {
+        Uuid::parse_str(&self.episode_id).map_err(|_| {
+            ProviderError::InvalidData("action receipt episode_id must be a UUID".into())
+        })?;
+        if self.action_id.is_empty() || self.action_id.len() > 128 {
+            return Err(ProviderError::InvalidData(
+                "action receipt action_id must contain 1-128 characters".into(),
+            ));
+        }
+        if self.step_id == 0 {
+            return Err(ProviderError::InvalidData(
+                "action receipt step_id must be positive".into(),
+            ));
+        }
+        if self.observed_timestamp_ns < self.issued_timestamp_ns {
+            return Err(ProviderError::InvalidData(
+                "action receipt observed timestamp precedes issued timestamp".into(),
+            ));
+        }
+        if self.postcondition.is_empty() || self.postcondition.len() > 128 {
+            return Err(ProviderError::InvalidData(
+                "action receipt postcondition must contain 1-128 characters".into(),
+            ));
+        }
+        if self.progress_delta.is_some_and(|value| !value.is_finite()) {
+            return Err(ProviderError::InvalidData(
+                "action receipt progress_delta must be finite".into(),
+            ));
+        }
+        if self.episode_id != timestep.episode_id || self.step_id != timestep.step_id {
+            return Err(ProviderError::InvalidData(
+                "action receipt does not match timestep identity".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WireTimeStep {
     pub episode_id: String,
     pub step_id: u64,
@@ -200,6 +267,8 @@ pub struct WireTimeStep {
     pub events: Vec<WireEvent>,
     #[serde(default)]
     pub info: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_receipt: Option<WireActionReceipt>,
 }
 
 impl WireTimeStep {
@@ -211,6 +280,9 @@ impl WireTimeStep {
         }
         for tensor in self.action_mask.values() {
             tensor.validate()?;
+        }
+        if let Some(receipt) = &self.action_receipt {
+            receipt.validate_against(self)?;
         }
         self.reward.validate()?;
         let terminated = self.terminated.bool_values()?;
@@ -684,6 +756,7 @@ impl SyntheticCounterProvider {
             action_mask,
             events: Vec::new(),
             info: BTreeMap::new(),
+            action_receipt: None,
         }
     }
 }

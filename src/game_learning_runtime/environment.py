@@ -128,6 +128,11 @@ class ContractEnvironment(GameEnvironment):
             raise ContractViolation("adapter omitted the declared action_mask")
         else:
             self.spec.action_mask.validate(timestep.action_mask, path="action_mask")
+        if timestep.action_receipt is not None:
+            try:
+                timestep.action_receipt.validate_against(timestep)
+            except ValueError as error:
+                raise ContractViolation(str(error)) from error
 
     def _ensure_open(self) -> None:
         if self._closed:
