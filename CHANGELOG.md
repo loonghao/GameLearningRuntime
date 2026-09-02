@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.9.0...v0.10.0) (2026-09-02)
+
+
+### Features
+
+* add action mask diagnostics ([24f122f](https://github.com/loonghao/GameLearningRuntime/commit/24f122f965a6e99807a9906f24d0804d0bf79ac6))
+* add bounded actor queue telemetry ([#70](https://github.com/loonghao/GameLearningRuntime/issues/70)) ([46f2abd](https://github.com/loonghao/GameLearningRuntime/commit/46f2abdde710f357bc2ea6d43a568894828a35f8))
+* add bounded realtime control contracts ([#68](https://github.com/loonghao/GameLearningRuntime/issues/68)) ([7979137](https://github.com/loonghao/GameLearningRuntime/commit/797913745c2a8d59296760836ca08960cdc3433c))
+* add capture session lifecycle gates ([#69](https://github.com/loonghao/GameLearningRuntime/issues/69)) ([023ecbe](https://github.com/loonghao/GameLearningRuntime/commit/023ecbe2057688fb16fa795cb98e12bfb0c7125c))
+* add checkpoint contract migration ([6e92a55](https://github.com/loonghao/GameLearningRuntime/commit/6e92a554a711ad5d9eb67412cb745d067f9393a1))
+* add checkpoint promotion gate ([#52](https://github.com/loonghao/GameLearningRuntime/issues/52)) ([b8b9f21](https://github.com/loonghao/GameLearningRuntime/commit/b8b9f219fd7bd1b524cae58c2670d21ca5e269bb))
+* add directed spatial traversability graph ([#67](https://github.com/loonghao/GameLearningRuntime/issues/67)) ([041fa70](https://github.com/loonghao/GameLearningRuntime/commit/041fa702de1e6b8ed9a6c004323b54a41bfbf514))
+* add optional DeepSeek harness provider ([bd31f16](https://github.com/loonghao/GameLearningRuntime/commit/bd31f169ab0c7ec5910f3f9fed4a9e3e0fa2ea33))
+* add realtime action receipts ([e22d61c](https://github.com/loonghao/GameLearningRuntime/commit/e22d61c1344fcf4644a4598cc6d1b366e68f656b))
+* add reconnect resume reconciliation ([#66](https://github.com/loonghao/GameLearningRuntime/issues/66)) ([d6b002f](https://github.com/loonghao/GameLearningRuntime/commit/d6b002fa6c983c8231aa3368dd6e3d037a4397e0))
+* add run-scoped adapter state ([#76](https://github.com/loonghao/GameLearningRuntime/issues/76)) ([629a1d5](https://github.com/loonghao/GameLearningRuntime/commit/629a1d573509160b3bc8e98f0e147ba14ba583f1))
+* align checkpoint contract projections ([#78](https://github.com/loonghao/GameLearningRuntime/issues/78)) ([644ab35](https://github.com/loonghao/GameLearningRuntime/commit/644ab350b73e9511c73bad101119a118808dfd3b))
+* detect stalled goal progress ([7e58c04](https://github.com/loonghao/GameLearningRuntime/commit/7e58c04fee604446a0801ec9a3a3afd195fbf5af))
+* fingerprint environment configuration ([793fc97](https://github.com/loonghao/GameLearningRuntime/commit/793fc970d0a2d1fe38b01575c0fcc0cb95934484))
+* route command refusals safely ([#77](https://github.com/loonghao/GameLearningRuntime/issues/77)) ([f5bb8ef](https://github.com/loonghao/GameLearningRuntime/commit/f5bb8ef0d408ed12da5c5d2f58525b9b02d8c0c3))
+
+
+### Bug Fixes
+
+* distinguish trainer no-data results ([b2d89ce](https://github.com/loonghao/GameLearningRuntime/commit/b2d89ce2cee56ad39f4db14b505f356052811b32))
+* persist structured trainer metrics ([11655d2](https://github.com/loonghao/GameLearningRuntime/commit/11655d2c948c9433a0f290d5426ec1a8a75df1ee))
+* preserve partial unrolls after step failures ([#71](https://github.com/loonghao/GameLearningRuntime/issues/71)) ([992cd0f](https://github.com/loonghao/GameLearningRuntime/commit/992cd0ff04a80ca301de6d875eb6241ae1fec388))
+* satisfy trainer status clippy gates ([da23809](https://github.com/loonghao/GameLearningRuntime/commit/da238091fa09b66b7bef2c27d828eb45ca9154bd))
+
 ## [0.9.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.8.0...v0.9.0) (2026-09-01)
 
 
