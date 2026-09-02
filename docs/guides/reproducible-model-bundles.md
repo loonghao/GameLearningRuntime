@@ -106,3 +106,8 @@ An unchanged contract exits `0`; a compatible change is reported with exit
 protocol change exits `4` without touching either file. Successful migration
 keeps the checkpoint bytes unchanged, writes adjacent `.bak` files, and
 re-verifies the updated manifest.
+
+The provider SDK projections expose the same `glr.checkpoint-contract.v1` and
+`glr.checkpoint-manifest.v1` fields for native adapters. They are validation
+types only: migration remains an explicit Python/CLI operation, and neither
+the C# nor C++ provider contract silently rewrites learner state.

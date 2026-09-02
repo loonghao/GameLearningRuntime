@@ -73,3 +73,8 @@ glr --json checkpoint migrate \
 合同未变化时退出码为 `0`；可迁移差异在没有 `--force` 时以退出码 `3` 报告，
 不兼容的 observation/action/protocol 变化以退出码 `4` fail-closed。成功迁移保持
 checkpoint 字节不变，写入相邻 `.bak` 备份并重新校验 manifest。
+
+原生适配器的 C#、C++ SDK 也提供相同的
+`glr.checkpoint-contract.v1` 与 `glr.checkpoint-manifest.v1` 字段校验类型。
+它们只负责契约校验；迁移仍必须由 Python/CLI 显式执行，SDK 不会静默改写
+learner 状态。
