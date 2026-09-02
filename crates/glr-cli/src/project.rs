@@ -13,6 +13,7 @@ const PLACEHOLDERS: &[&str] = &[
     "bridge_path",
     "bundle",
     "capture_index",
+    "capture_status",
     "capture_video",
     "evaluation_path",
     "goal_path",
@@ -103,6 +104,71 @@ pub struct CaptureConfig {
     pub frame_rate: f64,
     pub width: u32,
     pub height: u32,
+    #[serde(default)]
+    pub session: Option<CaptureSessionConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureSessionConfig {
+    #[serde(default = "default_capture_status_file")]
+    pub status_file: String,
+    #[serde(default = "default_capture_startup_timeout_seconds")]
+    pub startup_timeout_seconds: f64,
+    #[serde(default = "default_capture_heartbeat_timeout_seconds")]
+    pub heartbeat_timeout_seconds: f64,
+    #[serde(default = "default_capture_minimum_frames")]
+    pub minimum_frames: u64,
+    #[serde(default = "default_capture_minimum_steps")]
+    pub minimum_steps: u64,
+}
+
+fn default_capture_status_file() -> String {
+    "capture-status.jsonl".into()
+}
+
+fn default_capture_startup_timeout_seconds() -> f64 {
+    5.0
+}
+
+fn default_capture_heartbeat_timeout_seconds() -> f64 {
+    5.0
+}
+
+fn default_capture_minimum_frames() -> u64 {
+    1
+}
+
+fn default_capture_minimum_steps() -> u64 {
+    1
+}
+
+impl CaptureSessionConfig {
+    fn validate(&self) -> Result<()> {
+        portable_relative(&self.status_file, "project.capture.session.status_file")?;
+        for (label, value) in [
+            (
+                "project.capture.session.startup_timeout_seconds",
+                self.startup_timeout_seconds,
+            ),
+            (
+                "project.capture.session.heartbeat_timeout_seconds",
+                self.heartbeat_timeout_seconds,
+            ),
+        ] {
+            if !value.is_finite() || !(0.1..=60.0).contains(&value) {
+                return Err(Error::Invalid(format!(
+                    "{label} must be finite and between 0.1 and 60 seconds"
+                )));
+            }
+        }
+        if self.minimum_frames == 0 || self.minimum_steps == 0 {
+            return Err(Error::Invalid(
+                "project.capture.session minimum_frames and minimum_steps must be positive".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl CaptureConfig {
@@ -131,6 +197,9 @@ impl CaptureConfig {
             return Err(Error::Invalid(
                 "project.capture width and height must be positive".into(),
             ));
+        }
+        if let Some(session) = &self.session {
+            session.validate()?;
         }
         Ok(())
     }

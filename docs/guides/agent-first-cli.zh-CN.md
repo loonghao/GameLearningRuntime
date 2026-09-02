@@ -98,6 +98,26 @@ glr --project . --json train
 rollout 不能自动标成专家示范；进入行为克隆或监督学习前，仍需通过 demonstration
 provenance 门禁。只有明确不需要 review/监督数据时才使用 `--no-capture`。
 
+录制器也可以选择加入 `glr.capture-session.v1` 生命周期握手：
+
+```json
+"session": {
+  "status_file": "capture-status.jsonl",
+  "startup_timeout_seconds": 5,
+  "heartbeat_timeout_seconds": 5,
+  "minimum_frames": 1,
+  "minimum_steps": 1
+}
+```
+
+CLI 会写入带 `session_id` 的启动回执，并通过 `GLR_CAPTURE_STATUS` 告知录制器。录制器向
+该路径追加严格的 NDJSON 状态，包含 `healthy`、`degraded`、`stopped`、`failed` 或
+`completed` 状态、frame/step 计数、最近 frame 时间戳、丢帧数和可选原因。required capture
+只有在握手健康、心跳未超时、出现 `completed` 终态、达到最小计数且
+`glr.capture.v1` manifest 有效时才算成功。optional capture 不阻塞训练，但其生命周期会
+以结构化的 `capture.lifecycle` 事件写入 run store，并出现在 `--json` 输出中。回执和状态
+文件始终保留为 run artifact；视频、索引和 manifest 只有通过全部门禁后才登记。
+
 ## 让 Agent 按目标闭环
 
 目标使用 `glr.agent-goal.v1`，必须包含稳定的目标 ID、环境品类、机器可判断的成功指标，

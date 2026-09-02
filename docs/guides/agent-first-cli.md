@@ -106,6 +106,28 @@ The index lets later tooling select human-approved video segments and align them
 actions. GLR does not label a policy rollout as an expert demonstration. Apply the existing
 demonstration provenance gate before behavior cloning or supervised ingestion.
 
+For recorders that opt into `glr.capture-session.v1`, add a session block:
+
+```json
+"session": {
+  "status_file": "capture-status.jsonl",
+  "startup_timeout_seconds": 5,
+  "heartbeat_timeout_seconds": 5,
+  "minimum_frames": 1,
+  "minimum_steps": 1
+}
+```
+
+The CLI writes a start receipt and passes `GLR_CAPTURE_STATUS` to the recorder. The recorder
+appends strict NDJSON status records containing the receipt `session_id`, `state` (`healthy`,
+`degraded`, `stopped`, `failed`, or `completed`), frame/step counters, the latest frame timestamp,
+dropped frames, and an optional reason. Required capture succeeds only after a healthy handshake,
+a fresh heartbeat, a `completed` terminal record, the configured minimums, and a valid
+`glr.capture.v1` manifest. Optional capture remains non-blocking, but its lifecycle is recorded as
+a structured `capture.lifecycle` run event and included in `--json` output. The receipt and status
+file are retained as run artifacts; video/index/manifest artifacts are registered only after all
+gates pass.
+
 Use `--no-capture` only when review/supervised evidence is intentionally unnecessary.
 
 ## Pursue a bounded goal

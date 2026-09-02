@@ -55,6 +55,12 @@ def test_project_config_resolves_project_owned_bridge_and_commands(tmp_path: Pat
                     "frame_rate": 30,
                     "width": 640,
                     "height": 360,
+                    "session": {
+                        "startup_timeout_seconds": 2,
+                        "heartbeat_timeout_seconds": 3,
+                        "minimum_frames": 2,
+                        "minimum_steps": 1,
+                    },
                 },
             }
         ),
@@ -77,6 +83,8 @@ def test_project_config_resolves_project_owned_bridge_and_commands(tmp_path: Pat
     assert project.protocol_version == "1.0"
     assert project.capture is not None
     assert project.capture.video_file == "capture.mp4"
+    assert project.capture.session is not None
+    assert project.capture.session.minimum_frames == 2
 
 
 def test_project_discovers_parent_and_loads_all_optional_roles(tmp_path: Path) -> None:
@@ -168,6 +176,38 @@ def test_project_rejects_invalid_capture_contract(
     }
     capture[field] = replacement
     value["capture"] = capture
+    config = tmp_path / "glr-project.json"
+    config.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises((TypeError, ValueError), match=message):
+        load_project(config)
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    [
+        ("status_file", "../status.jsonl", "project-relative"),
+        ("startup_timeout_seconds", 0, "between 0.1 and 60"),
+        ("heartbeat_timeout_seconds", 61, "between 0.1 and 60"),
+        ("minimum_frames", 0, "positive integers"),
+    ],
+)
+def test_project_rejects_invalid_capture_session(
+    tmp_path: Path, field: str, replacement: object, message: str
+) -> None:
+    (tmp_path / "bridge").mkdir()
+    value = _project_value()
+    value["capture"] = {
+        "argv": ["recorder", "{capture_video}"],
+        "required": True,
+        "stop": "stdin-q",
+        "video_file": "capture.mp4",
+        "index_file": "capture.jsonl",
+        "codec": "h264",
+        "frame_rate": 12,
+        "width": 640,
+        "height": 360,
+        "session": {field: replacement},
+    }
     config = tmp_path / "glr-project.json"
     config.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises((TypeError, ValueError), match=message):
