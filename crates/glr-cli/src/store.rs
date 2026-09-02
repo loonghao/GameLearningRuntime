@@ -386,6 +386,48 @@ impl Store {
         )?)
     }
 
+    pub fn append_metric(
+        &self,
+        run_id: &str,
+        name: &str,
+        value: f64,
+        step_id: Option<i64>,
+        metadata: Value,
+    ) -> Result<MetricRecord> {
+        validate_identifier(name, "metric name")?;
+        if !value.is_finite() {
+            return Err(Error::Invalid("metric value must be finite".into()));
+        }
+        let connection = self.connect()?;
+        let status: String = connection
+            .query_row(
+                "SELECT status FROM runs WHERE run_id = ?",
+                [run_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::Contract(format!("unknown run_id: {run_id}")))?;
+        if status != "running" {
+            return Err(Error::Contract(
+                "cannot append a metric to a terminal run".into(),
+            ));
+        }
+        connection.execute(
+            "INSERT INTO metrics(run_id, timestamp_ns, name, value, step_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?)",
+            params![run_id, now_ns()?, name, value, step_id, compact_json(&metadata)?],
+        )?;
+        let metric_id = connection.last_insert_rowid();
+        Ok(MetricRecord {
+            run_id: run_id.into(),
+            metric_id,
+            timestamp_ns: now_ns()?,
+            name: name.into(),
+            value,
+            step_id,
+            metadata,
+        })
+    }
+
     pub fn has_metric_evidence(
         &self,
         run_id: &str,
