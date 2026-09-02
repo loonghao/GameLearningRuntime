@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -46,6 +47,57 @@ fn run(project: &Path, arguments: &[&str]) -> Output {
         .args(arguments)
         .output()
         .unwrap()
+}
+
+fn run_raw(project: &Path, arguments: &[&str]) -> Output {
+    run(project, arguments)
+}
+
+fn checkpoint_contract(reward: &str, action: &str) -> Value {
+    json!({
+        "schema_version": "glr.checkpoint-contract.v1",
+        "protocol_version": "glr.v1",
+        "observation_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "action_sha256": action,
+        "reward_sha256": reward,
+        "knowledge_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    })
+}
+
+fn checkpoint_contract_digest(contract: &Value) -> String {
+    let fields: BTreeMap<_, _> = contract
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    format!("{:x}", Sha256::digest(serde_json::to_vec(&fields).unwrap()))
+}
+
+fn write_checkpoint_fixture(project: &Path, contract: &Value) -> (PathBuf, PathBuf) {
+    let root = project.join("checkpoint");
+    fs::create_dir_all(&root).unwrap();
+    let checkpoint = root.join("policy.ckpt");
+    fs::write(&checkpoint, b"weights").unwrap();
+    let manifest = root.join("checkpoint.manifest.json");
+    let checkpoint_sha256 = format!("{:x}", Sha256::digest(b"weights"));
+    fs::write(
+        &manifest,
+        serde_json::to_vec_pretty(&json!({
+            "schema_version": "glr.checkpoint-manifest.v1",
+            "checkpoint_path": "policy.ckpt",
+            "checkpoint_sha256": checkpoint_sha256,
+            "checkpoint_size_bytes": 7,
+            "contract": contract,
+            "contract_sha256": checkpoint_contract_digest(contract),
+            "metadata": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let current = root.join("current-contract.json");
+    fs::write(&current, serde_json::to_vec_pretty(contract).unwrap()).unwrap();
+    (manifest, current)
 }
 
 fn stdout(output: &Output) -> Value {
@@ -275,6 +327,99 @@ fn standalone_cli_is_the_project_entrypoint_and_persists_runs() {
     ));
     assert_eq!(research["data"][0]["finding_id"], "finding.navigation-1");
     assert_eq!(research["data"][0]["action_authority"], false);
+}
+
+#[test]
+fn checkpoint_migration_reports_then_applies_explicit_confirmation() {
+    let project = create_project();
+    let recorded = checkpoint_contract(
+        "4444444444444444444444444444444444444444444444444444444444444444",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+    );
+    let (manifest, current) = write_checkpoint_fixture(project.path(), &recorded);
+    let changed = checkpoint_contract(
+        "5555555555555555555555555555555555555555555555555555555555555555",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+    );
+    fs::write(&current, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
+
+    let manifest_arg = manifest.to_string_lossy().into_owned();
+    let current_arg = current.to_string_lossy().into_owned();
+    let dry_run = run_raw(
+        project.path(),
+        &[
+            "checkpoint",
+            "migrate",
+            "--manifest",
+            &manifest_arg,
+            "--contract",
+            &current_arg,
+        ],
+    );
+    assert_eq!(dry_run.status.code(), Some(3));
+    let dry_run_json: Value = serde_json::from_slice(&dry_run.stdout).unwrap();
+    assert_eq!(dry_run_json["command"], "checkpoint.migrate");
+    assert_eq!(dry_run_json["data"]["requires_confirmation"], true);
+    assert_eq!(
+        dry_run_json["data"]["mismatches"][0]["field"],
+        "reward_sha256"
+    );
+
+    let applied = run_raw(
+        project.path(),
+        &[
+            "checkpoint",
+            "migrate",
+            "--manifest",
+            &manifest_arg,
+            "--contract",
+            &current_arg,
+            "--force",
+        ],
+    );
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let applied_json: Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert_eq!(applied_json["data"]["status"], "migrated");
+    assert!(manifest.with_extension("json.bak").is_file());
+    assert!(manifest.parent().unwrap().join("policy.ckpt.bak").is_file());
+    assert_eq!(
+        fs::read(manifest.parent().unwrap().join("policy.ckpt")).unwrap(),
+        b"weights"
+    );
+}
+
+#[test]
+fn checkpoint_migration_fails_closed_for_action_changes() {
+    let project = create_project();
+    let recorded = checkpoint_contract(
+        "4444444444444444444444444444444444444444444444444444444444444444",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+    );
+    let (manifest, current) = write_checkpoint_fixture(project.path(), &recorded);
+    let changed = checkpoint_contract(
+        "4444444444444444444444444444444444444444444444444444444444444444",
+        "6666666666666666666666666666666666666666666666666666666666666666",
+    );
+    fs::write(&current, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
+    let output = run_raw(
+        project.path(),
+        &[
+            "checkpoint",
+            "migrate",
+            "--manifest",
+            &manifest.to_string_lossy(),
+            "--contract",
+            &current.to_string_lossy(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(4));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["data"]["status"], "incompatible");
+    assert_eq!(response["data"]["mismatches"][0]["field"], "action_sha256");
 }
 
 #[test]

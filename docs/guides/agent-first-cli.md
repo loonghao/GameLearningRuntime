@@ -232,6 +232,23 @@ Load a checksummed model bundle:
 glr --project . --json play --bundle artifacts/model-bundle
 ```
 
+Checkpoint contract preflight and explicit migration:
+
+```shell
+glr --json checkpoint migrate \
+  --manifest checkpoints/policy.manifest.json \
+  --contract contracts/live-checkpoint-contract.json
+glr --json checkpoint migrate \
+  --manifest checkpoints/policy.manifest.json \
+  --contract contracts/live-checkpoint-contract.json \
+  --force
+```
+
+The first command is a dry-run for compatible changes (exit `3`); action,
+observation, protocol, or schema changes fail closed (exit `4`). `--force`
+creates backups, preserves checkpoint bytes, and verifies the rewritten
+manifest.
+
 `play` requires exact environment and protocol compatibility and verifies every bundled byte before
 starting the project player. Loading is not reproduction proof. Run the authoritative evaluator in
 the new instance and compare the declared goal criteria.

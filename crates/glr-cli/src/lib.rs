@@ -1,4 +1,5 @@
 mod args;
+mod checkpoint;
 mod commands;
 mod contracts;
 mod error;
