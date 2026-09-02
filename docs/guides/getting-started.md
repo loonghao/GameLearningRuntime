@@ -55,6 +55,10 @@ The default `on_error="raise"` remains fail-fast.
 
 Each transition has current and next observations, action and next masks,
 reward, termination/truncation, events, episode identity, and step identity.
+When an adapter has mutable options, implement `config_snapshot()` to return
+the active string-valued settings. The collector stores an immutable snapshot
+and deterministic `environment_config_digest` on each unroll, so runs can be
+grouped by environment configuration rather than mistaken for policy changes.
 
 ## Record BC or offline data
 

@@ -20,7 +20,7 @@ from game_learning_runtime import (
     SyncCollector,
     TimeStep,
 )
-from game_learning_runtime.contracts import TensorTree, Unroll
+from game_learning_runtime.contracts import TensorTree, Unroll, environment_config_digest
 from game_learning_runtime.examples import CounterEnvironment, always_increment
 from game_learning_runtime.specs import EnvironmentSpec
 
@@ -71,6 +71,27 @@ class _FailingStepEnvironment(GameEnvironment):
         return self._delegate.step(action)
 
 
+class _ConfigCounterEnvironment(GameEnvironment):
+    def __init__(self) -> None:
+        self._delegate = CounterEnvironment(target=1)
+        self.difficulty = "normal"
+
+    @property
+    def spec(self) -> EnvironmentSpec:
+        return self._delegate.spec
+
+    def reset(
+        self, *, seed: int | None = None, options: Mapping[str, Any] | None = None
+    ) -> TimeStep:
+        return self._delegate.reset(seed=seed, options=options)
+
+    def step(self, action: TensorTree) -> TimeStep:
+        return self._delegate.step(action)
+
+    def config_snapshot(self) -> Mapping[str, str]:
+        return {"difficulty": self.difficulty}
+
+
 def test_collector_builds_fixed_length_unroll_across_episodes() -> None:
     collector = SyncCollector(
         ContractEnvironment(CounterEnvironment(target=2)), actor_id="worker-7"
@@ -116,6 +137,20 @@ def test_collector_can_stop_at_first_terminal_without_starting_next_episode() ->
     )
     assert following.sequence_id == 1
     assert following.transitions[0].episode_id != unroll.transitions[0].episode_id
+
+
+def test_collector_binds_the_episode_environment_configuration_to_unroll() -> None:
+    environment = _ConfigCounterEnvironment()
+    collector = SyncCollector(environment)
+
+    first = collector.collect(always_increment, steps=1, stop_on_done=True)
+    assert first.environment_config_snapshot == {"difficulty": "normal"}
+    assert first.environment_config_digest == environment_config_digest({"difficulty": "normal"})
+
+    environment.difficulty = "hard"
+    second = collector.collect(always_increment, steps=1, stop_on_done=True)
+    assert second.environment_config_snapshot == {"difficulty": "hard"}
+    assert second.environment_config_digest != first.environment_config_digest
 
 
 def test_collector_rejects_invalid_arguments() -> None:

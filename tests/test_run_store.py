@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from game_learning_runtime.agent_goal import ResearchBundle, ResearchCategory
+from game_learning_runtime.contracts import environment_config_digest
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.run_store import (
     RouteWaypoint,
@@ -44,6 +45,58 @@ def test_training_store_records_queryable_run_lifecycle_and_events(tmp_path: Pat
     assert store.list_runs(environment_id="example.adventure-v1") == (finished,)
     assert store.list_events(run.run_id)[0].payload == {"seed": 7}
     assert store.list_metrics(run.run_id)[0].value == 3.5
+
+
+def test_training_store_records_and_queries_environment_config_changes(tmp_path: Path) -> None:
+    store = TrainingStore(tmp_path / "runs.sqlite3")
+    normal = {"difficulty": "normal", "revive": "on"}
+    hard = {"difficulty": "hard", "revive": "on"}
+    normal_digest = environment_config_digest(normal)
+    hard_digest = environment_config_digest(hard)
+
+    first = store.create_run(
+        environment_id="example.adventure-v1",
+        protocol_version="1.0",
+        kind="training",
+        environment_config_snapshot=normal,
+        started_at_ns=1,
+    )
+    second = store.create_run(
+        environment_id="example.adventure-v1",
+        protocol_version="1.0",
+        kind="training",
+        environment_config_digest=normal_digest,
+        started_at_ns=2,
+    )
+    third = store.create_run(
+        environment_id="example.adventure-v1",
+        protocol_version="1.0",
+        kind="training",
+        environment_config_snapshot=hard,
+        started_at_ns=3,
+    )
+    metric = store.record_metric(
+        third.run_id,
+        name="reward.total",
+        value=1.0,
+        environment_config_snapshot=hard,
+    )
+
+    assert first.environment_config_digest == normal_digest
+    assert second.environment_config_digest == normal_digest
+    assert third.environment_config_digest == hard_digest
+    assert metric.environment_config_digest == hard_digest
+    assert store.list_metrics(third.run_id)[0].environment_config_digest == hard_digest
+    assert store.list_environment_config_changes(environment_id="example.adventure-v1") == (third,)
+
+    with pytest.raises(ValueError, match="does not match"):
+        store.create_run(
+            environment_id="example.adventure-v1",
+            protocol_version="1.0",
+            kind="training",
+            environment_config_snapshot=normal,
+            environment_config_digest=hard_digest,
+        )
 
 
 def test_training_store_queries_observed_entities_and_advisory_routes(tmp_path: Path) -> None:

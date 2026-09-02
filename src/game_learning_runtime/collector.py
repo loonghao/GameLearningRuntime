@@ -10,7 +10,13 @@ from typing import Literal, Protocol
 
 import numpy as np
 
-from game_learning_runtime.contracts import TensorTree, TimeStep, Transition, Unroll
+from game_learning_runtime.contracts import (
+    EnvironmentConfigSnapshot,
+    TensorTree,
+    TimeStep,
+    Transition,
+    Unroll,
+)
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
 
 
@@ -359,13 +365,17 @@ class SyncCollector:
         self._start_mode = start_mode
         self._current: TimeStep | None = None
         self._sequence_id = 0
+        self._environment_config_snapshot: EnvironmentConfigSnapshot | None = None
 
     def _start(self, *, seed: int | None = None) -> TimeStep:
         if self._start_mode == "attach":
             if seed is not None:
                 raise ValueError("seed is not supported when start_mode='attach'")
-            return self._environment.attach()
-        return self._environment.reset(seed=seed)
+            timestep = self._environment.attach()
+        else:
+            timestep = self._environment.reset(seed=seed)
+        self._environment_config_snapshot = self._environment.config_snapshot()
+        return timestep
 
     def collect(
         self,
@@ -393,6 +403,7 @@ class SyncCollector:
         if self._current is None or self._current.done:
             self._current = self._start(seed=seed)
 
+        config_snapshot = self._environment_config_snapshot
         transitions: list[Transition] = []
         for _ in range(steps):
             current = self._current
@@ -416,6 +427,7 @@ class SyncCollector:
                     actor_id=self._actor_id,
                     sequence_id=self._sequence_id,
                     policy_version=policy_version,
+                    environment_config_snapshot=config_snapshot,
                 )
                 self._sequence_id += 1
                 return unroll
@@ -449,6 +461,7 @@ class SyncCollector:
             actor_id=self._actor_id,
             sequence_id=self._sequence_id,
             policy_version=policy_version,
+            environment_config_snapshot=config_snapshot,
         )
         self._sequence_id += 1
         return unroll

@@ -25,10 +25,15 @@ from game_learning_runtime.agent_goal import (
     ResearchSource,
     ResearchStatus,
 )
+from game_learning_runtime.contracts import (
+    EnvironmentConfigSnapshot,
+    environment_config_digest,
+    normalize_environment_config,
+)
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.training import KnowledgeAuthority
 
-RUN_STORE_SCHEMA_VERSION = 1
+RUN_STORE_SCHEMA_VERSION = 2
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _MAX_JSON_BYTES = 1024 * 1024
 
@@ -50,6 +55,25 @@ def _identifier(value: object, *, path: str) -> str:
 
 def _optional_identifier(value: object, *, path: str) -> str | None:
     return None if value is None else _identifier(value, path=path)
+
+
+def _resolved_environment_config_digest(
+    snapshot: EnvironmentConfigSnapshot | None,
+    digest: str | None,
+) -> str | None:
+    normalized = normalize_environment_config(snapshot)
+    expected = environment_config_digest(normalized)
+    if digest is None:
+        return expected
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ValueError("environment_config_digest must be a lowercase SHA-256 digest")
+    if expected is not None and digest != expected:
+        raise ValueError("environment_config_digest does not match the snapshot")
+    return digest
 
 
 def _non_negative_integer(value: object, *, path: str) -> int:
@@ -88,6 +112,7 @@ class RunRecord:
     finished_at_ns: int | None
     exit_code: int | None
     metadata: Mapping[str, Any]
+    environment_config_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +135,7 @@ class MetricRecord:
     value: float
     step_id: int | None
     metadata: Mapping[str, Any]
+    environment_config_digest: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,7 +334,7 @@ class TrainingStore:
     def _initialize(self) -> None:
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in {0, RUN_STORE_SCHEMA_VERSION}:
+            if version not in {0, 1, RUN_STORE_SCHEMA_VERSION}:
                 raise ContractViolation(f"unsupported run store schema version: {version}")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
@@ -322,7 +348,8 @@ class TrainingStore:
                     started_at_ns INTEGER NOT NULL,
                     finished_at_ns INTEGER,
                     exit_code INTEGER,
-                    metadata_json TEXT NOT NULL
+                    metadata_json TEXT NOT NULL,
+                    environment_config_digest TEXT
                 );
                 CREATE INDEX IF NOT EXISTS runs_environment_started
                     ON runs(environment_id, started_at_ns DESC);
@@ -343,7 +370,8 @@ class TrainingStore:
                     name TEXT NOT NULL,
                     value REAL NOT NULL,
                     step_id INTEGER,
-                    metadata_json TEXT NOT NULL
+                    metadata_json TEXT NOT NULL,
+                    environment_config_digest TEXT
                 );
                 CREATE INDEX IF NOT EXISTS metrics_run_name_step
                     ON metrics(run_id, name, step_id);
@@ -440,6 +468,18 @@ class TrainingStore:
                     ON research_finding_tags(tag, finding_id);
                 """
             )
+            run_columns = {row["name"] for row in connection.execute("PRAGMA table_info(runs)")}
+            metric_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(metrics)")
+            }
+            if "environment_config_digest" not in run_columns:
+                connection.execute("ALTER TABLE runs ADD COLUMN environment_config_digest TEXT")
+            if "environment_config_digest" not in metric_columns:
+                connection.execute("ALTER TABLE metrics ADD COLUMN environment_config_digest TEXT")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS runs_environment_config "
+                "ON runs(environment_id, environment_config_digest, started_at_ns)"
+            )
             connection.execute(f"PRAGMA user_version = {RUN_STORE_SCHEMA_VERSION}")
 
     def create_run(
@@ -449,6 +489,8 @@ class TrainingStore:
         protocol_version: str,
         kind: str,
         metadata: Mapping[str, Any] | None = None,
+        environment_config_snapshot: EnvironmentConfigSnapshot | None = None,
+        environment_config_digest: str | None = None,
         run_id: str | None = None,
         started_at_ns: int | None = None,
     ) -> RunRecord:
@@ -458,6 +500,9 @@ class TrainingStore:
         _identifier(kind, path="run kind")
         if not isinstance(protocol_version, str) or not protocol_version:
             raise ValueError("protocol_version cannot be empty")
+        resolved_config_digest = _resolved_environment_config_digest(
+            environment_config_snapshot, environment_config_digest
+        )
         encoded_metadata, _ = _json_mapping(metadata or {}, path="run metadata")
         started = time_ns() if started_at_ns is None else started_at_ns
         _non_negative_integer(started, path="started_at_ns")
@@ -466,8 +511,9 @@ class TrainingStore:
                 """
                 INSERT INTO runs(
                     run_id, environment_id, protocol_version, kind, status,
-                    started_at_ns, finished_at_ns, exit_code, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+                    started_at_ns, finished_at_ns, exit_code, metadata_json,
+                    environment_config_digest
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
                 """,
                 (
                     resolved_run_id,
@@ -477,6 +523,7 @@ class TrainingStore:
                     RunStatus.RUNNING.value,
                     started,
                     encoded_metadata,
+                    resolved_config_digest,
                 ),
             )
         return self.get_run(resolved_run_id)
@@ -548,6 +595,44 @@ class TrainingStore:
                 parameters,
             ).fetchall()
         return tuple(self._run_from_row(row) for row in rows)
+
+    def list_environment_config_changes(
+        self,
+        *,
+        environment_id: str,
+        limit: int = 100,
+    ) -> tuple[RunRecord, ...]:
+        """Return runs whose environment configuration differs from the prior run.
+
+        Results are ordered by campaign order (oldest first), which makes the
+        first returned record the run at which a changed configuration became
+        observable. A missing digest is treated as an unknown configuration and
+        never returned as a change by itself.
+        """
+
+        _identifier(environment_id, path="environment_id")
+        _limit(limit)
+        runs = tuple(reversed(self.list_runs(environment_id=environment_id, limit=1000)))
+        changes: list[RunRecord] = []
+        previous: str | None = None
+        have_previous = False
+        for run in runs:
+            current = run.environment_config_digest
+            if have_previous and current is not None and current != previous:
+                changes.append(run)
+            previous = current
+            have_previous = True
+        return tuple(changes[-limit:])
+
+    def query_environment_config_changes(
+        self,
+        *,
+        environment_id: str,
+        limit: int = 100,
+    ) -> tuple[RunRecord, ...]:
+        """Alias for :meth:`list_environment_config_changes`."""
+
+        return self.list_environment_config_changes(environment_id=environment_id, limit=limit)
 
     def append_event(
         self,
@@ -632,6 +717,8 @@ class TrainingStore:
         value: float,
         step_id: int | None = None,
         metadata: Mapping[str, Any] | None = None,
+        environment_config_snapshot: EnvironmentConfigSnapshot | None = None,
+        environment_config_digest: str | None = None,
         timestamp_ns: int | None = None,
     ) -> MetricRecord:
         _identifier(name, path="metric name")
@@ -642,24 +729,39 @@ class TrainingStore:
             not isinstance(step_id, int) or isinstance(step_id, bool) or step_id < 0
         ):
             raise ValueError("step_id must be a non-negative integer or None")
+        resolved_config_digest = _resolved_environment_config_digest(
+            environment_config_snapshot, environment_config_digest
+        )
         encoded_metadata, frozen_metadata = _json_mapping(metadata or {}, path="metric metadata")
         timestamp = time_ns() if timestamp_ns is None else timestamp_ns
         _non_negative_integer(timestamp, path="timestamp_ns")
         with self._connect() as connection:
             status_row = connection.execute(
-                "SELECT status FROM runs WHERE run_id = ?", (run_id,)
+                "SELECT status, environment_config_digest FROM runs WHERE run_id = ?",
+                (run_id,),
             ).fetchone()
             if status_row is None:
                 raise KeyError(f"unknown run_id: {run_id}")
             if status_row["status"] != RunStatus.RUNNING.value:
                 raise ContractViolation("cannot record a metric for a terminal run")
+            if resolved_config_digest is None:
+                resolved_config_digest = status_row["environment_config_digest"]
             cursor = connection.execute(
                 """
                 INSERT INTO metrics(
-                    run_id, timestamp_ns, name, value, step_id, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    run_id, timestamp_ns, name, value, step_id, metadata_json,
+                    environment_config_digest
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (run_id, timestamp, name, numeric, step_id, encoded_metadata),
+                (
+                    run_id,
+                    timestamp,
+                    name,
+                    numeric,
+                    step_id,
+                    encoded_metadata,
+                    resolved_config_digest,
+                ),
             )
             if cursor.lastrowid is None:
                 raise ContractViolation("SQLite did not return a metric identifier")
@@ -672,6 +774,7 @@ class TrainingStore:
             value=numeric,
             step_id=step_id,
             metadata=frozen_metadata,
+            environment_config_digest=resolved_config_digest,
         )
 
     def list_metrics(self, run_id: str, *, limit: int = 1000) -> tuple[MetricRecord, ...]:
@@ -693,6 +796,7 @@ class TrainingStore:
                 value=row["value"],
                 step_id=row["step_id"],
                 metadata=MappingProxyType(json.loads(row["metadata_json"])),
+                environment_config_digest=row["environment_config_digest"],
             )
             for row in rows
         )
@@ -1235,6 +1339,7 @@ class TrainingStore:
             finished_at_ns=row["finished_at_ns"],
             exit_code=row["exit_code"],
             metadata=MappingProxyType(json.loads(row["metadata_json"])),
+            environment_config_digest=row["environment_config_digest"],
         )
 
 
