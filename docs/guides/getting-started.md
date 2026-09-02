@@ -72,3 +72,32 @@ with JsonlTransitionWriter("data/expert.jsonl") as writer:
 
 The writer is append-only and flushes each record. Move to chunked/checksummed
 storage before treating the format as a high-volume distributed replay system.
+
+## Keep adapter scratch state across trials
+
+Small adapter bookkeeping can survive a trial process restart without entering
+the policy checkpoint:
+
+```python
+from game_learning_runtime import RunStatus, TrainingStore
+
+store = TrainingStore(".glr/runs.sqlite3")
+run = store.create_run(
+    environment_id="example.adventure-v1",
+    protocol_version="1.0",
+    kind="training",
+)
+state = store.run_state(run.run_id, "adapter/inventory", schema_version=1)
+state["unusable_targets"] = ["target.one"]
+
+# A later trial/process opens the same namespace and sees the committed value.
+state = TrainingStore(".glr/runs.sqlite3").run_state(
+    run.run_id, "adapter/inventory", schema_version=1
+)
+assert state["unusable_targets"] == ["target.one"]
+store.finish_run(run.run_id, status=RunStatus.SUCCEEDED, exit_code=0)
+```
+
+The namespace is adapter-opaque, bounded to a 64 KiB JSON snapshot, and
+schema-versioned. Terminal runs delete their scratch state; use a checkpoint
+for policy weights or any state that must outlive the run.
