@@ -21,7 +21,7 @@ use crate::process::{
 };
 use crate::project::{Project, ProjectCommand, find_project, load_project};
 use crate::report;
-use crate::store::{EntityQuery, RunRecord, Store};
+use crate::store::{CheckpointPromotionRequest, EntityQuery, RunRecord, Store};
 use crate::update::Updater;
 
 pub const CLI_OUTPUT_SCHEMA_VERSION: &str = "glr.cli-output.v1";
@@ -479,6 +479,7 @@ fn run_goal(
         total_steps,
         evaluation,
         trainer_statuses,
+        promotion,
     } = match result {
         Ok(value) => value,
         Err(error) => {
@@ -502,6 +503,7 @@ fn run_goal(
             "training_steps_planned": total_steps,
             "evaluation": evaluation,
             "trainer_statuses": trainer_statuses,
+            "promotion": promotion,
         }),
         as_json,
     )?;
@@ -529,6 +531,7 @@ struct GoalRunResult {
     total_steps: u64,
     evaluation: Option<GoalEvaluation>,
     trainer_statuses: Vec<String>,
+    promotion: Option<Value>,
 }
 
 fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
@@ -587,6 +590,7 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
     let mut trials_completed = 0_u32;
     let mut last_evaluation = None;
     let mut trainer_statuses = Vec::new();
+    let mut last_promotion = None;
     for trial_number in 1..=goal.budget.max_trials {
         remaining(deadline)?;
         let trial_id = format!("trial-{trial_number}");
@@ -647,6 +651,21 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
                 trial_dir.join("trainer.result.json"),
             ),
         ]);
+        if goal.promotion.is_some() {
+            let checkpoint_dir = project.data_dir.join("checkpoints");
+            context.insert(
+                "checkpoint_path".into(),
+                checkpoint_dir.join(format!("{}.checkpoint", goal.goal_id)),
+            );
+            context.insert(
+                "candidate_checkpoint_path".into(),
+                trial_dir.join("checkpoint.candidate"),
+            );
+            context.insert(
+                "promotion_path".into(),
+                checkpoint_dir.join(format!("{}.best.json", goal.goal_id)),
+            );
+        }
         if let Some(previous) = &previous_evaluation {
             context.insert("previous_evaluation_path".into(), previous.clone());
         }
@@ -728,6 +747,42 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             "trial.trainer",
             json!({"trial_id": trial_id, "status": trainer_outcome.status}),
         )?;
+        let promotion = if let Some(config) = &goal.promotion {
+            let candidate = trial_dir.join("checkpoint.candidate");
+            let live = project
+                .data_dir
+                .join("checkpoints")
+                .join(format!("{}.checkpoint", goal.goal_id));
+            let metric = store
+                .latest_metric_value(&run.run_id, &config.metric, metric_floor)?
+                .ok_or_else(|| {
+                    Error::Contract(format!(
+                        "checkpoint promotion metric {:?} was not persisted for {trial_id}",
+                        config.metric
+                    ))
+                })?;
+            let (promoted, record) = store.promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: &goal.goal_id,
+                metric: &config.metric,
+                mode: config.mode,
+                value: metric,
+                run_id: &run.run_id,
+                trial_id: &trial_id,
+                candidate: &candidate,
+                live: &live,
+            })?;
+            let output = json!({
+                "promoted": promoted,
+                "metric": metric,
+                "best_metric": record.best_metric,
+                "checkpoint_sha256": record.checkpoint_sha256,
+                "checkpoint_path": record.checkpoint_path,
+            });
+            store.append_event(&run.run_id, "checkpoint.promotion", output.clone())?;
+            Some(output)
+        } else {
+            None
+        };
         if !capture_complete
             && project
                 .capture
@@ -765,12 +820,13 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             }
         }
         let evaluation = goal.evaluate(&evidence.evidence)?;
+        last_promotion = promotion.clone();
         trials_completed = trial_number;
         previous_evaluation = Some(evaluation_path.clone());
         store.append_event(
             &run.run_id,
             "trial.evaluated",
-            json!({"trial_id": trial_id, "satisfied": evaluation.satisfied, "criteria": evaluation.criteria}),
+            json!({"trial_id": trial_id, "satisfied": evaluation.satisfied, "criteria": evaluation.criteria, "promotion": promotion}),
         )?;
         for (path, role, media_type) in [
             (&trial_path, "trial-plan", "application/json"),
@@ -792,6 +848,19 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
                 "application/json",
             )?;
         }
+        if goal.promotion.is_some() {
+            let candidate = trial_dir.join("checkpoint.candidate");
+            if candidate.is_file() {
+                register_goal_artifact(
+                    store,
+                    &run.run_id,
+                    run_dir,
+                    &candidate,
+                    "checkpoint-candidate",
+                    "application/octet-stream",
+                )?;
+            }
+        }
         let satisfied = evaluation.satisfied;
         last_evaluation = Some(evaluation);
         if satisfied {
@@ -806,6 +875,7 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
         total_steps,
         evaluation: last_evaluation,
         trainer_statuses,
+        promotion: last_promotion,
     })
 }
 

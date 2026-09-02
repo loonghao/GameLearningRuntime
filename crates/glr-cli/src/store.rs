@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::contracts::{
-    Authority, GoalEvidence, ResearchBundle, RouteWaypoint, SpatialEntity, SpatialKnowledgeBundle,
-    SpatialRoute, sha256_file,
+    Authority, GoalEvidence, PromotionMode, ResearchBundle, RouteWaypoint, SpatialEntity,
+    SpatialKnowledgeBundle, SpatialRoute, sha256_file,
 };
 use crate::error::{Error, Result};
 use crate::project::validate_identifier;
@@ -61,6 +61,41 @@ pub struct ArtifactRecord {
     pub sha256: String,
     pub size_bytes: u64,
     pub metadata: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CheckpointPromotionRecord {
+    pub goal_id: String,
+    pub metric: String,
+    pub mode: String,
+    pub best_metric: f64,
+    pub checkpoint_sha256: String,
+    pub checkpoint_path: String,
+    pub run_id: String,
+    pub trial_id: String,
+    pub updated_at_ns: i64,
+}
+
+struct StoredCheckpointPromotion {
+    metric: String,
+    mode: String,
+    best_metric: f64,
+    checkpoint_sha256: String,
+    checkpoint_path: String,
+    run_id: String,
+    trial_id: String,
+    updated_at_ns: i64,
+}
+
+pub struct CheckpointPromotionRequest<'a> {
+    pub goal_id: &'a str,
+    pub metric: &'a str,
+    pub mode: PromotionMode,
+    pub value: f64,
+    pub run_id: &'a str,
+    pub trial_id: &'a str,
+    pub candidate: &'a Path,
+    pub live: &'a Path,
 }
 
 pub struct EntityQuery<'a> {
@@ -231,6 +266,17 @@ impl Store {
             );
             CREATE INDEX IF NOT EXISTS research_finding_tags_lookup
                 ON research_finding_tags(tag, finding_id);
+            CREATE TABLE IF NOT EXISTS checkpoint_promotions (
+                goal_id TEXT PRIMARY KEY,
+                metric TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                best_metric REAL NOT NULL,
+                checkpoint_sha256 TEXT NOT NULL,
+                checkpoint_path TEXT NOT NULL,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                trial_id TEXT NOT NULL,
+                updated_at_ns INTEGER NOT NULL
+            );
             PRAGMA user_version = 1;
             "#,
         )?;
@@ -426,6 +472,125 @@ impl Store {
             step_id,
             metadata,
         })
+    }
+
+    pub fn latest_metric_value(
+        &self,
+        run_id: &str,
+        name: &str,
+        after_metric_id: i64,
+    ) -> Result<Option<f64>> {
+        self.connect()?
+            .query_row(
+                "SELECT value FROM metrics WHERE run_id = ? AND metric_id > ? AND name = ? ORDER BY metric_id DESC LIMIT 1",
+                params![run_id, after_metric_id, name],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Error::from)
+    }
+
+    pub fn promote_checkpoint(
+        &self,
+        request: CheckpointPromotionRequest<'_>,
+    ) -> Result<(bool, CheckpointPromotionRecord)> {
+        let CheckpointPromotionRequest {
+            goal_id,
+            metric,
+            mode,
+            value,
+            run_id,
+            trial_id,
+            candidate,
+            live,
+        } = request;
+        validate_identifier(goal_id, "goal_id")?;
+        validate_identifier(metric, "checkpoint promotion metric")?;
+        if !value.is_finite() {
+            return Err(Error::Invalid(
+                "checkpoint promotion metric must be finite".into(),
+            ));
+        }
+        if candidate.is_symlink() || !candidate.is_file() {
+            return Err(Error::Missing(candidate.to_path_buf()));
+        }
+        if live.is_symlink() {
+            return Err(Error::Invalid("live checkpoint cannot be a symlink".into()));
+        }
+        if let Some(parent) = live.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let connection = self.connect()?;
+        let previous: Option<StoredCheckpointPromotion> = connection
+            .query_row(
+                "SELECT metric, mode, best_metric, checkpoint_sha256, checkpoint_path, run_id, trial_id, updated_at_ns FROM checkpoint_promotions WHERE goal_id = ?",
+                [goal_id],
+                |row| {
+                    Ok(StoredCheckpointPromotion {
+                        metric: row.get(0)?,
+                        mode: row.get(1)?,
+                        best_metric: row.get(2)?,
+                        checkpoint_sha256: row.get(3)?,
+                        checkpoint_path: row.get(4)?,
+                        run_id: row.get(5)?,
+                        trial_id: row.get(6)?,
+                        updated_at_ns: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+        let mode_name = match mode {
+            PromotionMode::Max => "max",
+            PromotionMode::Min => "min",
+        };
+        let improved = previous.as_ref().is_none_or(|stored| match mode {
+            PromotionMode::Max => value > stored.best_metric,
+            PromotionMode::Min => value < stored.best_metric,
+        });
+        let digest = sha256_file(candidate)?;
+        if improved {
+            let temporary = live.with_extension(format!("tmp-{}", uuid::Uuid::new_v4().simple()));
+            fs::copy(candidate, &temporary)?;
+            if live.exists() {
+                fs::remove_file(live)?;
+            }
+            fs::rename(&temporary, live)?;
+            let updated_at_ns = now_ns()?;
+            connection.execute(
+                "INSERT INTO checkpoint_promotions(goal_id, metric, mode, best_metric, checkpoint_sha256, checkpoint_path, run_id, trial_id, updated_at_ns) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(goal_id) DO UPDATE SET metric=excluded.metric, mode=excluded.mode, best_metric=excluded.best_metric, checkpoint_sha256=excluded.checkpoint_sha256, checkpoint_path=excluded.checkpoint_path, run_id=excluded.run_id, trial_id=excluded.trial_id, updated_at_ns=excluded.updated_at_ns",
+                params![goal_id, metric, mode_name, value, digest, live.to_string_lossy(), run_id, trial_id, updated_at_ns],
+            )?;
+            return Ok((
+                true,
+                CheckpointPromotionRecord {
+                    goal_id: goal_id.into(),
+                    metric: metric.into(),
+                    mode: mode_name.into(),
+                    best_metric: value,
+                    checkpoint_sha256: digest,
+                    checkpoint_path: live.to_string_lossy().into_owned(),
+                    run_id: run_id.into(),
+                    trial_id: trial_id.into(),
+                    updated_at_ns,
+                },
+            ));
+        }
+        let stored = previous
+            .ok_or_else(|| Error::Contract("checkpoint promotion state disappeared".into()))?;
+        Ok((
+            false,
+            CheckpointPromotionRecord {
+                goal_id: goal_id.into(),
+                metric: stored.metric,
+                mode: stored.mode,
+                best_metric: stored.best_metric,
+                checkpoint_sha256: stored.checkpoint_sha256,
+                checkpoint_path: stored.checkpoint_path,
+                run_id: stored.run_id,
+                trial_id: stored.trial_id,
+                updated_at_ns: stored.updated_at_ns,
+            },
+        ))
     }
 
     pub fn has_metric_evidence(
@@ -907,6 +1072,98 @@ fn parse_json_row(value: String) -> rusqlite::Result<Value> {
             Box::new(error),
         )
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_promotion_keeps_the_best_bytes_and_retains_candidates() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path().join("runs.sqlite3")).unwrap();
+        let run = store
+            .create_run("example.environment-v1", "1.0", "goal", json!({}))
+            .unwrap();
+        let live = temp.path().join("checkpoints/policy.checkpoint");
+        let first = temp.path().join("trial-1.checkpoint");
+        fs::write(&first, b"first").unwrap();
+        let (promoted, record) = store
+            .promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 3.0,
+                run_id: &run.run_id,
+                trial_id: "trial-1",
+                candidate: &first,
+                live: &live,
+            })
+            .unwrap();
+        assert!(promoted);
+        assert_eq!(record.best_metric, 3.0);
+        assert_eq!(record.run_id, run.run_id);
+        assert_eq!(record.trial_id, "trial-1");
+        assert_eq!(fs::read(&live).unwrap(), b"first");
+
+        let regression = temp.path().join("trial-2.checkpoint");
+        fs::write(&regression, b"regression").unwrap();
+        let (promoted, record) = store
+            .promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 2.0,
+                run_id: &run.run_id,
+                trial_id: "trial-2",
+                candidate: &regression,
+                live: &live,
+            })
+            .unwrap();
+        assert!(!promoted);
+        assert_eq!(record.best_metric, 3.0);
+        assert_eq!(record.run_id, run.run_id);
+        assert_eq!(record.trial_id, "trial-1");
+        assert_eq!(fs::read(&live).unwrap(), b"first");
+        assert_eq!(fs::read(&regression).unwrap(), b"regression");
+
+        let improvement = temp.path().join("trial-4.checkpoint");
+        fs::write(&improvement, b"improvement").unwrap();
+        let (promoted, record) = store
+            .promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 4.0,
+                run_id: &run.run_id,
+                trial_id: "trial-4",
+                candidate: &improvement,
+                live: &live,
+            })
+            .unwrap();
+        assert!(promoted);
+        assert_eq!(record.best_metric, 4.0);
+        assert_eq!(record.trial_id, "trial-4");
+        assert_eq!(fs::read(&live).unwrap(), b"improvement");
+
+        let tie = temp.path().join("trial-3.checkpoint");
+        fs::write(&tie, b"tie").unwrap();
+        let (promoted, _) = store
+            .promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 3.0,
+                run_id: &run.run_id,
+                trial_id: "trial-3",
+                candidate: &tie,
+                live: &live,
+            })
+            .unwrap();
+        assert!(!promoted);
+        assert_eq!(fs::read(&live).unwrap(), b"improvement");
+    }
 }
 
 fn enum_string<T: Serialize>(value: &T) -> Result<String> {
