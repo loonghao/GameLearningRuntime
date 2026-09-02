@@ -41,6 +41,7 @@ struct TrainerResult {
 struct TrainerOutcome {
     log: PathBuf,
     status: &'static str,
+    metrics: HashMap<String, f64>,
 }
 
 pub fn execute(cli: Cli) -> Result<i32> {
@@ -712,6 +713,15 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
         };
         let trainer_outcome = trainer_result?;
         let trainer_log = trainer_outcome.log.clone();
+        for (name, value) in &trainer_outcome.metrics {
+            store.append_metric(
+                &run.run_id,
+                name,
+                *value,
+                None,
+                json!({"source": "trainer", "authority": "authoritative"}),
+            )?;
+        }
         trainer_statuses.push(trainer_outcome.status.to_owned());
         store.append_event(
             &run.run_id,
@@ -847,7 +857,7 @@ fn run_trainer_role(
         timeout: Some(remaining(deadline)?),
     })?;
     let result_path = role_dir.join("trainer.result.json");
-    let parsed_status = if result_path.is_file() {
+    let (parsed_status, metrics) = if result_path.is_file() {
         let result: TrainerResult = read_json(&result_path, "trainer result")?;
         if result.schema_version != TRAINER_RESULT_SCHEMA_VERSION {
             return Err(Error::Contract(
@@ -859,9 +869,9 @@ fn run_trainer_role(
                 "trainer result metrics must be finite".into(),
             ));
         }
-        Some(result.status)
+        (Some(result.status), result.metrics)
     } else {
-        None
+        (None, HashMap::new())
     };
     let status = match (exit_code, parsed_status.as_deref()) {
         (0, None) | (0, Some("completed")) => "completed",
@@ -877,7 +887,11 @@ fn run_trainer_role(
             )));
         }
     };
-    Ok(TrainerOutcome { log, status })
+    Ok(TrainerOutcome {
+        log,
+        status,
+        metrics,
+    })
 }
 
 fn validate_goal_research(
