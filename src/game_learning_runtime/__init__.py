@@ -165,7 +165,15 @@ from game_learning_runtime.serialization import (
 )
 from game_learning_runtime.spatial_knowledge import (
     SPATIAL_KNOWLEDGE_SCHEMA_VERSION,
+    SPATIAL_KNOWLEDGE_V2_SCHEMA_VERSION,
+    NegativeTraversalEvidence,
+    SpatialFrameTransform,
+    SpatialGraphEdge,
+    SpatialGraphNode,
+    SpatialHazard,
     SpatialKnowledgeBundle,
+    SpatialKnowledgeGraph,
+    TraversabilityStatus,
 )
 from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKind, TensorSpec
 from game_learning_runtime.training import (
@@ -222,6 +230,7 @@ __all__ = [
     "RUNTIME_INTEGRATION_SCHEMA_VERSION",
     "RUN_STORE_SCHEMA_VERSION",
     "SPATIAL_KNOWLEDGE_SCHEMA_VERSION",
+    "SPATIAL_KNOWLEDGE_V2_SCHEMA_VERSION",
     "TRAINING_SCHEMA_VERSION",
     "TRIAL_PLAN_SCHEMA_VERSION",
     "ActionMode",
@@ -310,6 +319,7 @@ __all__ = [
     "ModalNavigationBoundary",
     "ModalState",
     "ModelBundleManifest",
+    "NegativeTraversalEvidence",
     "ObservationMode",
     "OptionalDependencyError",
     "Policy",
@@ -339,7 +349,12 @@ __all__ = [
     "RuntimeIntegrationProfile",
     "SpaceKind",
     "SpatialEntity",
+    "SpatialFrameTransform",
+    "SpatialGraphEdge",
+    "SpatialGraphNode",
+    "SpatialHazard",
     "SpatialKnowledgeBundle",
+    "SpatialKnowledgeGraph",
     "SpatialRoute",
     "SuccessCriterion",
     "SyncCollector",
@@ -349,6 +364,7 @@ __all__ = [
     "TrainingStore",
     "Transition",
     "TransportMode",
+    "TraversabilityStatus",
     "TrialPlan",
     "Unroll",
     "VerifiedDemonstrationArtifact",

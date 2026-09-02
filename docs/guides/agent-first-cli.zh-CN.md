@@ -159,6 +159,7 @@ glr --project . --json runs list --limit 20
 glr --project . --json runs show RUN_ID
 glr --project . --json query entities --world forest --kind shrine --name 土地庙
 glr --project . --json query routes --world forest --to-entity shrine.forest-1
+glr --project . --json query edges --world forest --from-node node.spawn --at-ns 0
 glr --project . --json query research --tag navigation --category strategy
 glr --project . --json query research --verified-only
 ```
@@ -183,6 +184,11 @@ glr --project . --json knowledge export --output artifacts/spatial-knowledge.jso
 ```powershell
 glr --project . --json knowledge import --input artifacts/spatial-knowledge.json
 ```
+
+可选的 `glr.spatial-knowledge.v2` directed graph 也通过同一条导入命令处理。使用
+`query edges` 查询有向边，并传入 `--status traversable` 只得到当前 frontier 候选；blocked 和
+stale 边只有在显式查询时才会返回。负向遍历证据会保留其 advisory provenance，不会获得 action
+authority。
 
 环境或协议不一致时 GLR 会拒绝；导入后的坐标和路线会降级为 advisory，直到新实例再次
 观察确认。对于同品类但不同游戏，只复用 family-scoped 攻略/策略结论，不能迁移世界坐标、

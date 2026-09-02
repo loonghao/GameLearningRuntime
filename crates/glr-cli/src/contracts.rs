@@ -16,6 +16,7 @@ pub const GOAL_EVIDENCE_SCHEMA_VERSION: &str = "glr.goal-evidence.v1";
 pub const MODEL_BUNDLE_SCHEMA_VERSION: &str = "glr.model-bundle.v1";
 pub const RESEARCH_BUNDLE_SCHEMA_VERSION: &str = "glr.research-bundle.v1";
 pub const SPATIAL_KNOWLEDGE_SCHEMA_VERSION: &str = "glr.spatial-knowledge.v1";
+pub const SPATIAL_KNOWLEDGE_V2_SCHEMA_VERSION: &str = "glr.spatial-knowledge.v2";
 pub const TRIAL_PLAN_SCHEMA_VERSION: &str = "glr.trial-plan.v1";
 
 pub fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, label: &str) -> Result<T> {
@@ -798,6 +799,367 @@ impl SpatialKnowledgeBundle {
                 "spatial object environment_id differs from its bundle".into(),
             ));
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TraversabilityStatus {
+    Unknown,
+    Traversable,
+    Blocked,
+    Stale,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum SpatialHazard {
+    DynamicHazard,
+    InsufficientClearance,
+    NoNavProjection,
+    SteepSlope,
+    GeometryBlocked,
+    TransientFailure,
+    UnknownBlocker,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpatialFrameTransform {
+    pub from_frame: String,
+    pub to_frame: String,
+    pub translation: [f64; 3],
+    pub rotation_quaternion: [f64; 4],
+    pub scale: [f64; 3],
+}
+
+impl SpatialFrameTransform {
+    fn validate(&self) -> Result<()> {
+        validate_identifier(&self.from_frame, "transform.from_frame")?;
+        validate_identifier(&self.to_frame, "transform.to_frame")?;
+        validate_position(&self.translation, "transform.translation")?;
+        if self
+            .rotation_quaternion
+            .iter()
+            .all(|value| value.abs() <= f64::EPSILON)
+        {
+            return Err(Error::Invalid(
+                "transform.rotation_quaternion cannot be zero".into(),
+            ));
+        }
+        if self
+            .rotation_quaternion
+            .iter()
+            .any(|value| !value.is_finite())
+        {
+            return Err(Error::Invalid(
+                "transform.rotation_quaternion must be finite".into(),
+            ));
+        }
+        if self
+            .scale
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+        {
+            return Err(Error::Invalid(
+                "transform.scale must contain positive finite values".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpatialGraphNode {
+    pub node_id: String,
+    pub world_id: String,
+    pub position: [f64; 3],
+    pub coordinate_frame: String,
+    pub ground_z: Option<f64>,
+    pub nav_z: Option<f64>,
+    pub observed_at_ns: u64,
+    pub source_run_id: String,
+    pub authority: Authority,
+    pub confidence: f64,
+    pub metadata: serde_json::Value,
+}
+
+impl SpatialGraphNode {
+    fn validate(&self) -> Result<()> {
+        for (label, value) in [
+            ("node.node_id", &self.node_id),
+            ("node.world_id", &self.world_id),
+            ("node.coordinate_frame", &self.coordinate_frame),
+            ("node.source_run_id", &self.source_run_id),
+        ] {
+            validate_identifier(value, label)?;
+        }
+        validate_position(&self.position, "node.position")?;
+        for (label, value) in [("node.ground_z", self.ground_z), ("node.nav_z", self.nav_z)] {
+            if value.is_some_and(|item| !item.is_finite()) {
+                return Err(Error::Invalid(format!("{label} must be finite")));
+            }
+        }
+        validate_confidence(self.confidence, "node.confidence")?;
+        if !self.metadata.is_object() {
+            return Err(Error::Invalid("node.metadata must be an object".into()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NegativeTraversalEvidence {
+    pub reason: SpatialHazard,
+    pub observed_at_ns: u64,
+    pub source_run_id: String,
+    pub expires_at_ns: Option<u64>,
+    pub detail: Option<String>,
+}
+
+impl NegativeTraversalEvidence {
+    fn validate(&self) -> Result<()> {
+        validate_identifier(&self.source_run_id, "negative evidence.source_run_id")?;
+        if self
+            .expires_at_ns
+            .is_some_and(|expires| expires < self.observed_at_ns)
+        {
+            return Err(Error::Invalid(
+                "negative evidence.expires_at_ns cannot precede observed_at_ns".into(),
+            ));
+        }
+        if self
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.trim().is_empty() || detail.chars().count() > 512)
+        {
+            return Err(Error::Invalid(
+                "negative evidence.detail must be bounded text".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpatialGraphEdge {
+    pub edge_id: String,
+    pub world_id: String,
+    pub from_node_id: String,
+    pub to_node_id: String,
+    pub coordinate_frame: String,
+    pub source_run_id: String,
+    pub passability: TraversabilityStatus,
+    pub cost: Option<f64>,
+    pub success_count: u64,
+    pub failure_count: u64,
+    pub last_verified_at_ns: u64,
+    pub expires_at_ns: Option<u64>,
+    pub ground_projection: Option<[f64; 3]>,
+    pub nav_projection: Option<[f64; 3]>,
+    pub vertical_delta: Option<f64>,
+    pub slope: Option<f64>,
+    pub clearance: Option<f64>,
+    pub hazard_reasons: Vec<SpatialHazard>,
+    pub negative_evidence: Vec<NegativeTraversalEvidence>,
+    pub transform: Option<SpatialFrameTransform>,
+    pub authority: Authority,
+    pub confidence: f64,
+    pub metadata: serde_json::Value,
+}
+
+impl SpatialGraphEdge {
+    fn validate(&self) -> Result<()> {
+        for (label, value) in [
+            ("edge.edge_id", &self.edge_id),
+            ("edge.world_id", &self.world_id),
+            ("edge.from_node_id", &self.from_node_id),
+            ("edge.to_node_id", &self.to_node_id),
+            ("edge.coordinate_frame", &self.coordinate_frame),
+            ("edge.source_run_id", &self.source_run_id),
+        ] {
+            validate_identifier(value, label)?;
+        }
+        if self.from_node_id == self.to_node_id {
+            return Err(Error::Invalid(
+                "spatial edge cannot connect a node to itself".into(),
+            ));
+        }
+        if self
+            .cost
+            .is_some_and(|value| !value.is_finite() || value < 0.0)
+        {
+            return Err(Error::Invalid(
+                "edge.cost must be non-negative and finite".into(),
+            ));
+        }
+        if self
+            .expires_at_ns
+            .is_some_and(|expires| expires < self.last_verified_at_ns)
+        {
+            return Err(Error::Invalid(
+                "edge.expires_at_ns cannot precede last_verified_at_ns".into(),
+            ));
+        }
+        for (label, value) in [
+            ("edge.ground_projection", self.ground_projection),
+            ("edge.nav_projection", self.nav_projection),
+        ] {
+            if let Some(position) = value {
+                validate_position(&position, label)?;
+            }
+        }
+        if self.vertical_delta.is_some_and(|value| !value.is_finite())
+            || self
+                .slope
+                .is_some_and(|value| !value.is_finite() || !(0.0..=90.0).contains(&value))
+            || self
+                .clearance
+                .is_some_and(|value| !value.is_finite() || value < 0.0)
+        {
+            return Err(Error::Invalid(
+                "edge geometry fields are outside bounded finite ranges".into(),
+            ));
+        }
+        for evidence in &self.negative_evidence {
+            evidence.validate()?;
+        }
+        if let Some(transform) = &self.transform {
+            transform.validate()?;
+            if transform.from_frame != self.coordinate_frame {
+                return Err(Error::Invalid(
+                    "edge transform does not match coordinate_frame".into(),
+                ));
+            }
+        }
+        validate_confidence(self.confidence, "edge.confidence")?;
+        if !self.metadata.is_object() {
+            return Err(Error::Invalid("edge.metadata must be an object".into()));
+        }
+        Ok(())
+    }
+
+    pub fn status_at(&self, observed_at_ns: u64) -> TraversabilityStatus {
+        if self
+            .expires_at_ns
+            .is_some_and(|expires| observed_at_ns >= expires)
+        {
+            return TraversabilityStatus::Stale;
+        }
+        if self.negative_evidence.iter().any(|evidence| {
+            evidence
+                .expires_at_ns
+                .is_none_or(|expires| observed_at_ns < expires)
+        }) {
+            return TraversabilityStatus::Blocked;
+        }
+        if self.passability == TraversabilityStatus::Stale {
+            TraversabilityStatus::Stale
+        } else {
+            self.passability
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpatialKnowledgeGraph {
+    pub schema_version: String,
+    pub environment_id: String,
+    pub protocol_version: String,
+    pub exported_at_ns: u64,
+    pub nodes: Vec<SpatialGraphNode>,
+    pub edges: Vec<SpatialGraphEdge>,
+    pub transforms: Vec<SpatialFrameTransform>,
+}
+
+impl SpatialKnowledgeGraph {
+    pub fn validate(&self) -> Result<()> {
+        validate_schema(
+            &self.schema_version,
+            SPATIAL_KNOWLEDGE_V2_SCHEMA_VERSION,
+            "spatial graph",
+        )?;
+        validate_identifier(&self.environment_id, "spatial graph.environment_id")?;
+        if self.protocol_version.is_empty() {
+            return Err(Error::Invalid(
+                "spatial graph protocol_version cannot be empty".into(),
+            ));
+        }
+        if self.nodes.len() > 100_000 || self.edges.len() > 100_000 {
+            return Err(Error::Invalid(
+                "spatial graph exceeds the bounded object count".into(),
+            ));
+        }
+        for node in &self.nodes {
+            node.validate()?;
+        }
+        for transform in &self.transforms {
+            transform.validate()?;
+        }
+        let node_ids = self
+            .nodes
+            .iter()
+            .map(|node| node.node_id.as_str())
+            .collect::<HashSet<_>>();
+        if node_ids.len() != self.nodes.len() {
+            return Err(Error::Invalid(
+                "spatial graph.nodes contains duplicate node_id values".into(),
+            ));
+        }
+        let edge_ids = self
+            .edges
+            .iter()
+            .map(|edge| edge.edge_id.as_str())
+            .collect::<HashSet<_>>();
+        if edge_ids.len() != self.edges.len() {
+            return Err(Error::Invalid(
+                "spatial graph.edges contains duplicate edge_id values".into(),
+            ));
+        }
+        let node_by_id = self
+            .nodes
+            .iter()
+            .map(|node| (node.node_id.as_str(), node))
+            .collect::<std::collections::HashMap<_, _>>();
+        for edge in &self.edges {
+            edge.validate()?;
+            let from = node_by_id.get(edge.from_node_id.as_str()).ok_or_else(|| {
+                Error::Invalid("spatial graph edge references an unknown node".into())
+            })?;
+            let to = node_by_id.get(edge.to_node_id.as_str()).ok_or_else(|| {
+                Error::Invalid("spatial graph edge references an unknown node".into())
+            })?;
+            if from.world_id != edge.world_id || to.world_id != edge.world_id {
+                return Err(Error::Invalid(
+                    "spatial graph edge crosses world boundaries".into(),
+                ));
+            }
+        }
+        let transform_pairs = self
+            .transforms
+            .iter()
+            .map(|transform| (&transform.from_frame, &transform.to_frame))
+            .collect::<HashSet<_>>();
+        if transform_pairs.len() != self.transforms.len() {
+            return Err(Error::Invalid(
+                "spatial graph.transforms contains duplicate frame pairs".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn validate_position(value: &[f64; 3], label: &str) -> Result<()> {
+    if value.iter().any(|item| !item.is_finite()) {
+        Err(Error::Invalid(format!(
+            "{label} coordinates must be finite"
+        )))
+    } else {
         Ok(())
     }
 }

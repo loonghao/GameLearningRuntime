@@ -6,11 +6,12 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::contracts::{
     Authority, GoalEvidence, PromotionMode, ResearchBundle, RouteWaypoint, SpatialEntity,
-    SpatialKnowledgeBundle, SpatialRoute, sha256_file,
+    SpatialKnowledgeBundle, SpatialKnowledgeGraph, SpatialRoute, sha256_file,
 };
 use crate::error::{Error, Result};
 use crate::project::validate_identifier;
@@ -237,6 +238,17 @@ impl Store {
                     REFERENCES spatial_routes(environment_id, world_id, route_id)
                     ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS spatial_graphs (
+                environment_id TEXT NOT NULL,
+                protocol_version TEXT NOT NULL,
+                graph_id TEXT NOT NULL,
+                exported_at_ns INTEGER NOT NULL,
+                source_run_id TEXT NOT NULL REFERENCES runs(run_id),
+                graph_json TEXT NOT NULL,
+                PRIMARY KEY(environment_id, graph_id)
+            );
+            CREATE INDEX IF NOT EXISTS spatial_graphs_lookup
+                ON spatial_graphs(environment_id, protocol_version, exported_at_ns DESC);
             CREATE TABLE IF NOT EXISTS research_sources (
                 source_id TEXT PRIMARY KEY,
                 media_type TEXT NOT NULL,
@@ -933,6 +945,71 @@ impl Store {
         Ok((bundle.entities.len(), bundle.routes.len()))
     }
 
+    pub fn import_spatial_graph(
+        &self,
+        graph: &SpatialKnowledgeGraph,
+        source_run_id: &str,
+    ) -> Result<SpatialKnowledgeGraph> {
+        graph.validate()?;
+        validate_identifier(source_run_id, "source_run_id")?;
+        let mut imported = graph.clone();
+        for node in &mut imported.nodes {
+            let original_run = node.source_run_id.clone();
+            node.authority = Authority::Advisory;
+            node.source_run_id = source_run_id.into();
+            node.metadata = merge_metadata(
+                &node.metadata,
+                json!({"imported_source_run_id": original_run, "advisory": true}),
+            );
+        }
+        for edge in &mut imported.edges {
+            let original_run = edge.source_run_id.clone();
+            edge.authority = Authority::Advisory;
+            edge.source_run_id = source_run_id.into();
+            edge.metadata = merge_metadata(
+                &edge.metadata,
+                json!({"imported_source_run_id": original_run, "advisory": true}),
+            );
+        }
+        imported.validate()?;
+        let graph_json = compact_json(&imported)?;
+        let graph_id = format!("sha256-{}", sha256_bytes(graph_json.as_bytes()));
+        self.connect()?.execute(
+            "INSERT INTO spatial_graphs(environment_id, protocol_version, graph_id, exported_at_ns, source_run_id, graph_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(environment_id, graph_id) DO NOTHING",
+            params![
+                imported.environment_id,
+                imported.protocol_version,
+                graph_id,
+                imported.exported_at_ns,
+                source_run_id,
+                graph_json
+            ],
+        )?;
+        Ok(imported)
+    }
+
+    pub fn latest_spatial_graph(
+        &self,
+        environment_id: &str,
+        protocol_version: &str,
+    ) -> Result<Option<SpatialKnowledgeGraph>> {
+        let encoded: Option<String> = self
+            .connect()?
+            .query_row(
+                "SELECT graph_json FROM spatial_graphs WHERE environment_id = ? AND protocol_version = ? ORDER BY exported_at_ns DESC, graph_id ASC LIMIT 1",
+                params![environment_id, protocol_version],
+                |row| row.get(0),
+            )
+            .optional()?;
+        encoded
+            .map(|value| {
+                let graph: SpatialKnowledgeGraph = serde_json::from_str(&value)?;
+                graph.validate()?;
+                Ok(graph)
+            })
+            .transpose()
+    }
+
     pub fn upsert_entity(&self, entity: &SpatialEntity) -> Result<()> {
         self.connect()?.execute(
             "INSERT INTO spatial_entities(environment_id, world_id, entity_id, kind, label, x, y, z, coordinate_frame, authority, confidence, observed_at_ns, source_run_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(environment_id, world_id, entity_id) DO UPDATE SET kind=excluded.kind, label=excluded.label, x=excluded.x, y=excluded.y, z=excluded.z, coordinate_frame=excluded.coordinate_frame, authority=excluded.authority, confidence=excluded.confidence, observed_at_ns=excluded.observed_at_ns, source_run_id=excluded.source_run_id, metadata_json=excluded.metadata_json WHERE excluded.observed_at_ns >= spatial_entities.observed_at_ns",
@@ -1205,4 +1282,10 @@ fn merge_metadata(original: &Value, additions: Value) -> Value {
         merged.extend(additions.clone());
     }
     Value::Object(merged)
+}
+
+fn sha256_bytes(value: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(value);
+    format!("{:x}", digest.finalize())
 }

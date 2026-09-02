@@ -152,4 +152,5 @@ separate `glr.knowledge-research.v1` design manifest and is never loaded as an
 executable runtime configuration. Agent orchestration adds strict
 `glr.project.v1`, `glr.agent-goal.v1`, `glr.research-bundle.v1`,
 `glr.trial-plan.v1`, `glr.goal-evidence.v1`, `glr.capture.v1`, and
-`glr.spatial-knowledge.v1` contracts without changing the runtime protocol.
+`glr.spatial-knowledge.v1` and the optional `glr.spatial-knowledge.v2` directed graph contracts
+without changing the runtime protocol.
