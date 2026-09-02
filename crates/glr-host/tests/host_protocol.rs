@@ -1,7 +1,7 @@
 use glr_host::{
-    HOST_SCHEMA, Host, ProviderError, ProviderResumeRequest, ProviderStepRequest,
-    ReconciliationOutcome, RuntimeProvider, SyntheticCounterProvider, WireActionReconciliation,
-    WireEnvironmentDescriptor, WireResumeResult, WireTimeStep,
+    HOST_SCHEMA, Host, ProviderError, ProviderRefusal, ProviderResumeRequest, ProviderStepRequest,
+    ReconciliationOutcome, RefusalReasonClass, RuntimeProvider, SyntheticCounterProvider,
+    WireActionReconciliation, WireEnvironmentDescriptor, WireResumeResult, WireTimeStep,
 };
 use serde_json::{Value, json};
 
@@ -351,4 +351,71 @@ fn realtime_deadline_and_cancellation_never_dispatch_an_action() {
         }),
     );
     assert_eq!(expired["error"]["code"], "action_expired");
+}
+
+struct RefusingProvider {
+    inner: SyntheticCounterProvider,
+}
+
+impl RuntimeProvider for RefusingProvider {
+    fn describe(&self) -> WireEnvironmentDescriptor {
+        self.inner.describe()
+    }
+
+    fn reset(
+        &mut self,
+        seed: Option<u64>,
+        options: &std::collections::BTreeMap<String, String>,
+    ) -> Result<WireTimeStep, ProviderError> {
+        self.inner.reset(seed, options)
+    }
+
+    fn attach(
+        &mut self,
+        options: &std::collections::BTreeMap<String, String>,
+    ) -> Result<WireTimeStep, ProviderError> {
+        self.inner.attach(options)
+    }
+
+    fn step(&mut self, _request: ProviderStepRequest) -> Result<WireTimeStep, ProviderError> {
+        Err(ProviderError::Refused {
+            refusal: ProviderRefusal {
+                action_id: Some("move-1".into()),
+                target_id: "card-1".into(),
+                reason_class: RefusalReasonClass::Structural,
+                retryable: false,
+                message: "postcondition failed".into(),
+            },
+        })
+    }
+
+    fn close(&mut self) -> Result<(), ProviderError> {
+        self.inner.close()
+    }
+}
+
+#[test]
+fn refused_provider_returns_structured_identity_and_reason_class() {
+    let mut host = Host::new(Box::new(RefusingProvider {
+        inner: SyntheticCounterProvider::new(2),
+    }));
+    let reset = send(&mut host, "reset-1", "reset", json!({}));
+    let episode_id = reset["result"]["episode_id"].as_str().unwrap();
+    let refused = send(
+        &mut host,
+        "step-1",
+        "step",
+        json!({
+            "episode_id": episode_id,
+            "expected_step_id": 1,
+            "action_id": "move-1",
+            "action": {"choice": {"shape": [1], "dtype": "int64", "data": "AQAAAAAAAAA="}}
+        }),
+    );
+    assert_eq!(refused["ok"], false);
+    assert_eq!(refused["error"]["code"], "command_refused");
+    assert_eq!(refused["error"]["refusal"]["action_id"], "move-1");
+    assert_eq!(refused["error"]["refusal"]["target_id"], "card-1");
+    assert_eq!(refused["error"]["refusal"]["reason_class"], "structural");
+    assert_eq!(refused["error"]["retryable"], false);
 }

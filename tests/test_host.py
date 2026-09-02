@@ -17,6 +17,7 @@ from game_learning_runtime import (
     BridgeResetRequest,
     BridgeResumeRequest,
     BridgeStepRequest,
+    CommandRefusal,
     ContractEnvironment,
     HostBridgeDriver,
     HostProcessConfig,
@@ -220,6 +221,48 @@ def test_host_driver_parses_and_binds_action_receipt() -> None:
     assert result.action_receipt is not None
     assert result.action_receipt.outcome.value == "no_effect"
     assert result.action_receipt.authoritative_observation_sequence == 3
+    driver.close()
+
+
+def test_host_driver_normalizes_remote_exception_refusal() -> None:
+    class _RefusalChannel(_ScriptedChannel):
+        def exchange(self, request: Mapping[str, object]) -> Mapping[str, object]:
+            if request["operation"] == "step":
+                self.requests.append(request)
+                return {
+                    "schema": HOST_SCHEMA,
+                    "request_id": request["request_id"],
+                    "ok": False,
+                    "error": {
+                        "code": "command_refused",
+                        "message": "postcondition failed",
+                        "retryable": False,
+                        "refusal": {
+                            "action_id": "move-1",
+                            "target_id": "card-1",
+                            "reason_class": "structural",
+                            "retryable": False,
+                        },
+                    },
+                }
+            return super().exchange(request)
+
+    channel = _RefusalChannel()
+    driver = HostBridgeDriver(channel)
+    initial = driver.reset(BridgeResetRequest())
+    with pytest.raises(CommandRefusal) as captured:
+        driver.step(
+            BridgeStepRequest(
+                episode_id=initial.episode_id,
+                expected_step_id=1,
+                action={"choice": np.array([1], dtype=np.int64)},
+                action_id="move-1",
+            )
+        )
+    refusal = captured.value
+    assert refusal.target_id == "card-1"
+    assert refusal.reason_class.value == "structural"
+    assert refusal.action_id == "move-1"
     driver.close()
 
 

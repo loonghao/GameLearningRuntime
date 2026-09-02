@@ -14,7 +14,8 @@ from game_learning_runtime.contracts import (
     TimeStep,
     normalize_environment_config,
 )
-from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.errors import CommandRefusal, ContractViolation
+from game_learning_runtime.refusals import RefusalFunnel
 from game_learning_runtime.specs import EnvironmentSpec
 
 
@@ -66,8 +67,11 @@ class GameEnvironment(ABC):
 class ContractEnvironment(GameEnvironment):
     """Validates an adapter at every state transition and fails closed."""
 
-    def __init__(self, environment: GameEnvironment) -> None:
+    def __init__(
+        self, environment: GameEnvironment, *, refusal_funnel: RefusalFunnel | None = None
+    ) -> None:
         self._environment = environment
+        self._refusal_funnel = refusal_funnel
         self._current: TimeStep | None = None
         self._previous_episode_id: UUID | None = None
         self._closed = False
@@ -114,15 +118,26 @@ class ContractEnvironment(GameEnvironment):
         if self._current.done:
             raise ContractViolation("step cannot follow a terminal time step; reset first")
         self.spec.action.validate(action, path="action")
-        timestep = self._environment.step(action)
+        expected_step_id = self._current.step_id + 1
+        try:
+            timestep = self._environment.step(action)
+        except CommandRefusal as refusal:
+            if self._refusal_funnel is not None:
+                self._refusal_funnel.observe_exception(
+                    refusal,
+                    episode_id=self._current.episode_id,
+                    step_id=expected_step_id,
+                )
+            raise
         self._validate_timestep(timestep)
         if timestep.episode_id != self._current.episode_id:
             raise ContractViolation("step changed episode_id without reset")
-        expected_step_id = self._current.step_id + 1
         if timestep.step_id != expected_step_id:
             raise ContractViolation(
                 f"step returned step_id={timestep.step_id}; expected {expected_step_id}"
             )
+        if self._refusal_funnel is not None:
+            self._refusal_funnel.observe_timestep(timestep)
         self._current = timestep
         return timestep
 

@@ -17,6 +17,7 @@ from game_learning_runtime.contracts import (
     ActionOutcome,
     ActionReceipt,
     Event,
+    RefusalReasonClass,
     TensorTree,
     Transition,
 )
@@ -118,6 +119,8 @@ def _action_receipt_to_record(receipt: ActionReceipt | None) -> dict[str, Any] |
         "authoritative_observation_sequence": receipt.authoritative_observation_sequence,
         "retryable": receipt.retryable,
         "realtime": None if receipt.realtime is None else receipt.realtime.to_mapping(),
+        "target_id": receipt.target_id,
+        "reason_class": None if receipt.reason_class is None else receipt.reason_class.value,
     }
 
 
@@ -168,6 +171,12 @@ def _action_receipt_from_record(value: object) -> ActionReceipt | None:
         ),
         retryable=bool(value.get("retryable", False)),
         realtime=realtime,
+        target_id=(str(value["target_id"]) if value.get("target_id") is not None else None),
+        reason_class=(
+            RefusalReasonClass(str(value["reason_class"]))
+            if value.get("reason_class") is not None
+            else None
+        ),
     )
 
 

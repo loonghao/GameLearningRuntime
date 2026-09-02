@@ -155,6 +155,13 @@ pub enum ActionOutcome {
     Blocked,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RefusalReasonClass {
+    Transient,
+    Structural,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WireTensorSpec {
@@ -299,6 +306,10 @@ pub struct WireActionReceipt {
     pub retryable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub realtime: Option<WireRealtimeActionReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason_class: Option<RefusalReasonClass>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -406,6 +417,13 @@ impl WireActionReceipt {
         if self.progress_delta.is_some_and(|value| !value.is_finite()) {
             return Err(ProviderError::InvalidData(
                 "action receipt progress_delta must be finite".into(),
+            ));
+        }
+        if let Some(target_id) = &self.target_id
+            && (target_id.is_empty() || target_id.len() > 128)
+        {
+            return Err(ProviderError::InvalidData(
+                "action receipt target_id must contain 1-128 characters".into(),
             ));
         }
         if let Some(realtime) = &self.realtime
@@ -542,6 +560,15 @@ pub struct ProviderStepRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderRefusal {
+    pub action_id: Option<String>,
+    pub target_id: String,
+    pub reason_class: RefusalReasonClass,
+    pub retryable: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderResumeRequest {
     pub episode_id: String,
     pub last_committed_step_id: u64,
@@ -554,6 +581,8 @@ pub enum ProviderError {
     Unsupported(String),
     #[error("invalid action: {0}")]
     InvalidAction(String),
+    #[error("command refused")]
+    Refused { refusal: ProviderRefusal },
     #[error("invalid provider data: {0}")]
     InvalidData(String),
     #[error("runtime provider failure: {0}")]
@@ -691,12 +720,24 @@ struct ErrorBody {
     code: &'static str,
     message: String,
     retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refusal: Option<WireCommandRefusal>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WireCommandRefusal {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action_id: Option<String>,
+    target_id: String,
+    reason_class: RefusalReasonClass,
+    retryable: bool,
 }
 
 #[derive(Debug)]
 struct HostFailure {
     code: &'static str,
     message: String,
+    refusal: Option<WireCommandRefusal>,
 }
 
 impl HostFailure {
@@ -704,6 +745,15 @@ impl HostFailure {
         Self {
             code,
             message: message.into(),
+            refusal: None,
+        }
+    }
+
+    fn refused(message: impl Into<String>, refusal: WireCommandRefusal) -> Self {
+        Self {
+            code: "command_refused",
+            message: message.into(),
+            refusal: Some(refusal),
         }
     }
 }
@@ -1005,21 +1055,32 @@ impl Host {
             tensor.validate().map_err(provider_failure)?;
         }
 
-        let timestep = self
-            .provider
-            .step(ProviderStepRequest {
-                episode_id: payload.episode_id,
-                expected_step_id: payload.expected_step_id,
-                action: payload.action,
-                action_id: payload.action_id,
-                issued_at_ns: payload.issued_at_ns,
-                deadline_ns: payload.deadline_ns,
-                quantum_ns: payload.quantum_ns,
-                hold_ns: payload.hold_ns,
-                lease: payload.lease,
-                cancellation_token: payload.cancellation_token,
-            })
-            .map_err(provider_failure)?;
+        let timestep = match self.provider.step(ProviderStepRequest {
+            episode_id: payload.episode_id,
+            expected_step_id: payload.expected_step_id,
+            action: payload.action,
+            action_id: payload.action_id,
+            issued_at_ns: payload.issued_at_ns,
+            deadline_ns: payload.deadline_ns,
+            quantum_ns: payload.quantum_ns,
+            hold_ns: payload.hold_ns,
+            lease: payload.lease,
+            cancellation_token: payload.cancellation_token,
+        }) {
+            Ok(timestep) => timestep,
+            Err(ProviderError::Refused { refusal }) => {
+                return Err(HostFailure::refused(
+                    refusal.message.clone(),
+                    WireCommandRefusal {
+                        action_id: refusal.action_id,
+                        target_id: refusal.target_id,
+                        reason_class: refusal.reason_class,
+                        retryable: refusal.retryable,
+                    },
+                ));
+            }
+            Err(error) => return Err(provider_failure(error)),
+        };
         let done = timestep.validate().map_err(provider_failure)?;
         if timestep.episode_id != current.episode_id || timestep.step_id != expected {
             return Err(HostFailure::new(
@@ -1200,7 +1261,11 @@ impl Host {
             error: Some(ErrorBody {
                 code: error.code,
                 message: error.message,
-                retryable: false,
+                retryable: error
+                    .refusal
+                    .as_ref()
+                    .is_some_and(|refusal| refusal.retryable),
+                refusal: error.refusal,
             }),
         })
     }
@@ -1256,6 +1321,15 @@ fn provider_failure(error: ProviderError) -> HostFailure {
             HostFailure::new("provider_contract_violation", message)
         }
         ProviderError::Runtime(message) => HostFailure::new("provider_error", message),
+        ProviderError::Refused { refusal } => HostFailure::refused(
+            refusal.message.clone(),
+            WireCommandRefusal {
+                action_id: refusal.action_id,
+                target_id: refusal.target_id,
+                reason_class: refusal.reason_class,
+                retryable: refusal.retryable,
+            },
+        ),
     }
 }
 

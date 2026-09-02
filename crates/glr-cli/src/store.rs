@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rusqlite::types::Value as SqlValue;
+use rusqlite::types::{Type, Value as SqlValue};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -17,6 +17,8 @@ use crate::error::{Error, Result};
 use crate::project::validate_identifier;
 
 pub const RUN_STORE_SCHEMA_VERSION: i64 = 1;
+pub const MAX_TRANSACTION_STEPS: usize = 64;
+pub const MAX_TRANSACTION_RESUME_ATTEMPTS: u32 = 16;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RunRecord {
@@ -51,6 +53,36 @@ pub struct MetricRecord {
     pub value: f64,
     pub step_id: Option<i64>,
     pub metadata: Value,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransactionRefusal {
+    pub action_id: String,
+    pub target_id: String,
+    pub reason_class: String,
+    pub message: String,
+    #[serde(default)]
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TransactionRecord {
+    pub transaction_id: String,
+    pub run_id: String,
+    pub step_count: u32,
+    pub next_step_index: u32,
+    pub status: String,
+    pub resume_attempts: u32,
+    pub max_resume_attempts: u32,
+    pub last_refusal: Option<Value>,
+    pub updated_at_ns: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TransactionResume {
+    pub transaction: TransactionRecord,
+    pub outcome: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -178,6 +210,20 @@ impl Store {
             );
             CREATE INDEX IF NOT EXISTS metrics_run_name_step
                 ON metrics(run_id, name, step_id);
+            CREATE TABLE IF NOT EXISTS transactions (
+                transaction_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+                steps_json TEXT NOT NULL,
+                next_step_index INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                resume_attempts INTEGER NOT NULL,
+                max_resume_attempts INTEGER NOT NULL,
+                last_refusal_json TEXT,
+                updated_at_ns INTEGER NOT NULL,
+                CHECK (status IN ('pending', 'completed', 'abandoned'))
+            );
+            CREATE INDEX IF NOT EXISTS transactions_run_status
+                ON transactions(run_id, status, updated_at_ns DESC);
             CREATE TABLE IF NOT EXISTS artifacts (
                 run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
                 path TEXT NOT NULL,
@@ -332,6 +378,202 @@ impl Store {
             return Err(Error::Contract("run is missing or already terminal".into()));
         }
         self.get_run(run_id)
+    }
+
+    pub fn begin_transaction(
+        &self,
+        run_id: &str,
+        transaction_id: &str,
+        steps: &[Value],
+        max_resume_attempts: u32,
+    ) -> Result<TransactionRecord> {
+        validate_identifier(transaction_id, "transaction_id")?;
+        if steps.is_empty() || steps.len() > MAX_TRANSACTION_STEPS {
+            return Err(Error::Invalid(format!(
+                "transaction steps must contain 1-{MAX_TRANSACTION_STEPS} entries"
+            )));
+        }
+        if !(1..=MAX_TRANSACTION_RESUME_ATTEMPTS).contains(&max_resume_attempts) {
+            return Err(Error::Invalid(format!(
+                "max_resume_attempts must be between 1 and {MAX_TRANSACTION_RESUME_ATTEMPTS}"
+            )));
+        }
+        let steps_json = compact_json(&steps)?;
+        if steps_json.len() > 64 * 1024 {
+            return Err(Error::Invalid(
+                "transaction steps exceed the 64 KiB limit".into(),
+            ));
+        }
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        let status: Option<String> = transaction
+            .query_row(
+                "SELECT status FROM runs WHERE run_id = ?",
+                [run_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if status.as_deref() != Some("running") {
+            return Err(Error::Contract(
+                "transactions require an existing running run".into(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO transactions(transaction_id, run_id, steps_json, next_step_index, status, resume_attempts, max_resume_attempts, last_refusal_json, updated_at_ns) VALUES (?, ?, ?, 0, 'pending', 0, ?, NULL, ?)",
+            params![transaction_id, run_id, steps_json, max_resume_attempts, now_ns()?],
+        )?;
+        append_event_transaction(
+            &transaction,
+            run_id,
+            "transaction.started",
+            json!({
+                "transaction_id": transaction_id,
+                "step_count": steps.len(),
+                "max_resume_attempts": max_resume_attempts,
+            }),
+        )?;
+        transaction.commit()?;
+        self.get_transaction(transaction_id)
+    }
+
+    pub fn get_transaction(&self, transaction_id: &str) -> Result<TransactionRecord> {
+        validate_identifier(transaction_id, "transaction_id")?;
+        self.connect()?
+            .query_row(
+                "SELECT transaction_id, run_id, steps_json, next_step_index, status, resume_attempts, max_resume_attempts, last_refusal_json, updated_at_ns FROM transactions WHERE transaction_id = ?",
+                [transaction_id],
+                transaction_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| Error::Contract(format!("unknown transaction_id: {transaction_id}")))
+    }
+
+    pub fn resume_transaction(
+        &self,
+        transaction_id: &str,
+        refusal: Option<&TransactionRefusal>,
+    ) -> Result<TransactionResume> {
+        validate_identifier(transaction_id, "transaction_id")?;
+        if let Some(refusal) = refusal {
+            validate_transaction_refusal(refusal)?;
+        }
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        let mut record = transaction
+            .query_row(
+                "SELECT transaction_id, run_id, steps_json, next_step_index, status, resume_attempts, max_resume_attempts, last_refusal_json, updated_at_ns FROM transactions WHERE transaction_id = ?",
+                [transaction_id],
+                transaction_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| Error::Contract(format!("unknown transaction_id: {transaction_id}")))?;
+        if record.status != "pending" {
+            transaction.commit()?;
+            return Ok(TransactionResume {
+                transaction: record,
+                outcome: "already_terminal".into(),
+            });
+        }
+        let steps_json: String = transaction.query_row(
+            "SELECT steps_json FROM transactions WHERE transaction_id = ?",
+            [transaction_id],
+            |row| row.get(0),
+        )?;
+        let steps: Vec<Value> = serde_json::from_str(&steps_json)
+            .map_err(|error| Error::Contract(format!("transaction steps are corrupt: {error}")))?;
+        let step_count = u32::try_from(steps.len())
+            .map_err(|_| Error::Contract("transaction step count overflows u32".into()))?;
+        if let Some(refusal) = refusal {
+            let refusal_json = compact_json(refusal)?;
+            let structural = refusal.reason_class == "structural";
+            let attempts = if structural {
+                record.resume_attempts.saturating_add(1)
+            } else {
+                record.resume_attempts
+            };
+            let abandon = structural && attempts >= record.max_resume_attempts;
+            let status = if abandon { "abandoned" } else { "pending" };
+            transaction.execute(
+                "UPDATE transactions SET status = ?, resume_attempts = ?, last_refusal_json = ?, updated_at_ns = ? WHERE transaction_id = ? AND status = 'pending'",
+                params![status, attempts, refusal_json, now_ns()?, transaction_id],
+            )?;
+            let kind = if abandon {
+                "transaction.abandoned"
+            } else {
+                "transaction.refused"
+            };
+            append_event_transaction(
+                &transaction,
+                &record.run_id,
+                kind,
+                json!({
+                    "transaction_id": transaction_id,
+                    "next_step_index": record.next_step_index,
+                    "step_count": step_count,
+                    "resume_attempts": attempts,
+                    "max_resume_attempts": record.max_resume_attempts,
+                    "refusal": refusal,
+                    "abandoned": abandon,
+                }),
+            )?;
+            record = transaction
+                .query_row(
+                    "SELECT transaction_id, run_id, steps_json, next_step_index, status, resume_attempts, max_resume_attempts, last_refusal_json, updated_at_ns FROM transactions WHERE transaction_id = ?",
+                    [transaction_id],
+                    transaction_from_row,
+                )?;
+            transaction.commit()?;
+            return Ok(TransactionResume {
+                transaction: record,
+                outcome: if abandon { "abandoned" } else { "refused" }.into(),
+            });
+        }
+
+        let next_step_index = record.next_step_index.saturating_add(1);
+        if next_step_index > step_count {
+            return Err(Error::Contract(
+                "transaction next_step_index is beyond its step count".into(),
+            ));
+        }
+        let status = if next_step_index == step_count {
+            "completed"
+        } else {
+            "pending"
+        };
+        transaction.execute(
+            "UPDATE transactions SET next_step_index = ?, status = ?, last_refusal_json = NULL, updated_at_ns = ? WHERE transaction_id = ? AND status = 'pending'",
+            params![next_step_index, status, now_ns()?, transaction_id],
+        )?;
+        append_event_transaction(
+            &transaction,
+            &record.run_id,
+            if status == "completed" {
+                "transaction.completed"
+            } else {
+                "transaction.step_advanced"
+            },
+            json!({
+                "transaction_id": transaction_id,
+                "next_step_index": next_step_index,
+                "step_count": step_count,
+            }),
+        )?;
+        record = transaction
+            .query_row(
+                "SELECT transaction_id, run_id, steps_json, next_step_index, status, resume_attempts, max_resume_attempts, last_refusal_json, updated_at_ns FROM transactions WHERE transaction_id = ?",
+                [transaction_id],
+                transaction_from_row,
+            )?;
+        transaction.commit()?;
+        Ok(TransactionResume {
+            transaction: record,
+            outcome: if status == "completed" {
+                "completed"
+            } else {
+                "advanced"
+            }
+            .into(),
+        })
     }
 
     pub fn get_run(&self, run_id: &str) -> Result<RunRecord> {
@@ -1065,6 +1307,73 @@ impl Store {
     }
 }
 
+fn transaction_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TransactionRecord> {
+    let steps_json: String = row.get("steps_json")?;
+    let steps: Vec<Value> = serde_json::from_str(&steps_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(2, Type::Text, Box::new(error))
+    })?;
+    let last_refusal = row
+        .get::<_, Option<String>>("last_refusal_json")?
+        .map(|value| {
+            serde_json::from_str(&value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(7, Type::Text, Box::new(error))
+            })
+        })
+        .transpose()?;
+    Ok(TransactionRecord {
+        transaction_id: row.get("transaction_id")?,
+        run_id: row.get("run_id")?,
+        step_count: u32::try_from(steps.len()).map_err(|_| {
+            rusqlite::Error::FromSqlConversionFailure(
+                2,
+                Type::Text,
+                "transaction step count overflows u32".into(),
+            )
+        })?,
+        next_step_index: row.get("next_step_index")?,
+        status: row.get("status")?,
+        resume_attempts: row.get("resume_attempts")?,
+        max_resume_attempts: row.get("max_resume_attempts")?,
+        last_refusal,
+        updated_at_ns: row.get("updated_at_ns")?,
+    })
+}
+
+fn validate_transaction_refusal(refusal: &TransactionRefusal) -> Result<()> {
+    validate_identifier(&refusal.action_id, "transaction refusal action_id")?;
+    validate_identifier(&refusal.target_id, "transaction refusal target_id")?;
+    if !matches!(refusal.reason_class.as_str(), "transient" | "structural") {
+        return Err(Error::Invalid(
+            "transaction refusal reason_class must be 'transient' or 'structural'".into(),
+        ));
+    }
+    if refusal.message.is_empty() || refusal.message.len() > 512 {
+        return Err(Error::Invalid(
+            "transaction refusal message must contain 1-512 characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn append_event_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    run_id: &str,
+    kind: &str,
+    payload: Value,
+) -> Result<()> {
+    validate_identifier(kind, "event kind")?;
+    let sequence: i64 = transaction.query_row(
+        "SELECT COALESCE(MAX(sequence_id), 0) + 1 FROM events WHERE run_id = ?",
+        [run_id],
+        |row| row.get(0),
+    )?;
+    transaction.execute(
+        "INSERT INTO events(run_id, sequence_id, timestamp_ns, kind, episode_id, step_id, payload_json) VALUES (?, ?, ?, ?, NULL, NULL, ?)",
+        params![run_id, sequence, now_ns()?, kind, compact_json(&payload)?],
+    )?;
+    Ok(())
+}
+
 fn run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
     Ok(RunRecord {
         run_id: row.get("run_id")?,
@@ -1240,6 +1549,90 @@ mod tests {
             .unwrap();
         assert!(!promoted);
         assert_eq!(fs::read(&live).unwrap(), b"improvement");
+    }
+
+    #[test]
+    fn structural_refusal_is_bounded_and_reported_without_implicit_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path().join("runs.sqlite3")).unwrap();
+        let run = store
+            .create_run("example.environment-v1", "1.0", "goal", json!({}))
+            .unwrap();
+        let steps = vec![
+            json!({"action_id": "move-1"}),
+            json!({"action_id": "move-2"}),
+        ];
+        let started = store
+            .begin_transaction(&run.run_id, "txn.demo", &steps, 2)
+            .unwrap();
+        assert_eq!(started.status, "pending");
+        assert_eq!(started.next_step_index, 0);
+
+        let refusal = TransactionRefusal {
+            action_id: "move-1".into(),
+            target_id: "card-1".into(),
+            reason_class: "structural".into(),
+            message: "postcondition failed".into(),
+            retryable: false,
+        };
+        let first = store
+            .resume_transaction("txn.demo", Some(&refusal))
+            .unwrap();
+        assert_eq!(first.outcome, "refused");
+        assert_eq!(first.transaction.resume_attempts, 1);
+        assert_eq!(first.transaction.next_step_index, 0);
+
+        let second = store
+            .resume_transaction("txn.demo", Some(&refusal))
+            .unwrap();
+        assert_eq!(second.outcome, "abandoned");
+        assert_eq!(second.transaction.status, "abandoned");
+        assert_eq!(second.transaction.resume_attempts, 2);
+        assert_eq!(
+            store.get_transaction("txn.demo").unwrap().status,
+            "abandoned"
+        );
+        assert!(
+            store
+                .list_events(&run.run_id)
+                .unwrap()
+                .iter()
+                .any(|event| event.kind == "transaction.abandoned")
+        );
+        assert_eq!(
+            store.resume_transaction("txn.demo", None).unwrap().outcome,
+            "already_terminal"
+        );
+    }
+
+    #[test]
+    fn accepted_transaction_steps_advance_explicitly_and_complete() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path().join("runs.sqlite3")).unwrap();
+        let run = store
+            .create_run("example.environment-v1", "1.0", "goal", json!({}))
+            .unwrap();
+        store
+            .begin_transaction(
+                &run.run_id,
+                "txn.accepted",
+                &[
+                    json!({"action_id": "move-1"}),
+                    json!({"action_id": "move-2"}),
+                ],
+                2,
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .resume_transaction("txn.accepted", None)
+                .unwrap()
+                .outcome,
+            "advanced"
+        );
+        let completed = store.resume_transaction("txn.accepted", None).unwrap();
+        assert_eq!(completed.outcome, "completed");
+        assert_eq!(completed.transaction.next_step_index, 2);
     }
 }
 

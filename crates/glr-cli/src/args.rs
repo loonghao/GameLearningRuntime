@@ -66,8 +66,35 @@ pub enum Command {
         #[command(subcommand)]
         command: CheckpointCommand,
     },
+    /// Start or resume a bounded durable multi-step command transaction.
+    Transaction {
+        #[command(subcommand)]
+        command: TransactionCommand,
+    },
     /// Check or apply a checksum-verified GLR distribution update.
     Update(UpdateArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum TransactionCommand {
+    /// Persist a bounded ordered step list for one running run.
+    Begin {
+        #[arg(long)]
+        run_id: String,
+        #[arg(long)]
+        transaction_id: String,
+        #[arg(long)]
+        steps: PathBuf,
+        #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=16))]
+        max_resume_attempts: u32,
+    },
+    /// Record one refusal or advance the next step after an accepted command.
+    Resume {
+        #[arg(long)]
+        transaction_id: String,
+        #[arg(long)]
+        refusal: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

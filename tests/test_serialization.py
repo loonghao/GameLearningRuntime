@@ -11,6 +11,7 @@ from game_learning_runtime import (
     ActionReceipt,
     ContractEnvironment,
     JsonlTransitionWriter,
+    RefusalReasonClass,
     SyncCollector,
     read_jsonl_transitions,
     transition_from_record,
@@ -52,6 +53,8 @@ def test_action_receipt_round_trip_preserves_typed_outcome() -> None:
         postcondition="blocked",
         progress_delta=0.0,
         authoritative_observation_sequence=7,
+        target_id="card-1",
+        reason_class=RefusalReasonClass.STRUCTURAL,
     )
     original = Transition(
         episode_id=original.episode_id,

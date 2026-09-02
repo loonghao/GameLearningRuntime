@@ -36,10 +36,11 @@ from game_learning_runtime.contracts import (
     ActionReconciliation,
     Event,
     ReconciliationOutcome,
+    RefusalReasonClass,
     TensorTree,
     TimeStep,
 )
-from game_learning_runtime.errors import HostProtocolError, HostRemoteError
+from game_learning_runtime.errors import CommandRefusal, HostProtocolError, HostRemoteError
 from game_learning_runtime.realtime import (
     InputLeaseReceipt,
     InputLeaseRequest,
@@ -300,7 +301,22 @@ class HostBridgeDriver:
             payload["lease"] = request.lease.to_mapping()
         if request.cancellation_token is not None:
             payload["cancellation_token"] = request.cancellation_token
-        return self._time_step(self._request("step", payload))
+        try:
+            return self._time_step(self._request("step", payload))
+        except HostRemoteError as error:
+            if error.refusal is None:
+                raise
+            refusal = error.refusal
+            raise CommandRefusal(
+                target_id=refusal.target_id,
+                reason_class=refusal.reason_class,
+                message=error.message,
+                action_id=refusal.action_id or request.action_id,
+                retryable=refusal.retryable,
+                episode_id=request.episode_id,
+                step_id=request.expected_step_id,
+                issued_timestamp_ns=request.issued_at_ns,
+            ) from error
 
     def lease(self, request: InputLeaseRequest) -> InputLeaseReceipt:
         """Apply one explicit input-lease operation without retrying it."""
@@ -392,7 +408,42 @@ class HostBridgeDriver:
             retryable = error.get("retryable")
             if not isinstance(retryable, bool):
                 raise HostProtocolError("response.error.retryable must be bool")
-            raise HostRemoteError(code=code, message=message, retryable=retryable)
+            raw_refusal = error.get("refusal")
+            refusal = None
+            if raw_refusal is not None:
+                refusal_mapping = _mapping(raw_refusal, path="response.error.refusal")
+                try:
+                    refusal_retryable = refusal_mapping.get("retryable", retryable)
+                    if not isinstance(refusal_retryable, bool):
+                        raise HostProtocolError("response.error.refusal.retryable must be bool")
+                    refusal = CommandRefusal(
+                        action_id=(
+                            _string(
+                                refusal_mapping.get("action_id"),
+                                path="response.error.refusal.action_id",
+                            )
+                            if refusal_mapping.get("action_id") is not None
+                            else None
+                        ),
+                        target_id=_string(
+                            refusal_mapping.get("target_id"),
+                            path="response.error.refusal.target_id",
+                        ),
+                        reason_class=_string(
+                            refusal_mapping.get("reason_class"),
+                            path="response.error.refusal.reason_class",
+                        ),
+                        message=message,
+                        retryable=refusal_retryable,
+                    )
+                except (TypeError, ValueError) as error:
+                    raise HostProtocolError(f"invalid response.error.refusal: {error}") from error
+            raise HostRemoteError(
+                code=code,
+                message=message,
+                retryable=retryable,
+                refusal=refusal,
+            )
         return _mapping(response.get("result"), path="response.result")
 
     def _time_step(self, value: Mapping[str, object]) -> TimeStep:
@@ -604,6 +655,21 @@ def _action_receipt_from_wire(
             ),
             retryable=retryable,
             realtime=realtime,
+            target_id=(
+                _string(receipt["target_id"], path="timestep.action_receipt.target_id")
+                if receipt.get("target_id") is not None
+                else None
+            ),
+            reason_class=(
+                RefusalReasonClass(
+                    _string(
+                        receipt["reason_class"],
+                        path="timestep.action_receipt.reason_class",
+                    )
+                )
+                if receipt.get("reason_class") is not None
+                else None
+            ),
         )
     except (TypeError, ValueError) as error:
         raise HostProtocolError(f"invalid timestep.action_receipt: {error}") from error

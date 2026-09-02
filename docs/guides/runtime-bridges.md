@@ -127,3 +127,29 @@ optional progress delta. `unknown` is preserved across transport failures and
 is never retried implicitly. Collectors expose typed counts through
 `Unroll.action_outcome_counts`; adapters that do not advertise the capability
 remain wire-compatible and return no receipt.
+
+### Command refusal funnel
+
+Adapters should use one `RefusalFunnel` for both refusal forms: a command may
+raise `CommandRefusal`, or it may return a `TimeStep` whose receipt is
+`rejected`/`blocked`. The funnel preserves the action identity, provider
+`target_id`, and `transient`/`structural` reason class, then invokes the
+configured handler once per action. Exceptions are still raised after they are
+reported, so callers cannot accidentally treat a refused command as success.
+The refusal fields are optional on receipts to keep older providers
+wire-compatible; new refusals should always populate them.
+
+Durable multi-step workflows must make resume explicit. The CLI transaction
+commands persist the step cursor and refusal history:
+
+```text
+glr --json transaction begin --run-id RUN --transaction-id TX --steps steps.json
+glr --json transaction resume --transaction-id TX --refusal refusal.json
+```
+
+Structural refusals never advance the cursor and consume a bounded resume
+budget. When the budget is exhausted the transaction becomes `abandoned`; the
+`transaction.resume` envelope reports that terminal outcome in
+`glr.cli-output.v1` and the CLI exits with code `77`. There is no implicit
+retry. A resume without a refusal is an explicit acknowledgement that advances
+one step (or completes the transaction).
