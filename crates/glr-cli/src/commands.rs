@@ -472,7 +472,13 @@ fn run_goal(
         deadline,
         capture_enabled,
     });
-    let (satisfied, trials_completed, total_steps, evaluation, trainer_statuses) = match result {
+    let GoalRunResult {
+        satisfied,
+        trials_completed,
+        total_steps,
+        evaluation,
+        trainer_statuses,
+    } = match result {
         Ok(value) => value,
         Err(error) => {
             let _ = store.finish_run(&run.run_id, "failed", Some(1));
@@ -516,9 +522,15 @@ struct GoalRunContext<'a> {
     capture_enabled: bool,
 }
 
-fn run_goal_inner(
-    context: GoalRunContext<'_>,
-) -> Result<(bool, u32, u64, Option<GoalEvaluation>, Vec<String>)> {
+struct GoalRunResult {
+    satisfied: bool,
+    trials_completed: u32,
+    total_steps: u64,
+    evaluation: Option<GoalEvaluation>,
+    trainer_statuses: Vec<String>,
+}
+
+fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
     let GoalRunContext {
         project,
         store,
@@ -776,15 +788,15 @@ fn run_goal_inner(
             break;
         }
     }
-    Ok((
-        last_evaluation
+    Ok(GoalRunResult {
+        satisfied: last_evaluation
             .as_ref()
             .is_some_and(|evaluation| evaluation.satisfied),
         trials_completed,
         total_steps,
-        last_evaluation,
+        evaluation: last_evaluation,
         trainer_statuses,
-    ))
+    })
 }
 
 fn run_goal_role(
