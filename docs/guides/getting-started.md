@@ -38,6 +38,21 @@ env = ContractEnvironment(CounterEnvironment())
 unroll = SyncCollector(env).collect(always_increment, steps=128)
 ```
 
+For a live environment where a transient step failure should preserve the work
+already collected, opt into a truncated partial unroll:
+
+```python
+partial = SyncCollector(env).collect(
+    always_increment,
+    steps=128,
+    on_error="partial",
+)
+```
+
+The final valid transition is marked `truncated`, and the next collection
+starts a fresh episode because the post-failure environment state is unknown.
+The default `on_error="raise"` remains fail-fast.
+
 Each transition has current and next observations, action and next masks,
 reward, termination/truncation, events, episode identity, and step identity.
 

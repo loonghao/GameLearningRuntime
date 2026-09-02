@@ -5,8 +5,10 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol
+
+import numpy as np
 
 from game_learning_runtime.contracts import TensorTree, TimeStep, Transition, Unroll
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
@@ -373,6 +375,7 @@ class SyncCollector:
         policy_version: int = 0,
         seed: int | None = None,
         stop_on_done: bool = False,
+        on_error: Literal["raise", "partial"] = "raise",
     ) -> Unroll:
         """Collect up to ``steps`` transitions.
 
@@ -385,6 +388,8 @@ class SyncCollector:
             raise ValueError("steps must be positive")
         if policy_version < 0:
             raise ValueError("policy_version cannot be negative")
+        if on_error not in {"raise", "partial"}:
+            raise ValueError("on_error must be 'raise' or 'partial'")
         if self._current is None or self._current.done:
             self._current = self._start(seed=seed)
 
@@ -392,7 +397,28 @@ class SyncCollector:
         for _ in range(steps):
             current = self._current
             action = policy(current)
-            following = self._environment.step(action)
+            try:
+                following = self._environment.step(action)
+            except Exception:
+                if on_error == "raise" or not transitions:
+                    self._current = None if on_error == "partial" else self._current
+                    raise
+                # The environment state after a failed step is unknown. Mark the
+                # last valid transition as a learner truncation and force reset.
+                last = transitions[-1]
+                transitions[-1] = replace(
+                    last,
+                    truncated=np.ones_like(last.truncated, dtype=np.bool_),
+                )
+                self._current = None
+                unroll = Unroll(
+                    transitions=tuple(transitions),
+                    actor_id=self._actor_id,
+                    sequence_id=self._sequence_id,
+                    policy_version=policy_version,
+                )
+                self._sequence_id += 1
+                return unroll
             transitions.append(
                 Transition(
                     episode_id=current.episode_id,

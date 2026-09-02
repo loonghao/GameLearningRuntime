@@ -20,7 +20,7 @@ from game_learning_runtime import (
     SyncCollector,
     TimeStep,
 )
-from game_learning_runtime.contracts import TensorTree
+from game_learning_runtime.contracts import TensorTree, Unroll
 from game_learning_runtime.examples import CounterEnvironment, always_increment
 from game_learning_runtime.specs import EnvironmentSpec
 
@@ -45,6 +45,29 @@ class _AttachOnlyCounter(GameEnvironment):
         return self._delegate.reset(options=options)
 
     def step(self, action: TensorTree) -> TimeStep:
+        return self._delegate.step(action)
+
+
+class _FailingStepEnvironment(GameEnvironment):
+    def __init__(self, *, fail_at: int) -> None:
+        self._delegate = CounterEnvironment(target=3)
+        self._fail_at = fail_at
+        self._steps = 0
+
+    @property
+    def spec(self) -> EnvironmentSpec:
+        return self._delegate.spec
+
+    def reset(
+        self, *, seed: int | None = None, options: Mapping[str, Any] | None = None
+    ) -> TimeStep:
+        self._steps = 0
+        return self._delegate.reset(seed=seed, options=options)
+
+    def step(self, action: TensorTree) -> TimeStep:
+        self._steps += 1
+        if self._steps == self._fail_at:
+            raise RuntimeError("transient bridge failure")
         return self._delegate.step(action)
 
 
@@ -125,7 +148,32 @@ def test_attach_mode_collector_rejects_seeded_initialization() -> None:
         collector.collect(always_increment, steps=1, seed=7)
 
 
-def _unroll(*, actor_id: str = "actor-0", sequence_id: int = 0, policy_version: int = 0):
+def test_collector_can_return_a_truncated_partial_unroll_after_step_failure() -> None:
+    environment = _FailingStepEnvironment(fail_at=3)
+    collector = SyncCollector(environment, actor_id="live-actor")
+
+    partial = collector.collect(always_increment, steps=5, on_error="partial")
+
+    assert len(partial.transitions) == 2
+    assert partial.transitions[-1].done
+    assert np.all(partial.transitions[-1].truncated)
+    assert partial.sequence_id == 0
+
+    following = collector.collect(always_increment, steps=1)
+    assert following.sequence_id == 1
+    assert following.transitions[0].episode_id != partial.transitions[0].episode_id
+
+
+def test_collector_preserves_raise_default_and_rejects_unknown_error_policy() -> None:
+    collector = SyncCollector(_FailingStepEnvironment(fail_at=1))
+
+    with pytest.raises(RuntimeError, match="transient bridge failure"):
+        collector.collect(always_increment, steps=2)
+    with pytest.raises(ValueError, match="on_error"):
+        collector.collect(always_increment, steps=1, on_error="ignore")  # type: ignore[arg-type]
+
+
+def _unroll(*, actor_id: str = "actor-0", sequence_id: int = 0, policy_version: int = 0) -> Unroll:
     collector = SyncCollector(ContractEnvironment(CounterEnvironment(target=3)), actor_id=actor_id)
     result = collector.collect(always_increment, steps=1, policy_version=policy_version)
     return replace(result, sequence_id=sequence_id)

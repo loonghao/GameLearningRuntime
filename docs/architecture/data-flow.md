@@ -137,6 +137,11 @@ authority, or model compatibility.
   policies expose queue depth, actor lag, policy-version lag, and dropped or
   uncommitted unrolls without importing an async runtime. The synchronous
   collector remains the compatibility path.
+- A live bridge may opt into `SyncCollector.collect(on_error="partial")` when a
+  transient environment step fails. The returned unroll keeps all validated
+  transitions gathered before the failure, marks its final transition as
+  truncated for learner bootstrapping, and forces the next collection to reset;
+  the default `on_error="raise"` behavior is unchanged.
 - BC writes expert actions as ordinary transitions, preserving masks and next
   observations for later DAgger or offline RL; masked cross-entropy is reusable
   across project-specific policies.
