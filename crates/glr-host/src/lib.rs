@@ -18,6 +18,7 @@ use uuid::Uuid;
 pub const HOST_SCHEMA: &str = "glr.host.v1";
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 1_048_576;
 pub const HARD_MAX_FRAME_BYTES: usize = 1_048_576;
+pub const REALTIME_CONTROL_SCHEMA: &str = "glr.realtime-control.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -184,6 +185,63 @@ pub struct WireEnvironmentDescriptor {
     pub capabilities: Vec<String>,
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realtime_timing: Option<WireRealtimeTimingContract>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireRealtimeTimingContract {
+    pub schema_version: String,
+    pub minimum_hold_ns: u64,
+    pub maximum_hold_ns: u64,
+    pub settle_deadline_ns: u64,
+    pub simulation_quantum_ns: u64,
+    pub clock_source: String,
+}
+
+impl WireRealtimeTimingContract {
+    fn validate(&self) -> Result<(), ProviderError> {
+        if self.schema_version != REALTIME_CONTROL_SCHEMA {
+            return Err(ProviderError::InvalidData(
+                "unsupported realtime control schema".into(),
+            ));
+        }
+        if self.minimum_hold_ns == 0
+            || self.maximum_hold_ns == 0
+            || self.settle_deadline_ns == 0
+            || self.simulation_quantum_ns == 0
+            || self.minimum_hold_ns > self.maximum_hold_ns
+            || self.maximum_hold_ns > self.settle_deadline_ns
+            || self.clock_source.is_empty()
+        {
+            return Err(ProviderError::InvalidData(
+                "invalid realtime timing bounds".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_step(
+        &self,
+        deadline_ns: u64,
+        quantum_ns: u64,
+        hold_ns: Option<u64>,
+    ) -> Result<(), ProviderError> {
+        if deadline_ns == 0
+            || quantum_ns == 0
+            || deadline_ns > self.settle_deadline_ns
+            || quantum_ns > self.simulation_quantum_ns
+            || hold_ns.is_some_and(|value| {
+                value == 0 || value < self.minimum_hold_ns || value > self.maximum_hold_ns
+            })
+        {
+            return Err(ProviderError::InvalidData(
+                "realtime step timing is outside descriptor bounds".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -239,6 +297,85 @@ pub struct WireActionReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authoritative_observation_sequence: Option<u64>,
     pub retryable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realtime: Option<WireRealtimeActionReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireRealtimeActionReceipt {
+    pub action_id: String,
+    pub status: RealtimeActionStatus,
+    pub deadline_ns: u64,
+    pub quantum_ns: u64,
+    pub issued_at_ns: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consumed_at_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settled_at_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancellation_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RealtimeActionStatus {
+    Consumed,
+    Expired,
+    Cancelled,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputLeaseOperation {
+    Acquire,
+    Renew,
+    Release,
+    Preempt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputLeaseStatus {
+    Acquired,
+    Renewed,
+    Released,
+    Preempted,
+    Rejected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireInputLeaseToken {
+    pub lease_id: String,
+    pub session_id: String,
+    pub target_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireInputLeaseRequest {
+    pub operation: InputLeaseOperation,
+    pub session_id: String,
+    pub target_id: String,
+    #[serde(default)]
+    pub lease_id: Option<String>,
+    #[serde(default)]
+    pub expires_at_ns: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireInputLeaseReceipt {
+    pub status: InputLeaseStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<WireInputLeaseToken>,
+    pub observed_at_ns: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl WireActionReceipt {
@@ -269,6 +406,30 @@ impl WireActionReceipt {
         if self.progress_delta.is_some_and(|value| !value.is_finite()) {
             return Err(ProviderError::InvalidData(
                 "action receipt progress_delta must be finite".into(),
+            ));
+        }
+        if let Some(realtime) = &self.realtime
+            && (realtime.action_id.is_empty()
+                || realtime.deadline_ns == 0
+                || realtime.quantum_ns == 0
+                || realtime
+                    .consumed_at_ns
+                    .is_some_and(|value| value < realtime.issued_at_ns)
+                || realtime
+                    .settled_at_ns
+                    .is_some_and(|value| value < realtime.issued_at_ns)
+                || realtime.consumed_at_ns.is_some_and(|value| {
+                    value > realtime.issued_at_ns.saturating_add(realtime.deadline_ns)
+                })
+                || realtime.settled_at_ns.is_some_and(|value| {
+                    realtime
+                        .consumed_at_ns
+                        .is_some_and(|consumed| value < consumed)
+                })
+                || realtime.action_id != self.action_id)
+        {
+            return Err(ProviderError::InvalidData(
+                "invalid realtime action receipt timing".into(),
             ));
         }
         if self.episode_id != timestep.episode_id || self.step_id != timestep.step_id {
@@ -371,6 +532,13 @@ pub struct ProviderStepRequest {
     pub episode_id: String,
     pub expected_step_id: u64,
     pub action: BTreeMap<String, WireTensor>,
+    pub action_id: Option<String>,
+    pub issued_at_ns: Option<u64>,
+    pub deadline_ns: Option<u64>,
+    pub quantum_ns: Option<u64>,
+    pub hold_ns: Option<u64>,
+    pub lease: Option<WireInputLeaseToken>,
+    pub cancellation_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -413,6 +581,19 @@ pub trait RuntimeProvider: Send {
         Err(ProviderError::Unsupported(
             "provider does not support reconnect-resume-v1".into(),
         ))
+    }
+
+    fn lease(
+        &mut self,
+        _request: WireInputLeaseRequest,
+    ) -> Result<WireInputLeaseReceipt, ProviderError> {
+        Ok(WireInputLeaseReceipt {
+            status: InputLeaseStatus::Rejected,
+            token: None,
+            observed_at_ns: now_ns(),
+            expires_at_ns: None,
+            reason: Some("provider does not support input leases".into()),
+        })
     }
 
     fn close(&mut self) -> Result<(), ProviderError>;
@@ -463,6 +644,26 @@ struct StepPayload {
     episode_id: String,
     expected_step_id: u64,
     action: BTreeMap<String, WireTensor>,
+    #[serde(default)]
+    action_id: Option<String>,
+    #[serde(default)]
+    issued_at_ns: Option<u64>,
+    #[serde(default)]
+    deadline_ns: Option<u64>,
+    #[serde(default)]
+    quantum_ns: Option<u64>,
+    #[serde(default)]
+    hold_ns: Option<u64>,
+    #[serde(default)]
+    lease: Option<WireInputLeaseToken>,
+    #[serde(default)]
+    cancellation_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CancelPayload {
+    action_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -513,6 +714,8 @@ pub struct Host {
     previous_episode_id: Option<String>,
     closed: bool,
     max_frame_bytes: usize,
+    active_lease: Option<(WireInputLeaseToken, u64)>,
+    cancelled_actions: Vec<String>,
 }
 
 impl Host {
@@ -534,6 +737,8 @@ impl Host {
             previous_episode_id: None,
             closed: false,
             max_frame_bytes,
+            active_lease: None,
+            cancelled_actions: Vec::new(),
         })
     }
 
@@ -608,6 +813,9 @@ impl Host {
             "describe" => {
                 parse_payload::<EmptyPayload>(request.payload)?;
                 let mut descriptor = self.provider.describe();
+                if let Some(timing) = &descriptor.realtime_timing {
+                    timing.validate().map_err(provider_failure)?;
+                }
                 descriptor.capabilities.push("host-stdio".into());
                 descriptor.capabilities.sort();
                 descriptor.capabilities.dedup();
@@ -641,10 +849,25 @@ impl Host {
                 let result = self.resume(payload)?;
                 serde_json::to_value(result).map_err(internal_serialization_failure)
             }
+
+            "lease" => {
+                let payload = parse_payload::<WireInputLeaseRequest>(request.payload)?;
+                self.lease(payload)
+            }
+            "cancel" => {
+                let payload = parse_payload::<CancelPayload>(request.payload)?;
+                validate_action_id(&payload.action_id)?;
+                if !self.cancelled_actions.contains(&payload.action_id) {
+                    self.cancelled_actions.push(payload.action_id.clone());
+                }
+                Ok(json!({"cancelled": true, "action_id": payload.action_id}))
+            }
             "close" => {
                 parse_payload::<EmptyPayload>(request.payload)?;
                 self.provider.close().map_err(provider_failure)?;
                 self.current = None;
+                self.active_lease = None;
+                self.cancelled_actions.clear();
                 self.closed = true;
                 Ok(json!({"closed": true}))
             }
@@ -680,6 +903,8 @@ impl Host {
             ));
         }
         self.previous_episode_id = Some(timestep.episode_id.clone());
+        self.active_lease = None;
+        self.cancelled_actions.clear();
         self.current = Some(SessionCursor {
             episode_id: timestep.episode_id.clone(),
             step_id: 0,
@@ -717,6 +942,65 @@ impl Host {
                 ),
             ));
         }
+        if let Some(action_id) = payload.action_id.as_deref() {
+            validate_action_id(action_id)?;
+            if self.cancelled_actions.iter().any(|item| item == action_id) {
+                return Err(HostFailure::new(
+                    "action_cancelled",
+                    "realtime action was cancelled before provider dispatch",
+                ));
+            }
+        }
+        if payload.deadline_ns.is_some() != payload.quantum_ns.is_some() {
+            return Err(HostFailure::new(
+                "invalid_request",
+                "deadline_ns and quantum_ns must be provided together",
+            ));
+        }
+        if payload.hold_ns.is_some() && payload.deadline_ns.is_none() {
+            return Err(HostFailure::new(
+                "invalid_request",
+                "hold_ns requires deadline_ns and quantum_ns",
+            ));
+        }
+        if let Some(deadline_ns) = payload.deadline_ns {
+            let quantum_ns = payload.quantum_ns.expect("presence checked above");
+            let issued_at_ns = payload.issued_at_ns.ok_or_else(|| {
+                HostFailure::new(
+                    "invalid_request",
+                    "issued_at_ns is required for a bounded realtime step",
+                )
+            })?;
+            if timestamp_ns() >= issued_at_ns.saturating_add(deadline_ns) {
+                return Err(HostFailure::new(
+                    "action_expired",
+                    "realtime action deadline expired before provider dispatch",
+                ));
+            }
+            let descriptor = self.provider.describe();
+            let timing = descriptor.realtime_timing.ok_or_else(|| {
+                HostFailure::new(
+                    "unsupported_operation",
+                    "provider does not advertise realtime timing",
+                )
+            })?;
+            timing
+                .validate_step(deadline_ns, quantum_ns, payload.hold_ns)
+                .map_err(provider_failure)?;
+        }
+        if let Some(lease) = payload.lease.as_ref() {
+            let now = timestamp_ns();
+            let authorized = self
+                .active_lease
+                .as_ref()
+                .is_some_and(|(active, expires)| active == lease && now < *expires);
+            if !authorized {
+                return Err(HostFailure::new(
+                    "lease_violation",
+                    "realtime step lease is absent, stale, or bound to another target/session",
+                ));
+            }
+        }
         for tensor in payload.action.values() {
             tensor.validate().map_err(provider_failure)?;
         }
@@ -727,6 +1011,13 @@ impl Host {
                 episode_id: payload.episode_id,
                 expected_step_id: payload.expected_step_id,
                 action: payload.action,
+                action_id: payload.action_id,
+                issued_at_ns: payload.issued_at_ns,
+                deadline_ns: payload.deadline_ns,
+                quantum_ns: payload.quantum_ns,
+                hold_ns: payload.hold_ns,
+                lease: payload.lease,
+                cancellation_token: payload.cancellation_token,
             })
             .map_err(provider_failure)?;
         let done = timestep.validate().map_err(provider_failure)?;
@@ -791,6 +1082,115 @@ impl Host {
         Ok(result)
     }
 
+    fn lease(&mut self, payload: WireInputLeaseRequest) -> Result<Value, HostFailure> {
+        let now = timestamp_ns();
+        if payload.session_id.is_empty() || payload.target_id.is_empty() {
+            return Err(HostFailure::new(
+                "invalid_request",
+                "lease session_id and target_id are required",
+            ));
+        }
+        match payload.operation {
+            InputLeaseOperation::Acquire => {
+                if self
+                    .active_lease
+                    .as_ref()
+                    .is_some_and(|(_, expires)| now < *expires)
+                {
+                    return serde_json::to_value(WireInputLeaseReceipt {
+                        status: InputLeaseStatus::Rejected,
+                        token: self.active_lease.as_ref().map(|(token, _)| token.clone()),
+                        observed_at_ns: now,
+                        expires_at_ns: self.active_lease.as_ref().map(|(_, expires)| *expires),
+                        reason: Some("lease already held".into()),
+                    })
+                    .map_err(internal_serialization_failure);
+                }
+                let expires = payload
+                    .expires_at_ns
+                    .unwrap_or_else(|| now.saturating_add(1));
+                if expires <= now {
+                    return Err(HostFailure::new(
+                        "invalid_request",
+                        "lease expiry must be in the future",
+                    ));
+                }
+                let token = WireInputLeaseToken {
+                    lease_id: format!("{}.lease", payload.session_id),
+                    session_id: payload.session_id,
+                    target_id: payload.target_id,
+                };
+                self.active_lease = Some((token.clone(), expires));
+                serde_json::to_value(WireInputLeaseReceipt {
+                    status: InputLeaseStatus::Acquired,
+                    token: Some(token),
+                    observed_at_ns: now,
+                    expires_at_ns: Some(expires),
+                    reason: None,
+                })
+                .map_err(internal_serialization_failure)
+            }
+            operation => {
+                let Some((token, current_expiry)) = self.active_lease.clone() else {
+                    return serde_json::to_value(WireInputLeaseReceipt {
+                        status: InputLeaseStatus::Rejected,
+                        token: None,
+                        observed_at_ns: now,
+                        expires_at_ns: None,
+                        reason: Some("lease is absent or expired".into()),
+                    })
+                    .map_err(internal_serialization_failure);
+                };
+                if now >= current_expiry
+                    || payload.lease_id.as_deref() != Some(token.lease_id.as_str())
+                    || payload.session_id != token.session_id
+                    || payload.target_id != token.target_id
+                {
+                    return serde_json::to_value(WireInputLeaseReceipt {
+                        status: InputLeaseStatus::Rejected,
+                        token: Some(token),
+                        observed_at_ns: now,
+                        expires_at_ns: Some(current_expiry),
+                        reason: Some("lease identity mismatch or expiry".into()),
+                    })
+                    .map_err(internal_serialization_failure);
+                }
+                if operation == InputLeaseOperation::Renew {
+                    let expires = payload.expires_at_ns.unwrap_or(current_expiry);
+                    if expires <= now {
+                        return Err(HostFailure::new(
+                            "invalid_request",
+                            "lease renewal must be in the future",
+                        ));
+                    }
+                    self.active_lease = Some((token.clone(), expires));
+                    return serde_json::to_value(WireInputLeaseReceipt {
+                        status: InputLeaseStatus::Renewed,
+                        token: Some(token),
+                        observed_at_ns: now,
+                        expires_at_ns: Some(expires),
+                        reason: None,
+                    })
+                    .map_err(internal_serialization_failure);
+                }
+                self.active_lease = None;
+                let status = if operation == InputLeaseOperation::Preempt {
+                    InputLeaseStatus::Preempted
+                } else {
+                    InputLeaseStatus::Released
+                };
+                serde_json::to_value(WireInputLeaseReceipt {
+                    status,
+                    token: Some(token),
+                    observed_at_ns: now,
+                    expires_at_ns: None,
+                    reason: None,
+                })
+                .map_err(internal_serialization_failure)
+            }
+        }
+    }
+
     fn error_response(&self, request_id: Option<String>, error: HostFailure) -> Vec<u8> {
         serialize_response(ResponseEnvelope {
             schema: HOST_SCHEMA,
@@ -828,6 +1228,21 @@ fn validate_request_id(request_id: &str) -> Result<(), HostFailure> {
         return Err(HostFailure::new(
             "invalid_request",
             "request_id must contain 1-128 ASCII letters, digits, '-', '_', '.', or ':'",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_action_id(action_id: &str) -> Result<(), HostFailure> {
+    if action_id.is_empty()
+        || action_id.len() > 128
+        || !action_id
+            .bytes()
+            .all(|value| value.is_ascii_alphanumeric() || b"-_.:".contains(&value))
+    {
+        return Err(HostFailure::new(
+            "invalid_request",
+            "action_id must contain 1-128 ASCII letters, digits, '-', '_', '.', or ':'",
         ));
     }
     Ok(())
@@ -948,6 +1363,7 @@ impl RuntimeProvider for SyntheticCounterProvider {
             },
             capabilities: vec!["reset".into(), "step".into(), "synthetic-provider".into()],
             metadata: BTreeMap::new(),
+            realtime_timing: None,
         }
     }
 
@@ -1015,6 +1431,10 @@ fn timestamp_ns() -> u64 {
         .unwrap_or_default()
         .as_nanos();
     u64::try_from(nanos).unwrap_or(u64::MAX)
+}
+
+fn now_ns() -> u64 {
+    timestamp_ns()
 }
 
 enum FrameRead {

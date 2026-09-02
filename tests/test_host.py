@@ -22,6 +22,8 @@ from game_learning_runtime import (
     HostProcessConfig,
     HostProtocolError,
     HostRemoteError,
+    InputLeaseOperation,
+    InputLeaseRequest,
     JsonLineHostChannel,
 )
 from game_learning_runtime.host import HOST_SCHEMA, HostChannel
@@ -95,6 +97,14 @@ def _descriptor() -> dict[str, object]:
         },
         "capabilities": ["host-stdio", "reset", "step"],
         "metadata": {"private_origin": "filtered by BridgeEnvironment"},
+        "realtime_timing": {
+            "schema_version": "glr.realtime-control.v1",
+            "minimum_hold_ns": 10,
+            "maximum_hold_ns": 100,
+            "settle_deadline_ns": 200,
+            "simulation_quantum_ns": 20,
+            "clock_source": "monotonic",
+        },
     }
 
 
@@ -297,6 +307,71 @@ def test_host_driver_rejects_resume_reconciliation_cursor_mismatch() -> None:
             )
         )
 
+    driver.close()
+
+
+def test_host_driver_round_trips_realtime_step_and_lease_operations() -> None:
+    class _RealtimeChannel(_ScriptedChannel):
+        def exchange(self, request: Mapping[str, object]) -> Mapping[str, object]:
+            operation = request["operation"]
+            if operation == "lease":
+                self.requests.append(request)
+                return {
+                    "schema": HOST_SCHEMA,
+                    "request_id": request["request_id"],
+                    "ok": True,
+                    "result": {
+                        "status": "acquired",
+                        "token": {
+                            "lease_id": "session.one.lease",
+                            "session_id": "session.one",
+                            "target_id": "target.game",
+                        },
+                        "observed_at_ns": 10,
+                        "expires_at_ns": 1_000,
+                    },
+                }
+            if operation == "cancel":
+                self.requests.append(request)
+                return {
+                    "schema": HOST_SCHEMA,
+                    "request_id": request["request_id"],
+                    "ok": True,
+                    "result": {"cancelled": True, "action_id": "action.one"},
+                }
+            return super().exchange(request)
+
+    channel = _RealtimeChannel()
+    driver = HostBridgeDriver(channel)
+    initial = driver.reset(BridgeResetRequest())
+    lease = driver.lease(
+        InputLeaseRequest(
+            InputLeaseOperation.ACQUIRE,
+            session_id="session.one",
+            target_id="target.game",
+            expires_at_ns=1_000,
+        )
+    )
+    assert lease.token is not None
+    driver.step(
+        BridgeStepRequest(
+            episode_id=initial.episode_id,
+            expected_step_id=1,
+            action={"choice": np.array([1], dtype=np.int64)},
+            deadline_ns=100,
+            quantum_ns=10,
+            hold_ns=20,
+            lease=lease.token,
+            cancellation_token="cancel.one",
+        )
+    )
+    driver.cancel("action.one")
+    step_request = channel.requests[3]
+    assert step_request["payload"]["deadline_ns"] == 100
+    assert step_request["payload"]["quantum_ns"] == 10
+    assert step_request["payload"]["hold_ns"] == 20
+    assert step_request["payload"]["lease"] == lease.token.to_mapping()
+    assert step_request["payload"]["cancellation_token"] == "cancel.one"
     driver.close()
 
 

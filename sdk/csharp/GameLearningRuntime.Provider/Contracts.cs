@@ -5,6 +5,330 @@ using System.Linq;
 
 namespace GameLearningRuntime.Provider
 {
+    /// <summary>Versioned descriptor-level realtime timing bounds.</summary>
+    public sealed class RealtimeTimingContract
+    {
+        /// <summary>Wire schema identifier for the realtime-control contract.</summary>
+        public const string SchemaVersion = "glr.realtime-control.v1";
+
+        /// <summary>Create descriptor-level realtime timing bounds.</summary>
+        public RealtimeTimingContract(
+            ulong minimumHoldNanoseconds,
+            ulong maximumHoldNanoseconds,
+            ulong settleDeadlineNanoseconds,
+            ulong simulationQuantumNanoseconds,
+            string clockSource = "monotonic")
+        {
+            if (minimumHoldNanoseconds == 0 || maximumHoldNanoseconds == 0
+                || settleDeadlineNanoseconds == 0 || simulationQuantumNanoseconds == 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(minimumHoldNanoseconds), "Timing bounds must be positive.");
+            }
+
+            if (minimumHoldNanoseconds > maximumHoldNanoseconds)
+            {
+                throw new ArgumentException("Minimum hold cannot exceed maximum hold.", nameof(minimumHoldNanoseconds));
+            }
+
+            if (maximumHoldNanoseconds > settleDeadlineNanoseconds)
+            {
+                throw new ArgumentException("Maximum hold cannot exceed settle deadline.", nameof(maximumHoldNanoseconds));
+            }
+
+            if (string.IsNullOrWhiteSpace(clockSource))
+            {
+                throw new ArgumentException("Clock source cannot be empty.", nameof(clockSource));
+            }
+
+            MinimumHoldNanoseconds = minimumHoldNanoseconds;
+            MaximumHoldNanoseconds = maximumHoldNanoseconds;
+            SettleDeadlineNanoseconds = settleDeadlineNanoseconds;
+            SimulationQuantumNanoseconds = simulationQuantumNanoseconds;
+            ClockSource = clockSource;
+        }
+
+        /// <summary>Minimum input hold duration.</summary>
+        public ulong MinimumHoldNanoseconds { get; }
+        /// <summary>Maximum input hold duration.</summary>
+        public ulong MaximumHoldNanoseconds { get; }
+        /// <summary>Maximum settle deadline.</summary>
+        public ulong SettleDeadlineNanoseconds { get; }
+        /// <summary>Maximum simulation quantum.</summary>
+        public ulong SimulationQuantumNanoseconds { get; }
+        /// <summary>Clock source used for timing values.</summary>
+        public string ClockSource { get; }
+    }
+
+    /// <summary>Bounded per-step timing values.</summary>
+    public sealed class RealtimeStepTiming
+    {
+        /// <summary>Create bounded per-step timing values.</summary>
+        public RealtimeStepTiming(ulong deadlineNanoseconds, ulong quantumNanoseconds, ulong? holdNanoseconds = null)
+        {
+            if (deadlineNanoseconds == 0 || quantumNanoseconds == 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(deadlineNanoseconds), "Step timing values must be positive.");
+            }
+
+            if (holdNanoseconds.HasValue && holdNanoseconds.Value == 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(holdNanoseconds), "Hold duration must be positive.");
+            }
+
+            DeadlineNanoseconds = deadlineNanoseconds;
+            QuantumNanoseconds = quantumNanoseconds;
+            HoldNanoseconds = holdNanoseconds;
+        }
+
+        /// <summary>Action deadline duration.</summary>
+        public ulong DeadlineNanoseconds { get; }
+        /// <summary>Simulation quantum duration.</summary>
+        public ulong QuantumNanoseconds { get; }
+        /// <summary>Optional input hold duration.</summary>
+        public ulong? HoldNanoseconds { get; }
+
+        /// <summary>Validate these values against descriptor bounds.</summary>
+        public void ValidateAgainst(RealtimeTimingContract contract)
+        {
+            if (DeadlineNanoseconds > contract.SettleDeadlineNanoseconds
+                || QuantumNanoseconds > contract.SimulationQuantumNanoseconds)
+            {
+                throw new ArgumentException("Step timing exceeds the descriptor bounds.", nameof(contract));
+            }
+
+            if (HoldNanoseconds.HasValue && (HoldNanoseconds.Value < contract.MinimumHoldNanoseconds
+                || HoldNanoseconds.Value > contract.MaximumHoldNanoseconds))
+            {
+                throw new ArgumentException("Step hold is outside the descriptor bounds.", nameof(contract));
+            }
+        }
+    }
+
+    /// <summary>Typed outcome of a realtime action dispatch.</summary>
+    public enum RealtimeActionStatus
+    {
+        /// <summary>The provider consumed the action.</summary>
+        Consumed,
+        /// <summary>The action deadline elapsed before consumption.</summary>
+        Expired,
+        /// <summary>The action was cancelled before consumption.</summary>
+        Cancelled,
+        /// <summary>The provider rejected the action.</summary>
+        Rejected,
+    }
+
+    /// <summary>Typed timing receipt linked to an action post-state.</summary>
+    public sealed class RealtimeActionReceipt
+    {
+        /// <summary>Create one realtime action receipt.</summary>
+        public RealtimeActionReceipt(
+            string actionId,
+            RealtimeActionStatus status,
+            ulong deadlineNanoseconds,
+            ulong quantumNanoseconds,
+            ulong issuedAtNanoseconds,
+            ulong? consumedAtNanoseconds = null,
+            ulong? settledAtNanoseconds = null,
+            string? cancellationToken = null)
+        {
+            if (string.IsNullOrWhiteSpace(actionId))
+            {
+                throw new ArgumentException("Action ID cannot be empty.", nameof(actionId));
+            }
+
+            if (deadlineNanoseconds == 0 || quantumNanoseconds == 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(deadlineNanoseconds), "Receipt timing values must be positive.");
+            }
+
+            if (consumedAtNanoseconds.HasValue && consumedAtNanoseconds.Value >= issuedAtNanoseconds
+                && consumedAtNanoseconds.Value - issuedAtNanoseconds > deadlineNanoseconds)
+            {
+                throw new ArgumentException("Consumed timestamp exceeds the action deadline.", nameof(consumedAtNanoseconds));
+            }
+
+            if (consumedAtNanoseconds.HasValue && consumedAtNanoseconds.Value < issuedAtNanoseconds)
+            {
+                throw new ArgumentException("Consumed timestamp cannot precede issue time.", nameof(consumedAtNanoseconds));
+            }
+
+            if (settledAtNanoseconds.HasValue && settledAtNanoseconds.Value < issuedAtNanoseconds)
+            {
+                throw new ArgumentException("Settled timestamp cannot precede issue time.", nameof(settledAtNanoseconds));
+            }
+
+            if (settledAtNanoseconds.HasValue && consumedAtNanoseconds.HasValue
+                && settledAtNanoseconds.Value < consumedAtNanoseconds.Value)
+            {
+                throw new ArgumentException("Settled timestamp cannot precede consumed time.", nameof(settledAtNanoseconds));
+            }
+
+            ActionId = actionId;
+            Status = status;
+            DeadlineNanoseconds = deadlineNanoseconds;
+            QuantumNanoseconds = quantumNanoseconds;
+            IssuedAtNanoseconds = issuedAtNanoseconds;
+            ConsumedAtNanoseconds = consumedAtNanoseconds;
+            SettledAtNanoseconds = settledAtNanoseconds;
+            CancellationToken = cancellationToken;
+        }
+
+        /// <summary>Stable action identity.</summary>
+        public string ActionId { get; }
+        /// <summary>Typed dispatch outcome.</summary>
+        public RealtimeActionStatus Status { get; }
+        /// <summary>Action deadline duration.</summary>
+        public ulong DeadlineNanoseconds { get; }
+        /// <summary>Simulation quantum duration.</summary>
+        public ulong QuantumNanoseconds { get; }
+        /// <summary>Provider timestamp when the action was issued.</summary>
+        public ulong IssuedAtNanoseconds { get; }
+        /// <summary>Optional timestamp when the provider consumed the action.</summary>
+        public ulong? ConsumedAtNanoseconds { get; }
+        /// <summary>Optional timestamp when post-state settled.</summary>
+        public ulong? SettledAtNanoseconds { get; }
+        /// <summary>Optional cancellation fencing token.</summary>
+        public string? CancellationToken { get; }
+    }
+
+    /// <summary>Lifecycle operation for one target-bound input lease.</summary>
+    public enum InputLeaseOperation
+    {
+        /// <summary>Acquire a new lease.</summary>
+        Acquire,
+        /// <summary>Renew an existing lease.</summary>
+        Renew,
+        /// <summary>Release an existing lease.</summary>
+        Release,
+        /// <summary>Preempt an existing lease.</summary>
+        Preempt,
+    }
+
+    /// <summary>Typed result of a lease operation.</summary>
+    public enum InputLeaseStatus
+    {
+        /// <summary>A lease was acquired.</summary>
+        Acquired,
+        /// <summary>A lease was renewed.</summary>
+        Renewed,
+        /// <summary>A lease was released.</summary>
+        Released,
+        /// <summary>A lease was preempted.</summary>
+        Preempted,
+        /// <summary>The operation was rejected.</summary>
+        Rejected,
+    }
+
+    /// <summary>Opaque lease binding for one target and logical session.</summary>
+    public sealed class InputLeaseToken
+    {
+        /// <summary>Create a target- and session-bound lease token.</summary>
+        public InputLeaseToken(string leaseId, string sessionId, string targetId)
+        {
+            if (string.IsNullOrWhiteSpace(leaseId) || string.IsNullOrWhiteSpace(sessionId)
+                || string.IsNullOrWhiteSpace(targetId))
+            {
+                throw new ArgumentException("Lease, session, and target IDs are required.");
+            }
+
+            LeaseId = leaseId;
+            SessionId = sessionId;
+            TargetId = targetId;
+        }
+
+        /// <summary>Opaque lease identity.</summary>
+        public string LeaseId { get; }
+        /// <summary>Logical session identity.</summary>
+        public string SessionId { get; }
+        /// <summary>Target identity.</summary>
+        public string TargetId { get; }
+    }
+
+    /// <summary>One explicit lease lifecycle request.</summary>
+    public sealed class InputLeaseRequest
+    {
+        /// <summary>Create one explicit lease lifecycle request.</summary>
+        public InputLeaseRequest(
+            InputLeaseOperation operation,
+            string sessionId,
+            string targetId,
+            string? leaseId = null,
+            ulong? expiresAtNanoseconds = null)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(targetId))
+            {
+                throw new ArgumentException("Session and target IDs are required.");
+            }
+
+            if (operation == InputLeaseOperation.Acquire && leaseId != null)
+            {
+                throw new ArgumentException("Acquire cannot provide an existing lease ID.", nameof(leaseId));
+            }
+
+            if (operation != InputLeaseOperation.Acquire && string.IsNullOrWhiteSpace(leaseId))
+            {
+                throw new ArgumentException("An existing lease ID is required.", nameof(leaseId));
+            }
+
+            if (expiresAtNanoseconds.HasValue && expiresAtNanoseconds.Value == 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(expiresAtNanoseconds), "Lease expiry must be positive.");
+            }
+
+            Operation = operation;
+            SessionId = sessionId;
+            TargetId = targetId;
+            LeaseId = leaseId;
+            ExpiresAtNanoseconds = expiresAtNanoseconds;
+        }
+
+        /// <summary>Requested lifecycle operation.</summary>
+        public InputLeaseOperation Operation { get; }
+        /// <summary>Logical session identity.</summary>
+        public string SessionId { get; }
+        /// <summary>Target identity.</summary>
+        public string TargetId { get; }
+        /// <summary>Existing lease identity for renew/release/preempt.</summary>
+        public string? LeaseId { get; }
+        /// <summary>Optional absolute expiry timestamp.</summary>
+        public ulong? ExpiresAtNanoseconds { get; }
+    }
+
+    /// <summary>Typed result of a lease lifecycle operation.</summary>
+    public sealed class InputLeaseReceipt
+    {
+        /// <summary>Create a typed lease operation result.</summary>
+        public InputLeaseReceipt(
+            InputLeaseStatus status,
+            InputLeaseToken? token,
+            ulong observedAtNanoseconds,
+            ulong? expiresAtNanoseconds = null,
+            string? reason = null)
+        {
+            if (expiresAtNanoseconds.HasValue && expiresAtNanoseconds.Value <= observedAtNanoseconds)
+            {
+                throw new ArgumentException("Lease expiry must be after the observation time.", nameof(expiresAtNanoseconds));
+            }
+
+            Status = status;
+            Token = token;
+            ObservedAtNanoseconds = observedAtNanoseconds;
+            ExpiresAtNanoseconds = expiresAtNanoseconds;
+            Reason = reason;
+        }
+
+        /// <summary>Typed operation result.</summary>
+        public InputLeaseStatus Status { get; }
+        /// <summary>Exact target/session-bound token, when present.</summary>
+        public InputLeaseToken? Token { get; }
+        /// <summary>Provider observation timestamp.</summary>
+        public ulong ObservedAtNanoseconds { get; }
+        /// <summary>Optional lease expiry timestamp.</summary>
+        public ulong? ExpiresAtNanoseconds { get; }
+        /// <summary>Optional bounded rejection reason.</summary>
+        public string? Reason { get; }
+    }
+
     /// <summary>Typed outcome of one mutating realtime action.</summary>
     public enum ActionOutcome
     {
@@ -36,7 +360,8 @@ namespace GameLearningRuntime.Provider
             string postcondition = "unknown",
             double? progressDelta = null,
             ulong? authoritativeObservationSequence = null,
-            bool retryable = false)
+            bool retryable = false,
+            RealtimeActionReceipt? realtime = null)
         {
             if (string.IsNullOrWhiteSpace(actionId) || actionId.Length > 128)
             {
@@ -67,6 +392,11 @@ namespace GameLearningRuntime.Provider
                 throw new ArgumentException("Progress delta must be finite.", nameof(progressDelta));
             }
 
+            if (realtime != null && realtime.ActionId != actionId)
+            {
+                throw new ArgumentException("Realtime receipt action ID must match the outer action ID.", nameof(realtime));
+            }
+
             ActionId = actionId;
             EpisodeId = episodeId;
             StepId = stepId;
@@ -77,6 +407,7 @@ namespace GameLearningRuntime.Provider
             ProgressDelta = progressDelta;
             AuthoritativeObservationSequence = authoritativeObservationSequence;
             Retryable = retryable;
+            Realtime = realtime;
         }
 
         /// <summary>Provider action identity.</summary>
@@ -108,6 +439,9 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>Whether a provider explicitly permits retry.</summary>
         public bool Retryable { get; }
+
+        /// <summary>Optional typed realtime timing receipt.</summary>
+        public RealtimeActionReceipt? Realtime { get; }
     }
 
     /// <summary>An immutable tensor payload using the GLR little-endian wire layout.</summary>
@@ -221,7 +555,8 @@ namespace GameLearningRuntime.Provider
             TensorSpec reward,
             TensorSpec done,
             IEnumerable<string> capabilities,
-            IReadOnlyDictionary<string, string>? metadata = null)
+            IReadOnlyDictionary<string, string>? metadata = null,
+            RealtimeTimingContract? realtimeTiming = null)
         {
             if (string.IsNullOrWhiteSpace(environmentId))
             {
@@ -236,6 +571,7 @@ namespace GameLearningRuntime.Provider
             Done = done ?? throw new ArgumentNullException(nameof(done));
             Capabilities = CopyList(capabilities, nameof(capabilities));
             Metadata = CopyDictionary(metadata ?? new Dictionary<string, string>());
+            RealtimeTiming = realtimeTiming;
         }
 
         /// <summary>Stable public environment identity.</summary>
@@ -264,6 +600,9 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>Reviewed non-sensitive metadata.</summary>
         public IReadOnlyDictionary<string, string> Metadata { get; }
+
+        /// <summary>Optional descriptor-level realtime timing bounds.</summary>
+        public RealtimeTimingContract? RealtimeTiming { get; }
 
         private static IReadOnlyList<T> CopyList<T>(IEnumerable<T> source, string name)
         {

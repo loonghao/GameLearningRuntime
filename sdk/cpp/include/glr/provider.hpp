@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -13,11 +14,15 @@ namespace glr {
 
 inline constexpr std::string_view host_schema = "glr.host.v1";
 inline constexpr std::string_view environment_protocol_version = "1.0";
+inline constexpr std::string_view realtime_control_schema = "glr.realtime-control.v1";
 
 enum class dtype { boolean, uint8, int32, int64, float32, float64 };
 enum class space_kind { continuous, discrete, multi_discrete, binary };
 enum class action_outcome { accepted, rejected, unknown, no_effect, partial, blocked };
 enum class reconciliation_outcome { applied, not_applied, unknown };
+enum class realtime_action_status { consumed, expired, cancelled, rejected };
+enum class input_lease_operation { acquire, renew, release, preempt };
+enum class input_lease_status { acquired, renewed, released, preempted, rejected };
 
 struct tensor_buffer final {
   std::vector<std::uint64_t> shape;
@@ -35,6 +40,109 @@ struct tensor_spec final {
   std::string description;
 };
 
+struct realtime_timing_contract final {
+  std::uint64_t minimum_hold_ns;
+  std::uint64_t maximum_hold_ns;
+  std::uint64_t settle_deadline_ns;
+  std::uint64_t simulation_quantum_ns;
+  std::string clock_source;
+  std::string schema_version = std::string(realtime_control_schema);
+
+  void validate() const {
+    if (schema_version != realtime_control_schema || minimum_hold_ns == 0
+        || maximum_hold_ns == 0 || settle_deadline_ns == 0
+        || simulation_quantum_ns == 0 || minimum_hold_ns > maximum_hold_ns
+        || maximum_hold_ns > settle_deadline_ns || clock_source.empty()) {
+      throw std::invalid_argument("invalid realtime timing contract");
+    }
+  }
+};
+
+struct realtime_step_timing final {
+  std::uint64_t deadline_ns;
+  std::uint64_t quantum_ns;
+  std::optional<std::uint64_t> hold_ns;
+
+  void validate(const realtime_timing_contract& contract) const {
+    if (deadline_ns == 0 || quantum_ns == 0 || deadline_ns > contract.settle_deadline_ns
+        || quantum_ns > contract.simulation_quantum_ns
+        || (hold_ns.has_value() && (*hold_ns == 0 || *hold_ns < contract.minimum_hold_ns
+                                    || *hold_ns > contract.maximum_hold_ns))) {
+      throw std::invalid_argument("realtime step timing is outside descriptor bounds");
+    }
+  }
+};
+
+struct realtime_action_receipt final {
+  std::string action_id;
+  realtime_action_status status;
+  std::uint64_t deadline_ns;
+  std::uint64_t quantum_ns;
+  std::uint64_t issued_at_ns;
+  std::optional<std::uint64_t> consumed_at_ns;
+  std::optional<std::uint64_t> settled_at_ns;
+  std::optional<std::string> cancellation_token;
+
+  void validate() const {
+    if (action_id.empty() || deadline_ns == 0 || quantum_ns == 0
+        || (consumed_at_ns.has_value() && *consumed_at_ns < issued_at_ns)
+        || (settled_at_ns.has_value() && *settled_at_ns < issued_at_ns)
+        || (consumed_at_ns.has_value() && *consumed_at_ns >= issued_at_ns
+            && *consumed_at_ns - issued_at_ns > deadline_ns)) {
+      throw std::invalid_argument("invalid realtime action receipt");
+    }
+    if (settled_at_ns.has_value() && consumed_at_ns.has_value()
+        && *settled_at_ns < *consumed_at_ns) {
+      throw std::invalid_argument("settled timestamp precedes consumed timestamp");
+    }
+  }
+};
+
+struct input_lease_token final {
+  std::string lease_id;
+  std::string session_id;
+  std::string target_id;
+
+  void validate() const {
+    if (lease_id.empty() || session_id.empty() || target_id.empty()) {
+      throw std::invalid_argument("input lease token IDs are required");
+    }
+  }
+};
+
+struct input_lease_request final {
+  input_lease_operation operation;
+  std::string session_id;
+  std::string target_id;
+  std::optional<std::string> lease_id;
+  std::optional<std::uint64_t> expires_at_ns;
+
+  void validate() const {
+    if (session_id.empty() || target_id.empty()
+        || (operation == input_lease_operation::acquire && lease_id.has_value())
+        || (operation != input_lease_operation::acquire && !lease_id.has_value())) {
+      throw std::invalid_argument("invalid input lease request");
+    }
+  }
+};
+
+struct input_lease_receipt final {
+  input_lease_status status;
+  std::optional<input_lease_token> token;
+  std::uint64_t observed_at_ns;
+  std::optional<std::uint64_t> expires_at_ns;
+  std::optional<std::string> reason;
+
+  void validate() const {
+    if (token.has_value()) {
+      token->validate();
+    }
+    if (expires_at_ns.has_value() && *expires_at_ns <= observed_at_ns) {
+      throw std::invalid_argument("input lease receipt expiry must be in the future");
+    }
+  }
+};
+
 struct provider_descriptor final {
   std::string environment_id;
   std::vector<tensor_spec> observations;
@@ -44,6 +152,7 @@ struct provider_descriptor final {
   tensor_spec done;
   std::vector<std::string> capabilities;
   std::map<std::string, std::string> metadata;
+  std::optional<realtime_timing_contract> realtime_timing;
 };
 
 struct provider_event final {
@@ -63,6 +172,7 @@ struct action_receipt final {
   std::optional<double> progress_delta;
   std::optional<std::uint64_t> authoritative_observation_sequence;
   bool retryable;
+  std::optional<glr::realtime_action_receipt> realtime;
 };
 
 struct provider_time_step final {
@@ -107,6 +217,11 @@ struct step_request final {
   std::string episode_id;
   std::uint64_t expected_step_id;
   std::map<std::string, tensor_buffer> action;
+  std::optional<std::string> action_id;
+  std::optional<std::uint64_t> issued_at_ns;
+  std::optional<realtime_step_timing> timing;
+  std::optional<input_lease_token> lease;
+  std::optional<std::string> cancellation_token;
 };
 
 struct resume_request final {
@@ -131,6 +246,12 @@ class runtime_provider {
   [[nodiscard]] virtual provider_resume_result resume(
       const resume_request& /*request*/) {
     throw std::logic_error("provider does not support reconnect-resume-v1");
+  }
+
+  [[nodiscard]] virtual input_lease_receipt lease(const input_lease_request& request) {
+    (void)request;
+    return {input_lease_status::rejected, std::nullopt, 0, std::nullopt,
+            std::optional<std::string>("provider does not support input leases")};
   }
   virtual void close() noexcept = 0;
 };

@@ -18,6 +18,12 @@ from game_learning_runtime import (
     ContractEnvironment,
     ContractViolation,
     EnvironmentBridgeDriver,
+    InputLeaseOperation,
+    InputLeaseReceipt,
+    InputLeaseRequest,
+    InputLeaseStatus,
+    InputLeaseToken,
+    RealtimeTimingContract,
 )
 from game_learning_runtime.contracts import ActionReconciliation, ReconciliationOutcome, TimeStep
 from game_learning_runtime.examples import CounterEnvironment
@@ -163,6 +169,18 @@ def test_bridge_request_boundaries_match_the_wire_contract() -> None:
             expected_step_id=0,
             action=_action(),
         )
+    with pytest.raises(TypeError, match="episode_id"):
+        BridgeStepRequest("episode.one", 1, _action())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="action_id"):
+        BridgeStepRequest(UUID(int=1), 1, _action(), action_id="")
+    with pytest.raises(ValueError, match="issued_at_ns"):
+        BridgeStepRequest(UUID(int=1), 1, _action(), issued_at_ns=-1)
+    with pytest.raises(ValueError, match="provided together"):
+        BridgeStepRequest(UUID(int=1), 1, _action(), deadline_ns=1)
+    with pytest.raises(TypeError, match="InputLeaseToken"):
+        BridgeStepRequest(UUID(int=1), 1, _action(), lease="bad")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="cancellation_token"):
+        BridgeStepRequest(UUID(int=1), 1, _action(), cancellation_token="")
 
 
 def test_bridge_environment_rejects_a_stale_remote_receipt() -> None:
@@ -247,6 +265,175 @@ def test_environment_bridge_driver_rejects_stale_request_before_action() -> None
     )
     assert current.step_id == 1
     driver.close()
+
+
+def test_environment_bridge_driver_fences_realtime_deadline_cancel_and_lease() -> None:
+    source = CounterEnvironment(target=3)
+    base = source.spec
+    source._spec = EnvironmentSpec(
+        environment_id=base.environment_id,
+        observation=base.observation,
+        action=base.action,
+        reward=base.reward,
+        done=base.done,
+        action_mask=base.action_mask,
+        capabilities=base.capabilities | frozenset({"realtime", "input-lease"}),
+        realtime_timing=RealtimeTimingContract(1, 100, 200, 20),
+    )
+    driver = EnvironmentBridgeDriver(source)
+    initial = driver.reset(BridgeResetRequest())
+    lease = driver.lease(
+        InputLeaseRequest(
+            InputLeaseOperation.ACQUIRE,
+            "session.one",
+            "target.game",
+            expires_at_ns=10**20,
+        )
+    )
+    assert lease.status is InputLeaseStatus.ACQUIRED
+    assert lease.token is not None
+
+    driver.cancel("action.cancelled")
+    with pytest.raises(ContractViolation, match="cancelled"):
+        driver.step(
+            BridgeStepRequest(
+                initial.episode_id,
+                1,
+                _action(),
+                action_id="action.cancelled",
+            )
+        )
+    with pytest.raises(ContractViolation, match="expired"):
+        driver.step(
+            BridgeStepRequest(
+                initial.episode_id,
+                1,
+                _action(),
+                action_id="action.expired",
+                issued_at_ns=0,
+                deadline_ns=1,
+                quantum_ns=1,
+            )
+        )
+    with pytest.raises(ContractViolation, match="lease"):
+        driver.step(
+            BridgeStepRequest(
+                initial.episode_id,
+                1,
+                _action(),
+                action_id="action.stale",
+                issued_at_ns=10**20,
+                deadline_ns=100,
+                quantum_ns=1,
+                lease=InputLeaseToken("session.one.lease", "session.one", "target.other"),
+            )
+        )
+    current = driver.step(
+        BridgeStepRequest(
+            initial.episode_id,
+            1,
+            _action(),
+            action_id="action.valid",
+            issued_at_ns=0,
+        )
+    )
+    assert current.step_id == 1
+    driver.close()
+
+
+def test_environment_bridge_driver_rejects_unsupported_and_invalid_timing() -> None:
+    plain = EnvironmentBridgeDriver(CounterEnvironment(target=2))
+    initial = plain.reset(BridgeResetRequest())
+    with pytest.raises(ContractViolation, match="does not advertise"):
+        plain.step(BridgeStepRequest(initial.episode_id, 1, _action(), deadline_ns=1, quantum_ns=1))
+    with pytest.raises(ValueError, match="action_id"):
+        plain.cancel("")
+    plain.close()
+    plain.close()
+    with pytest.raises(ContractViolation, match="closed"):
+        plain.describe()
+
+    source = CounterEnvironment(target=2)
+    base = source.spec
+    source._spec = EnvironmentSpec(
+        environment_id=base.environment_id,
+        observation=base.observation,
+        action=base.action,
+        reward=base.reward,
+        done=base.done,
+        action_mask=base.action_mask,
+        realtime_timing=RealtimeTimingContract(1, 10, 20, 5),
+    )
+    driver = EnvironmentBridgeDriver(source)
+    initial = driver.reset(BridgeResetRequest())
+    with pytest.raises(ContractViolation, match="exceeds realtime timing"):
+        driver.step(
+            BridgeStepRequest(
+                initial.episode_id,
+                1,
+                _action(),
+                action_id="action.bad",
+                issued_at_ns=10**20,
+                deadline_ns=21,
+                quantum_ns=1,
+            )
+        )
+    driver.close()
+
+
+def test_bridge_environment_exposes_realtime_contract_and_optional_ports() -> None:
+    class _RealtimeDriver(_ScriptedDriver):
+        def __init__(self) -> None:
+            super().__init__()
+            source = self._spec
+            self._spec = EnvironmentSpec(
+                environment_id=source.environment_id,
+                observation=source.observation,
+                action=source.action,
+                reward=source.reward,
+                done=source.done,
+                action_mask=source.action_mask,
+                protocol_version=source.protocol_version,
+                capabilities=source.capabilities | frozenset({"realtime"}),
+                realtime_timing=RealtimeTimingContract(1, 100, 200, 20),
+            )
+            self.cancelled: list[str] = []
+
+        def lease(self, request: InputLeaseRequest):
+            return InputLeaseReceipt(
+                InputLeaseStatus.REJECTED,
+                None,
+                1,
+                reason=f"unsupported {request.operation.value}",
+            )
+
+        def cancel(self, action_id: str) -> None:
+            self.cancelled.append(action_id)
+
+    driver = _RealtimeDriver()
+    environment = BridgeEnvironment(driver)
+    environment.reset()
+    result = environment.step_realtime(
+        _action(), deadline_ns=100, quantum_ns=10, action_id="action.one", issued_at_ns=1
+    )
+    assert result.step_id == 1
+    assert driver.step_requests[-1].action_id == "action.one"
+    assert driver.step_requests[-1].issued_at_ns == 1
+    environment.cancel("action.two")
+    assert driver.cancelled == ["action.two"]
+    environment.close()
+
+    unsupported = BridgeEnvironment(_ScriptedDriver())
+    unsupported.reset()
+    with pytest.raises(ContractViolation, match="does not advertise"):
+        unsupported.step_realtime(_action(), deadline_ns=1, quantum_ns=1)
+    with pytest.raises(ContractViolation, match="does not support input leases"):
+        unsupported.lease(
+            InputLeaseRequest(InputLeaseOperation.ACQUIRE, "session.one", "target.game")
+        )
+    with pytest.raises(ContractViolation, match="does not support realtime cancellation"):
+        unsupported.cancel("action.one")
+    unsupported.close()
 
 
 def test_bridge_environment_reconciles_an_in_flight_action() -> None:

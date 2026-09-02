@@ -20,6 +20,7 @@ from game_learning_runtime.contracts import (
     TensorTree,
     Transition,
 )
+from game_learning_runtime.realtime import RealtimeActionReceipt, RealtimeActionStatus
 
 RECORD_SCHEMA = "glr.transition.v1"
 
@@ -116,6 +117,7 @@ def _action_receipt_to_record(receipt: ActionReceipt | None) -> dict[str, Any] |
         "progress_delta": receipt.progress_delta,
         "authoritative_observation_sequence": receipt.authoritative_observation_sequence,
         "retryable": receipt.retryable,
+        "realtime": None if receipt.realtime is None else receipt.realtime.to_mapping(),
     }
 
 
@@ -124,6 +126,32 @@ def _action_receipt_from_record(value: object) -> ActionReceipt | None:
         return None
     if not isinstance(value, Mapping):
         raise ValueError("action_receipt must be an object or null")
+    raw_realtime = value.get("realtime")
+    realtime = None
+    if raw_realtime is not None:
+        if not isinstance(raw_realtime, Mapping):
+            raise ValueError("action_receipt.realtime must be an object or null")
+        cancellation_token = raw_realtime.get("cancellation_token")
+        if cancellation_token is not None and not isinstance(cancellation_token, str):
+            raise ValueError("action_receipt.realtime.cancellation_token must be a string")
+        realtime = RealtimeActionReceipt(
+            action_id=str(raw_realtime["action_id"]),
+            status=RealtimeActionStatus(str(raw_realtime["status"])),
+            deadline_ns=int(raw_realtime["deadline_ns"]),
+            quantum_ns=int(raw_realtime["quantum_ns"]),
+            issued_at_ns=int(raw_realtime["issued_at_ns"]),
+            consumed_at_ns=(
+                int(raw_realtime["consumed_at_ns"])
+                if raw_realtime.get("consumed_at_ns") is not None
+                else None
+            ),
+            settled_at_ns=(
+                int(raw_realtime["settled_at_ns"])
+                if raw_realtime.get("settled_at_ns") is not None
+                else None
+            ),
+            cancellation_token=cancellation_token,
+        )
     return ActionReceipt(
         action_id=str(value["action_id"]),
         episode_id=UUID(str(value["episode_id"])),
@@ -139,6 +167,7 @@ def _action_receipt_from_record(value: object) -> ActionReceipt | None:
             else None
         ),
         retryable=bool(value.get("retryable", False)),
+        realtime=realtime,
     )
 
 
