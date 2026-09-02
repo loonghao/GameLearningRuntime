@@ -76,6 +76,17 @@ pub struct CheckpointPromotionRecord {
     pub updated_at_ns: i64,
 }
 
+pub struct CheckpointPromotionRequest<'a> {
+    pub goal_id: &'a str,
+    pub metric: &'a str,
+    pub mode: PromotionMode,
+    pub value: f64,
+    pub run_id: &'a str,
+    pub trial_id: &'a str,
+    pub candidate: &'a Path,
+    pub live: &'a Path,
+}
+
 pub struct EntityQuery<'a> {
     pub environment_id: &'a str,
     pub world_id: &'a str,
@@ -470,15 +481,18 @@ impl Store {
 
     pub fn promote_checkpoint(
         &self,
-        goal_id: &str,
-        metric: &str,
-        mode: PromotionMode,
-        value: f64,
-        run_id: &str,
-        trial_id: &str,
-        candidate: &Path,
-        live: &Path,
+        request: CheckpointPromotionRequest<'_>,
     ) -> Result<(bool, CheckpointPromotionRecord)> {
+        let CheckpointPromotionRequest {
+            goal_id,
+            metric,
+            mode,
+            value,
+            run_id,
+            trial_id,
+            candidate,
+            live,
+        } = request;
         validate_identifier(goal_id, "goal_id")?;
         validate_identifier(metric, "checkpoint promotion metric")?;
         if !value.is_finite() {
@@ -1037,6 +1051,7 @@ fn parse_json_row(value: String) -> rusqlite::Result<Value> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -1051,16 +1066,16 @@ mod tests {
         let first = temp.path().join("trial-1.checkpoint");
         fs::write(&first, b"first").unwrap();
         let (promoted, record) = store
-            .promote_checkpoint(
-                "goal.demo",
-                "victories",
-                PromotionMode::Max,
-                3.0,
-                &run.run_id,
-                "trial-1",
-                &first,
-                &live,
-            )
+            .promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 3.0,
+                run_id: &run.run_id,
+                trial_id: "trial-1",
+                candidate: &first,
+                live: &live,
+            })
             .unwrap();
         assert!(promoted);
         assert_eq!(record.best_metric, 3.0);
@@ -1069,16 +1084,16 @@ mod tests {
         let regression = temp.path().join("trial-2.checkpoint");
         fs::write(&regression, b"regression").unwrap();
         let (promoted, record) = store
-            .promote_checkpoint(
-                "goal.demo",
-                "victories",
-                PromotionMode::Max,
-                2.0,
-                &run.run_id,
-                "trial-2",
-                &regression,
-                &live,
-            )
+            .promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 2.0,
+                run_id: &run.run_id,
+                trial_id: "trial-2",
+                candidate: &regression,
+                live: &live,
+            })
             .unwrap();
         assert!(!promoted);
         assert_eq!(record.best_metric, 3.0);
@@ -1088,16 +1103,16 @@ mod tests {
         let tie = temp.path().join("trial-3.checkpoint");
         fs::write(&tie, b"tie").unwrap();
         let (promoted, _) = store
-            .promote_checkpoint(
-                "goal.demo",
-                "victories",
-                PromotionMode::Max,
-                3.0,
-                &run.run_id,
-                "trial-3",
-                &tie,
-                &live,
-            )
+            .promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 3.0,
+                run_id: &run.run_id,
+                trial_id: "trial-3",
+                candidate: &tie,
+                live: &live,
+            })
             .unwrap();
         assert!(!promoted);
         assert_eq!(fs::read(&live).unwrap(), b"first");

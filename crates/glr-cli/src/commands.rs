@@ -21,7 +21,7 @@ use crate::process::{
 };
 use crate::project::{Project, ProjectCommand, find_project, load_project};
 use crate::report;
-use crate::store::{EntityQuery, RunRecord, Store};
+use crate::store::{CheckpointPromotionRequest, EntityQuery, RunRecord, Store};
 use crate::update::Updater;
 
 pub const CLI_OUTPUT_SCHEMA_VERSION: &str = "glr.cli-output.v1";
@@ -761,16 +761,16 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
                         config.metric
                     ))
                 })?;
-            let (promoted, record) = store.promote_checkpoint(
-                &goal.goal_id,
-                &config.metric,
-                config.mode,
-                metric,
-                &run.run_id,
-                &trial_id,
-                &candidate,
-                &live,
-            )?;
+            let (promoted, record) = store.promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: &goal.goal_id,
+                metric: &config.metric,
+                mode: config.mode,
+                value: metric,
+                run_id: &run.run_id,
+                trial_id: &trial_id,
+                candidate: &candidate,
+                live: &live,
+            })?;
             let output = json!({
                 "promoted": promoted,
                 "metric": metric,
