@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::args::{
@@ -25,6 +25,23 @@ use crate::store::{EntityQuery, RunRecord, Store};
 use crate::update::Updater;
 
 pub const CLI_OUTPUT_SCHEMA_VERSION: &str = "glr.cli-output.v1";
+const TRAINER_NO_DATA_EXIT_CODE: i32 = 75;
+const TRAINER_RESULT_SCHEMA_VERSION: &str = "glr.trainer-result.v1";
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrainerResult {
+    schema_version: String,
+    status: String,
+    #[serde(default)]
+    metrics: HashMap<String, f64>,
+}
+
+#[derive(Debug)]
+struct TrainerOutcome {
+    log: PathBuf,
+    status: &'static str,
+}
 
 pub fn execute(cli: Cli) -> Result<i32> {
     if let CliCommand::Update(arguments) = &cli.command {
@@ -455,7 +472,7 @@ fn run_goal(
         deadline,
         capture_enabled,
     });
-    let (satisfied, trials_completed, total_steps, evaluation) = match result {
+    let (satisfied, trials_completed, total_steps, evaluation, trainer_statuses) = match result {
         Ok(value) => value,
         Err(error) => {
             let _ = store.finish_run(&run.run_id, "failed", Some(1));
@@ -477,6 +494,7 @@ fn run_goal(
             "trials_completed": trials_completed,
             "training_steps_planned": total_steps,
             "evaluation": evaluation,
+            "trainer_statuses": trainer_statuses,
         }),
         as_json,
     )?;
@@ -498,7 +516,9 @@ struct GoalRunContext<'a> {
     capture_enabled: bool,
 }
 
-fn run_goal_inner(context: GoalRunContext<'_>) -> Result<(bool, u32, u64, Option<GoalEvaluation>)> {
+fn run_goal_inner(
+    context: GoalRunContext<'_>,
+) -> Result<(bool, u32, u64, Option<GoalEvaluation>, Vec<String>)> {
     let GoalRunContext {
         project,
         store,
@@ -553,6 +573,7 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<(bool, u32, u64, Option
     let mut total_steps = 0_u64;
     let mut trials_completed = 0_u32;
     let mut last_evaluation = None;
+    let mut trainer_statuses = Vec::new();
     for trial_number in 1..=goal.budget.max_trials {
         remaining(deadline)?;
         let trial_id = format!("trial-{trial_number}");
@@ -608,6 +629,10 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<(bool, u32, u64, Option
             ("trial_path".into(), trial_path.clone()),
             ("evaluation_path".into(), evaluation_path.clone()),
             ("trial_id".into(), PathBuf::from(&trial_id)),
+            (
+                "trainer_result_path".into(),
+                trial_dir.join("trainer.result.json"),
+            ),
         ]);
         if let Some(previous) = &previous_evaluation {
             context.insert("previous_evaluation_path".into(), previous.clone());
@@ -660,10 +685,9 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<(bool, u32, u64, Option
             None
         };
         let metric_floor = store.latest_metric_id(&run.run_id)?;
-        let trainer_result = run_goal_role(
+        let trainer_result = run_trainer_role(
             project,
             &project.trainer,
-            "trainer",
             &run.run_id,
             &trial_dir,
             context.clone(),
@@ -674,7 +698,14 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<(bool, u32, u64, Option
         } else {
             true
         };
-        let trainer_log = trainer_result?;
+        let trainer_outcome = trainer_result?;
+        let trainer_log = trainer_outcome.log.clone();
+        trainer_statuses.push(trainer_outcome.status.to_owned());
+        store.append_event(
+            &run.run_id,
+            "trial.trainer",
+            json!({"trial_id": trial_id, "status": trainer_outcome.status}),
+        )?;
         if !capture_complete
             && project
                 .capture
@@ -728,6 +759,17 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<(bool, u32, u64, Option
         ] {
             register_goal_artifact(store, &run.run_id, run_dir, path, role, media_type)?;
         }
+        let trainer_result_path = trial_dir.join("trainer.result.json");
+        if trainer_result_path.is_file() {
+            register_goal_artifact(
+                store,
+                &run.run_id,
+                run_dir,
+                &trainer_result_path,
+                "trainer-result",
+                "application/json",
+            )?;
+        }
         let satisfied = evaluation.satisfied;
         last_evaluation = Some(evaluation);
         if satisfied {
@@ -741,6 +783,7 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<(bool, u32, u64, Option
         trials_completed,
         total_steps,
         last_evaluation,
+        trainer_statuses,
     ))
 }
 
@@ -770,6 +813,59 @@ fn run_goal_role(
         )));
     }
     Ok(log)
+}
+
+fn run_trainer_role(
+    project: &Project,
+    command: &ProjectCommand,
+    run_id: &str,
+    role_dir: &Path,
+    context: HashMap<String, PathBuf>,
+    deadline: Instant,
+) -> Result<TrainerOutcome> {
+    let log = role_dir.join("trainer.log");
+    let exit_code = run_command(CommandInvocation {
+        command,
+        project,
+        run_id,
+        run_dir: role_dir,
+        log_path: &log,
+        bundle: None,
+        extra: &context,
+        timeout: Some(remaining(deadline)?),
+    })?;
+    let result_path = role_dir.join("trainer.result.json");
+    let parsed_status = if result_path.is_file() {
+        let result: TrainerResult = read_json(&result_path, "trainer result")?;
+        if result.schema_version != TRAINER_RESULT_SCHEMA_VERSION {
+            return Err(Error::Contract(
+                "trainer result schema_version is unsupported".into(),
+            ));
+        }
+        if result.metrics.values().any(|value| !value.is_finite()) {
+            return Err(Error::Contract(
+                "trainer result metrics must be finite".into(),
+            ));
+        }
+        Some(result.status)
+    } else {
+        None
+    };
+    let status = match (exit_code, parsed_status.as_deref()) {
+        (0, None) | (0, Some("completed")) => "completed",
+        (_, Some("no_data")) | (TRAINER_NO_DATA_EXIT_CODE, None) => "no_data",
+        (0, Some(_)) => {
+            return Err(Error::Contract(
+                "trainer result status must be completed or no_data".into(),
+            ));
+        }
+        (_, _) => {
+            return Err(Error::Contract(format!(
+                "goal trainer command failed with exit code {exit_code}"
+            )));
+        }
+    };
+    Ok(TrainerOutcome { log, status })
 }
 
 fn validate_goal_research(
