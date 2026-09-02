@@ -254,3 +254,101 @@ fn resumable_provider_returns_authoritative_cursor_and_reconciliation() {
     assert_eq!(resumed["result"]["reconciliation"]["outcome"], "unknown");
     assert_eq!(resumed["result"]["reconciliation"]["retryable"], false);
 }
+
+#[test]
+fn realtime_lease_preemption_and_stale_step_are_fenced() {
+    let mut host = Host::new(Box::new(SyntheticCounterProvider::new(2)));
+    let reset = send(&mut host, "reset-1", "reset", json!({}));
+    let episode_id = reset["result"]["episode_id"]
+        .as_str()
+        .expect("reset should return an episode id");
+    let acquired = send(
+        &mut host,
+        "lease-1",
+        "lease",
+        json!({
+            "operation": "acquire",
+            "session_id": "session.one",
+            "target_id": "target.game",
+            "expires_at_ns": u64::MAX
+        }),
+    );
+    assert_eq!(acquired["result"]["status"], "acquired");
+    let token = acquired["result"]["token"].clone();
+    let preempted = send(
+        &mut host,
+        "lease-preempt",
+        "lease",
+        json!({
+            "operation": "preempt",
+            "session_id": "session.one",
+            "target_id": "target.game",
+            "lease_id": "session.one.lease"
+        }),
+    );
+    assert_eq!(preempted["result"]["status"], "preempted");
+    let stale = send(
+        &mut host,
+        "step-stale-lease",
+        "step",
+        json!({
+            "episode_id": episode_id,
+            "expected_step_id": 1,
+            "lease": token,
+            "action": {
+                "choice": {"shape": [1], "dtype": "int64", "data": "AQAAAAAAAAA="}
+            }
+        }),
+    );
+    assert_eq!(stale["ok"], false);
+    assert_eq!(stale["error"]["code"], "lease_violation");
+}
+
+#[test]
+fn realtime_deadline_and_cancellation_never_dispatch_an_action() {
+    let mut host = Host::new(Box::new(SyntheticCounterProvider::new(2)));
+    let reset = send(&mut host, "reset-1", "reset", json!({}));
+    let episode_id = reset["result"]["episode_id"]
+        .as_str()
+        .expect("reset should return an episode id");
+
+    let cancelled = send(
+        &mut host,
+        "cancel-1",
+        "cancel",
+        json!({"action_id": "action.one"}),
+    );
+    assert_eq!(cancelled["result"]["cancelled"], true);
+    let cancelled_step = send(
+        &mut host,
+        "step-cancelled",
+        "step",
+        json!({
+            "episode_id": episode_id,
+            "expected_step_id": 1,
+            "action_id": "action.one",
+            "action": {
+                "choice": {"shape": [1], "dtype": "int64", "data": "AQAAAAAAAAA="}
+            }
+        }),
+    );
+    assert_eq!(cancelled_step["error"]["code"], "action_cancelled");
+
+    let expired = send(
+        &mut host,
+        "step-expired",
+        "step",
+        json!({
+            "episode_id": episode_id,
+            "expected_step_id": 1,
+            "action_id": "action.two",
+            "issued_at_ns": 0,
+            "deadline_ns": 1,
+            "quantum_ns": 1,
+            "action": {
+                "choice": {"shape": [1], "dtype": "int64", "data": "AQAAAAAAAAA="}
+            }
+        }),
+    );
+    assert_eq!(expired["error"]["code"], "action_expired");
+}

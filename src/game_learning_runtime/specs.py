@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.realtime import RealtimeTimingContract
 
 
 class SpaceKind(str, Enum):
@@ -170,6 +171,7 @@ class EnvironmentSpec:
     protocol_version: str = "1.0"
     capabilities: frozenset[str] = frozenset()
     metadata: Mapping[str, str] = field(default_factory=dict)
+    realtime_timing: RealtimeTimingContract | None = None
 
     def __post_init__(self) -> None:
         if not self.environment_id or any(character.isspace() for character in self.environment_id):
@@ -178,5 +180,9 @@ class EnvironmentSpec:
             raise ValueError("reward spec must be continuous")
         if self.done.kind is not SpaceKind.BINARY:
             raise ValueError("done spec must be binary")
+        if self.realtime_timing is not None and not isinstance(
+            self.realtime_timing, RealtimeTimingContract
+        ):
+            raise TypeError("realtime_timing must be a RealtimeTimingContract or None")
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))

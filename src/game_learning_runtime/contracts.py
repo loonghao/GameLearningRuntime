@@ -14,6 +14,8 @@ from uuid import UUID, uuid4
 import numpy as np
 from numpy.typing import NDArray
 
+from game_learning_runtime.realtime import RealtimeActionReceipt
+
 TensorTree: TypeAlias = Mapping[str, "NDArray[Any] | TensorTree"]
 
 
@@ -42,6 +44,7 @@ class ActionReceipt:
     progress_delta: float | None = None
     authoritative_observation_sequence: int | None = None
     retryable: bool = False
+    realtime: RealtimeActionReceipt | None = None
 
     def __post_init__(self) -> None:
         if not self.action_id or len(self.action_id) > 128:
@@ -79,6 +82,10 @@ class ActionReceipt:
             )
         if not isinstance(self.retryable, bool):
             raise TypeError("retryable must be bool")
+        if self.realtime is not None and not isinstance(self.realtime, RealtimeActionReceipt):
+            raise TypeError("realtime must be a RealtimeActionReceipt or None")
+        if self.realtime is not None and self.realtime.action_id != self.action_id:
+            raise ValueError("realtime receipt action_id must match action_id")
 
     def validate_against(self, timestep: TimeStep) -> None:
         """Ensure the receipt belongs to the authoritative post-state."""

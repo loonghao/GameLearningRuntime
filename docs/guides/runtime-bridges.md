@@ -27,10 +27,19 @@ environment = ContractEnvironment(
 ```
 
 A driver implements five typed methods: `describe`, `reset`, `attach`, `step`,
-and `close`. `describe` authenticates and returns `EnvironmentSpec`; reset,
+and `close`. Drivers that advertise realtime control additionally expose
+`lease` and `cancel`; `describe` carries an optional
+`glr.realtime-control.v1` timing descriptor. `describe` authenticates and returns `EnvironmentSpec`; reset,
 attach, and step return `TimeStep`. The bridge supplies immutable request
 objects and includes the current `episode_id` plus expected next step with
 every action. A driver must not implement attach by claiming a physical reset.
+
+Realtime steps use bounded `deadline_ns`, `quantum_ns`, and optional `hold_ns`
+values. A typed receipt distinguishes `consumed`, `expired`, `cancelled`, and
+`rejected`; expired or cancelled actions are never retried implicitly. Input
+lease `acquire`, `renew`, `release`, and `preempt` operations carry the same
+`session_id` and `target_id` as the step. A stale or preempted token is rejected
+before provider mutation.
 
 Remote metadata is empty by default. Export only stable, non-sensitive keys:
 

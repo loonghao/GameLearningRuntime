@@ -8,6 +8,9 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>The learner-facing environment protocol carried by the host.</summary>
         public const string EnvironmentProtocolVersion = "1.0";
+
+        /// <summary>Optional descriptor and step realtime timing contract.</summary>
+        public const string RealtimeControlSchemaVersion = "glr.realtime-control.v1";
     }
 
     /// <summary>Tensor element types supported by the GLR v1 wire contract.</summary>

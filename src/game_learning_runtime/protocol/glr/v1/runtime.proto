@@ -34,6 +34,88 @@ enum ActionOutcome {
   ACTION_OUTCOME_BLOCKED = 6;
 }
 
+enum RealtimeActionStatus {
+  REALTIME_ACTION_STATUS_UNSPECIFIED = 0;
+  REALTIME_ACTION_STATUS_CONSUMED = 1;
+  REALTIME_ACTION_STATUS_EXPIRED = 2;
+  REALTIME_ACTION_STATUS_CANCELLED = 3;
+  REALTIME_ACTION_STATUS_REJECTED = 4;
+}
+
+enum InputLeaseOperation {
+  INPUT_LEASE_OPERATION_UNSPECIFIED = 0;
+  INPUT_LEASE_OPERATION_ACQUIRE = 1;
+  INPUT_LEASE_OPERATION_RENEW = 2;
+  INPUT_LEASE_OPERATION_RELEASE = 3;
+  INPUT_LEASE_OPERATION_PREEMPT = 4;
+}
+
+enum InputLeaseStatus {
+  INPUT_LEASE_STATUS_UNSPECIFIED = 0;
+  INPUT_LEASE_STATUS_ACQUIRED = 1;
+  INPUT_LEASE_STATUS_RENEWED = 2;
+  INPUT_LEASE_STATUS_RELEASED = 3;
+  INPUT_LEASE_STATUS_PREEMPTED = 4;
+  INPUT_LEASE_STATUS_REJECTED = 5;
+}
+
+message RealtimeTimingContract {
+  string schema_version = 1;
+  uint64 minimum_hold_ns = 2;
+  uint64 maximum_hold_ns = 3;
+  uint64 settle_deadline_ns = 4;
+  uint64 simulation_quantum_ns = 5;
+  string clock_source = 6;
+}
+
+message RealtimeStepTiming {
+  uint64 deadline_ns = 1;
+  uint64 quantum_ns = 2;
+  optional uint64 hold_ns = 3;
+}
+
+message RealtimeActionReceipt {
+  string action_id = 1;
+  RealtimeActionStatus status = 2;
+  uint64 deadline_ns = 3;
+  uint64 quantum_ns = 4;
+  uint64 issued_at_ns = 5;
+  optional uint64 consumed_at_ns = 6;
+  optional uint64 settled_at_ns = 7;
+  optional string cancellation_token = 8;
+}
+
+message InputLeaseToken {
+  string lease_id = 1;
+  string session_id = 2;
+  string target_id = 3;
+}
+
+message InputLeaseRequest {
+  InputLeaseOperation operation = 1;
+  string session_id = 2;
+  string target_id = 3;
+  optional string lease_id = 4;
+  optional uint64 expires_at_ns = 5;
+}
+
+message InputLeaseReceipt {
+  InputLeaseStatus status = 1;
+  optional InputLeaseToken token = 2;
+  uint64 observed_at_ns = 3;
+  optional uint64 expires_at_ns = 4;
+  optional string reason = 5;
+}
+
+message CancelRequest {
+  string action_id = 1;
+}
+
+message CancelResponse {
+  bool cancelled = 1;
+  string action_id = 2;
+}
+
 message TensorSpec {
   string path = 1;
   repeated int64 shape = 2; // -1 denotes a dynamic dimension.
@@ -60,6 +142,7 @@ message EnvironmentDescriptor {
   TensorSpec done = 7;
   repeated string capabilities = 8;
   map<string, string> metadata = 9;
+  optional RealtimeTimingContract realtime_timing = 10;
 }
 
 message DescribeRequest {}
@@ -77,6 +160,13 @@ message StepRequest {
   string episode_id = 1;
   uint64 expected_step_id = 2;
   map<string, Tensor> action = 3;
+  optional string action_id = 4;
+  optional uint64 issued_at_ns = 5;
+  optional uint64 deadline_ns = 6;
+  optional uint64 quantum_ns = 7;
+  optional uint64 hold_ns = 8;
+  optional InputLeaseToken lease = 9;
+  optional string cancellation_token = 10;
 }
 
 enum ReconciliationOutcome {
@@ -118,6 +208,7 @@ message ActionReceipt {
   optional double progress_delta = 8;
   optional uint64 authoritative_observation_sequence = 9;
   bool retryable = 10;
+  optional RealtimeActionReceipt realtime = 11;
 }
 
 message TimeStep {
@@ -147,5 +238,7 @@ service GameRuntime {
   rpc Step(StepRequest) returns (TimeStep);
   rpc Resume(ResumeRequest) returns (ResumeResult);
   rpc Interact(stream StepRequest) returns (stream TimeStep);
+  rpc Lease(InputLeaseRequest) returns (InputLeaseReceipt);
+  rpc Cancel(CancelRequest) returns (CancelResponse);
 }
 

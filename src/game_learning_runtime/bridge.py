@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from threading import RLock
+from time import time_ns
 from types import MappingProxyType
 from typing import Any, Protocol
 from uuid import UUID
@@ -22,6 +23,13 @@ from game_learning_runtime.contracts import (
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
 from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.realtime import (
+    InputLeaseBook,
+    InputLeaseReceipt,
+    InputLeaseRequest,
+    InputLeaseToken,
+    RealtimeStepTiming,
+)
 from game_learning_runtime.specs import EnvironmentSpec
 
 _MAX_UINT64 = (1 << 64) - 1
@@ -70,6 +78,13 @@ class BridgeStepRequest:
     episode_id: UUID
     expected_step_id: int
     action: TensorTree
+    action_id: str | None = None
+    issued_at_ns: int | None = None
+    deadline_ns: int | None = None
+    quantum_ns: int | None = None
+    hold_ns: int | None = None
+    lease: InputLeaseToken | None = None
+    cancellation_token: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.episode_id, UUID):
@@ -81,6 +96,29 @@ class BridgeStepRequest:
         ):
             raise ValueError("expected_step_id must be an unsigned non-zero 64-bit integer")
         object.__setattr__(self, "action", freeze_tree(self.action))
+        if self.action_id is not None and (
+            not isinstance(self.action_id, str) or not self.action_id or len(self.action_id) > 128
+        ):
+            raise ValueError("action_id must contain 1-128 characters or be None")
+        if self.issued_at_ns is not None and (
+            not isinstance(self.issued_at_ns, int)
+            or isinstance(self.issued_at_ns, bool)
+            or self.issued_at_ns < 0
+        ):
+            raise ValueError("issued_at_ns must be a non-negative integer or None")
+        timing_values = (self.deadline_ns, self.quantum_ns, self.hold_ns)
+        if any(value is not None for value in timing_values):
+            if self.deadline_ns is None or self.quantum_ns is None:
+                raise ValueError("deadline_ns and quantum_ns must be provided together")
+            RealtimeStepTiming(
+                deadline_ns=self.deadline_ns,
+                quantum_ns=self.quantum_ns,
+                hold_ns=self.hold_ns,
+            )
+        if self.lease is not None and not isinstance(self.lease, InputLeaseToken):
+            raise TypeError("lease must be an InputLeaseToken or None")
+        if self.cancellation_token is not None and not self.cancellation_token:
+            raise ValueError("cancellation_token cannot be empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +194,14 @@ class BridgeDriver(Protocol):
         """Reconcile an in-flight action and return the authoritative cursor."""
         ...
 
+    def lease(self, request: InputLeaseRequest) -> InputLeaseReceipt:
+        """Apply one explicit target-bound input lease operation."""
+        ...
+
+    def cancel(self, action_id: str) -> None:
+        """Fence one obsolete action before provider dispatch."""
+        ...
+
     def close(self) -> None:
         """Release transport resources and any owned input lease."""
         ...
@@ -177,6 +223,8 @@ class EnvironmentBridgeDriver:
         )
         self._current: TimeStep | None = None
         self._closed = False
+        self._lease_book = InputLeaseBook()
+        self._cancelled_actions: set[str] = set()
         self._lock = RLock()
 
     def describe(self) -> EnvironmentSpec:
@@ -193,6 +241,8 @@ class EnvironmentBridgeDriver:
                     f"bridge reset returned step {result.step_id}; expected step 0"
                 )
             self._current = result
+            self._lease_book = InputLeaseBook()
+            self._cancelled_actions.clear()
             return result
 
     def attach(self, request: BridgeAttachRequest) -> TimeStep:
@@ -204,6 +254,8 @@ class EnvironmentBridgeDriver:
                     f"bridge attach returned step {result.step_id}; expected step 0"
                 )
             self._current = result
+            self._lease_book = InputLeaseBook()
+            self._cancelled_actions.clear()
             return result
 
     def step(self, request: BridgeStepRequest) -> TimeStep:
@@ -220,6 +272,23 @@ class EnvironmentBridgeDriver:
                     "bridge request expected_step_id does not match current step; "
                     f"expected {expected_step_id}, received {request.expected_step_id}"
                 )
+            if request.action_id is not None and request.action_id in self._cancelled_actions:
+                raise ContractViolation("realtime action was cancelled before provider dispatch")
+            if request.deadline_ns is not None:
+                if self._environment.spec.realtime_timing is None:
+                    raise ContractViolation("bridge does not advertise realtime timing")
+                if request.issued_at_ns is not None and (
+                    time_ns() >= request.issued_at_ns + request.deadline_ns
+                ):
+                    raise ContractViolation("realtime action deadline expired before dispatch")
+                try:
+                    RealtimeStepTiming(
+                        request.deadline_ns, request.quantum_ns or 0, request.hold_ns
+                    ).validate_against(self._environment.spec.realtime_timing)
+                except ValueError as error:
+                    raise ContractViolation(str(error)) from error
+            if request.lease is not None and not self._lease_book.authorize(request.lease):
+                raise ContractViolation("realtime step lease is absent, stale, or mismatched")
             result = self._environment.step(request.action)
             if result.episode_id != current.episode_id:
                 raise ContractViolation("bridge environment changed episode_id during step")
@@ -243,12 +312,26 @@ class EnvironmentBridgeDriver:
                 raise ContractViolation("bridge resume cursor is ahead of the authoritative step")
             return BridgeResumeResult(timestep=current, committed_step_id=current.step_id)
 
+    def lease(self, request: InputLeaseRequest) -> InputLeaseReceipt:
+        with self._lock:
+            self._ensure_open()
+            return self._lease_book.apply(request)
+
+    def cancel(self, action_id: str) -> None:
+        with self._lock:
+            self._ensure_open()
+            if not action_id or len(action_id) > 128:
+                raise ValueError("action_id must contain 1-128 characters")
+            self._cancelled_actions.add(action_id)
+
     def close(self) -> None:
         with self._lock:
             if self._closed:
                 return
             self._closed = True
             self._current = None
+            self._lease_book = InputLeaseBook()
+            self._cancelled_actions.clear()
             self._environment.close()
 
     def _ensure_open(self) -> None:
@@ -302,6 +385,7 @@ class BridgeEnvironment(GameEnvironment):
                 action_mask=described.action_mask,
                 protocol_version=described.protocol_version,
                 capabilities=described.capabilities,
+                realtime_timing=described.realtime_timing,
                 metadata={
                     key: value for key, value in described.metadata.items() if key in allowed
                 },
@@ -393,6 +477,79 @@ class BridgeEnvironment(GameEnvironment):
             raise ContractViolation("bridge resume would rewind the authoritative cursor")
         self._current = result.timestep
         return result
+
+    def step_realtime(
+        self,
+        action: TensorTree,
+        *,
+        deadline_ns: int,
+        quantum_ns: int,
+        hold_ns: int | None = None,
+        lease: InputLeaseToken | None = None,
+        cancellation_token: str | None = None,
+        action_id: str | None = None,
+        issued_at_ns: int | None = None,
+    ) -> TimeStep:
+        """Apply one bounded realtime step without implicit retries."""
+
+        self._ensure_open()
+        current = self._current
+        if current is None:
+            raise ContractViolation("bridge step requires reset first")
+        if current.done:
+            raise ContractViolation("bridge episode is terminal; reset before stepping")
+        self._spec.action.validate(action, path="action")
+        if action_id is None:
+            action_id = f"step-{current.step_id + 1}"
+        issued_at_ns = time_ns() if issued_at_ns is None else issued_at_ns
+        timing = RealtimeStepTiming(deadline_ns, quantum_ns, hold_ns)
+        if self._spec.realtime_timing is None:
+            raise ContractViolation("bridge does not advertise realtime timing")
+        try:
+            timing.validate_against(self._spec.realtime_timing)
+        except ValueError as error:
+            raise ContractViolation(str(error)) from error
+        result = self._driver.step(
+            BridgeStepRequest(
+                episode_id=current.episode_id,
+                expected_step_id=current.step_id + 1,
+                action=action,
+                action_id=action_id,
+                issued_at_ns=issued_at_ns,
+                deadline_ns=timing.deadline_ns,
+                quantum_ns=timing.quantum_ns,
+                hold_ns=timing.hold_ns,
+                lease=lease,
+                cancellation_token=cancellation_token,
+            )
+        )
+        if not isinstance(result, TimeStep):
+            raise TypeError("bridge driver step() must return TimeStep")
+        if result.episode_id != current.episode_id or result.step_id != current.step_id + 1:
+            raise ContractViolation("bridge realtime step returned a stale timestep")
+        self._current = result
+        return result
+
+    def lease(self, request: InputLeaseRequest) -> InputLeaseReceipt:
+        """Apply one lease operation through a driver that supports leases."""
+
+        self._ensure_open()
+        lease = getattr(self._driver, "lease", None)
+        if lease is None:
+            raise ContractViolation("bridge driver does not support input leases")
+        result = lease(request)
+        if not isinstance(result, InputLeaseReceipt):
+            raise TypeError("bridge driver lease() must return InputLeaseReceipt")
+        return result
+
+    def cancel(self, action_id: str) -> None:
+        """Fence an obsolete action through a driver that supports cancellation."""
+
+        self._ensure_open()
+        cancel = getattr(self._driver, "cancel", None)
+        if cancel is None:
+            raise ContractViolation("bridge driver does not support realtime cancellation")
+        cancel(action_id)
 
     def close(self) -> None:
         if self._closed:

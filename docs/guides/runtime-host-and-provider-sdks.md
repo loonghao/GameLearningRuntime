@@ -64,6 +64,17 @@ lost. `applied`, `not_applied`, and `unknown` are authoritative outcomes;
 reconnect result never advances the cursor beyond the returned authoritative
 step, and a provider must reject episode or cursor mismatches.
 
+### Bounded realtime control
+
+Providers may advertise `glr.realtime-control.v1` in `realtime_timing` with
+minimum/maximum hold, settle deadline, simulation quantum, and clock source.
+Each realtime step carries bounded `deadline_ns`, `quantum_ns`, and optional
+`hold_ns` values. `lease` operations (`acquire`, `renew`, `release`, and
+`preempt`) bind the same session and target identity; stale leases are rejected
+before provider dispatch. `cancel` fences an obsolete action. The typed receipt
+reports `consumed`, `expired`, `cancelled`, or `rejected` and is never retried
+implicitly.
+
 ## Implement a Unity provider
 
 Build or download `GameLearningRuntime.Provider`, reference the .NET Standard

@@ -71,7 +71,14 @@ namespace GameLearningRuntime.Provider
         public StepRequest(
             Guid episodeId,
             ulong expectedStepId,
-            IReadOnlyDictionary<string, TensorBuffer> action)
+            IReadOnlyDictionary<string, TensorBuffer> action,
+            ulong? deadlineNanoseconds = null,
+            ulong? quantumNanoseconds = null,
+            ulong? holdNanoseconds = null,
+            InputLeaseToken? lease = null,
+            string? cancellationToken = null,
+            string? actionId = null,
+            ulong? issuedAtNanoseconds = null)
         {
             if (expectedStepId == 0)
             {
@@ -87,6 +94,23 @@ namespace GameLearningRuntime.Provider
 
             EpisodeId = episodeId;
             ExpectedStepId = expectedStepId;
+            if (actionId != null && (string.IsNullOrWhiteSpace(actionId) || actionId.Length > 128))
+            {
+                throw new ArgumentException("Action ID must contain 1-128 characters.", nameof(actionId));
+            }
+
+            ActionId = actionId;
+            IssuedAtNanoseconds = issuedAtNanoseconds;
+            if (deadlineNanoseconds.HasValue != quantumNanoseconds.HasValue)
+            {
+                throw new ArgumentException("Deadline and quantum must be provided together.");
+            }
+
+            Timing = deadlineNanoseconds.HasValue
+                ? new RealtimeStepTiming(deadlineNanoseconds.Value, quantumNanoseconds!.Value, holdNanoseconds)
+                : null;
+            Lease = lease;
+            CancellationToken = cancellationToken;
             Action = new ReadOnlyDictionary<string, TensorBuffer>(
                 action.ToDictionary(pair => pair.Key, pair => pair.Value));
         }
@@ -99,6 +123,21 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>Flattened semantic action tensors.</summary>
         public IReadOnlyDictionary<string, TensorBuffer> Action { get; }
+
+        /// <summary>Optional stable identity used to link a realtime receipt.</summary>
+        public string? ActionId { get; }
+
+        /// <summary>Optional provider clock timestamp at action issue.</summary>
+        public ulong? IssuedAtNanoseconds { get; }
+
+        /// <summary>Optional bounded realtime deadline, quantum, and hold.</summary>
+        public RealtimeStepTiming? Timing { get; }
+
+        /// <summary>Optional target-bound input lease.</summary>
+        public InputLeaseToken? Lease { get; }
+
+        /// <summary>Optional cancellation fencing token.</summary>
+        public string? CancellationToken { get; }
     }
 
     /// <summary>
@@ -118,6 +157,9 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>Apply one fenced semantic action and return authoritative post-state.</summary>
         ProviderTimeStep Step(StepRequest request);
+
+        /// <summary>Acquire, renew, release, or preempt a target-bound input lease.</summary>
+        InputLeaseReceipt Lease(InputLeaseRequest request);
     }
 
     /// <summary>Optional provider capability for reconnect and action reconciliation.</summary>

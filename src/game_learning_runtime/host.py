@@ -40,6 +40,15 @@ from game_learning_runtime.contracts import (
     TimeStep,
 )
 from game_learning_runtime.errors import HostProtocolError, HostRemoteError
+from game_learning_runtime.realtime import (
+    InputLeaseReceipt,
+    InputLeaseRequest,
+    InputLeaseStatus,
+    InputLeaseToken,
+    RealtimeActionReceipt,
+    RealtimeActionStatus,
+    RealtimeTimingContract,
+)
 from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKind, TensorSpec
 
 HOST_SCHEMA = "glr.host.v1"
@@ -273,16 +282,71 @@ class HostBridgeDriver:
         return self._time_step(self._request("attach", {"options": dict(request.options)}))
 
     def step(self, request: BridgeStepRequest) -> TimeStep:
-        return self._time_step(
-            self._request(
-                "step",
-                {
-                    "episode_id": str(request.episode_id),
-                    "expected_step_id": request.expected_step_id,
-                    "action": _tree_to_wire(request.action),
-                },
-            )
+        payload: dict[str, object] = {
+            "episode_id": str(request.episode_id),
+            "expected_step_id": request.expected_step_id,
+            "action": _tree_to_wire(request.action),
+        }
+        if request.action_id is not None:
+            payload["action_id"] = request.action_id
+        if request.issued_at_ns is not None:
+            payload["issued_at_ns"] = request.issued_at_ns
+        if request.deadline_ns is not None:
+            payload["deadline_ns"] = request.deadline_ns
+            payload["quantum_ns"] = request.quantum_ns
+            if request.hold_ns is not None:
+                payload["hold_ns"] = request.hold_ns
+        if request.lease is not None:
+            payload["lease"] = request.lease.to_mapping()
+        if request.cancellation_token is not None:
+            payload["cancellation_token"] = request.cancellation_token
+        return self._time_step(self._request("step", payload))
+
+    def lease(self, request: InputLeaseRequest) -> InputLeaseReceipt:
+        """Apply one explicit input-lease operation without retrying it."""
+
+        value = self._request(
+            "lease",
+            {
+                "operation": request.operation.value,
+                "session_id": request.session_id,
+                "target_id": request.target_id,
+                "lease_id": request.lease_id,
+                "expires_at_ns": request.expires_at_ns,
+            },
         )
+        token_raw = value.get("token")
+        token = (
+            None
+            if token_raw is None
+            else InputLeaseToken.from_mapping(_mapping(token_raw, path="lease.token"))
+        )
+        try:
+            reason = value.get("reason")
+            if reason is not None and not isinstance(reason, str):
+                raise HostProtocolError("lease.reason must be a string or null")
+            return InputLeaseReceipt(
+                status=InputLeaseStatus(_string(value.get("status"), path="lease.status")),
+                token=token,
+                observed_at_ns=_non_negative_int(
+                    value.get("observed_at_ns"), path="lease.observed_at_ns"
+                ),
+                expires_at_ns=(
+                    _positive_int(value["expires_at_ns"], path="lease.expires_at_ns")
+                    if value.get("expires_at_ns") is not None
+                    else None
+                ),
+                reason=reason,
+            )
+        except (TypeError, ValueError) as error:
+            raise HostProtocolError(f"invalid lease receipt: {error}") from error
+
+    def cancel(self, action_id: str) -> None:
+        """Fence an obsolete realtime action at the host boundary."""
+
+        if not action_id or len(action_id) > 128:
+            raise ValueError("action_id must contain 1-128 characters")
+        self._request("cancel", {"action_id": action_id})
 
     def resume(self, request: BridgeResumeRequest) -> BridgeResumeResult:
         payload: dict[str, object] = {
@@ -473,6 +537,43 @@ def _action_receipt_from_wire(
         retryable = receipt.get("retryable", False)
         if not isinstance(retryable, bool):
             raise HostProtocolError("timestep.action_receipt.retryable must be bool")
+        raw_realtime = receipt.get("realtime")
+        realtime = None
+        if raw_realtime is not None:
+            realtime_mapping = _mapping(raw_realtime, path="timestep.action_receipt.realtime")
+            cancellation_token = realtime_mapping.get("cancellation_token")
+            if cancellation_token is not None and not isinstance(cancellation_token, str):
+                raise HostProtocolError("realtime.cancellation_token must be a string or null")
+            realtime = RealtimeActionReceipt(
+                action_id=_string(realtime_mapping.get("action_id"), path="realtime.action_id"),
+                status=RealtimeActionStatus(
+                    _string(realtime_mapping.get("status"), path="realtime.status")
+                ),
+                deadline_ns=_positive_int(
+                    realtime_mapping.get("deadline_ns"), path="realtime.deadline_ns"
+                ),
+                quantum_ns=_positive_int(
+                    realtime_mapping.get("quantum_ns"), path="realtime.quantum_ns"
+                ),
+                issued_at_ns=_non_negative_int(
+                    realtime_mapping.get("issued_at_ns"), path="realtime.issued_at_ns"
+                ),
+                consumed_at_ns=(
+                    _non_negative_int(
+                        realtime_mapping["consumed_at_ns"], path="realtime.consumed_at_ns"
+                    )
+                    if realtime_mapping.get("consumed_at_ns") is not None
+                    else None
+                ),
+                settled_at_ns=(
+                    _non_negative_int(
+                        realtime_mapping["settled_at_ns"], path="realtime.settled_at_ns"
+                    )
+                    if realtime_mapping.get("settled_at_ns") is not None
+                    else None
+                ),
+                cancellation_token=cancellation_token,
+            )
         parsed = ActionReceipt(
             action_id=_string(receipt.get("action_id"), path="timestep.action_receipt.action_id"),
             episode_id=receipt_episode_id,
@@ -502,6 +603,7 @@ def _action_receipt_from_wire(
                 else None
             ),
             retryable=retryable,
+            realtime=realtime,
         )
     except (TypeError, ValueError) as error:
         raise HostProtocolError(f"invalid timestep.action_receipt: {error}") from error
@@ -677,6 +779,15 @@ def _environment_spec_from_wire(value: Mapping[str, object]) -> EnvironmentSpec:
         raise HostProtocolError("descriptor.metadata values must be strings")
     _, reward = _tensor_spec_from_wire(value.get("reward"), path="descriptor.reward")
     _, done = _tensor_spec_from_wire(value.get("done"), path="descriptor.done")
+    timing_raw = value.get("realtime_timing")
+    realtime_timing = None
+    if timing_raw is not None:
+        try:
+            realtime_timing = RealtimeTimingContract.from_mapping(
+                _mapping(timing_raw, path="descriptor.realtime_timing")
+            )
+        except (TypeError, ValueError) as error:
+            raise HostProtocolError(f"invalid descriptor.realtime_timing: {error}") from error
     return EnvironmentSpec(
         environment_id=_string(value.get("environment_id"), path="descriptor.environment_id"),
         protocol_version=_string(value.get("protocol_version"), path="descriptor.protocol_version"),
@@ -693,6 +804,7 @@ def _environment_spec_from_wire(value: Mapping[str, object]) -> EnvironmentSpec:
         done=done,
         capabilities=frozenset(cast(Sequence[str], capabilities_raw)),
         metadata=cast(Mapping[str, str], metadata),
+        realtime_timing=realtime_timing,
     )
 
 
