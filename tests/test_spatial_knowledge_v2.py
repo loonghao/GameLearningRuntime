@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 import pytest
@@ -197,3 +198,128 @@ def test_spatial_graph_rejects_ambiguous_or_unbounded_data() -> None:
         replace(graph.edges[0], expires_at_ns=99)
     with pytest.raises(ValueError, match="slope"):
         replace(graph.edges[0], slope=91.0)
+
+
+def test_spatial_graph_validation_rejects_malformed_scalars_and_metadata() -> None:
+    graph = _graph()
+    node = graph.nodes[0]
+    edge = graph.edges[0]
+
+    with pytest.raises(TypeError, match="must be an array"):
+        replace(node, position="0,0,0")
+    with pytest.raises(ValueError, match="exactly three"):
+        replace(node, position=(0.0, 0.0))
+    with pytest.raises(ValueError, match="finite"):
+        replace(node, position=(0.0, 0.0, math.nan))
+    with pytest.raises(ValueError, match="non-negative integer"):
+        replace(node, observed_at_ns=-1)
+    with pytest.raises(TypeError, match="must be a number"):
+        replace(node, ground_z="unknown")
+    with pytest.raises(ValueError, match="finite"):
+        replace(node, nav_z=math.inf)
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        replace(node, confidence=1.1)
+    with pytest.raises(ValueError, match="finite JSON"):
+        replace(node, metadata={"score": math.nan})
+    with pytest.raises(ValueError, match="1 MiB"):
+        replace(node, metadata={"payload": "x" * (1024 * 1024)})
+    with pytest.raises(ValueError, match="must match"):
+        replace(node, node_id="Node/invalid")
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        replace(edge, success_count=-1)
+    with pytest.raises(TypeError, match="must be a number"):
+        replace(edge, cost="cheap")
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        replace(edge, cost=-1.0)
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        replace(edge, confidence=-0.1)
+    with pytest.raises(TypeError, match="NegativeTraversalEvidence"):
+        replace(edge, negative_evidence=("failed",))
+    with pytest.raises(TypeError, match="SpatialFrameTransform"):
+        replace(edge, transform="world->nav")
+    with pytest.raises(ValueError, match="cannot connect"):
+        replace(edge, to_node_id=edge.from_node_id)
+
+
+def test_spatial_graph_validation_covers_transforms_evidence_and_status() -> None:
+    graph = _graph()
+    node = graph.nodes[0]
+
+    assert replace(node, ground_z=1.0, nav_z=None).vertical_delta is None
+    assert replace(node, ground_z=1.0, nav_z=3.5).vertical_delta == 2.5
+
+    with pytest.raises(ValueError, match="four finite"):
+        SpatialFrameTransform("world", "nav", rotation_quaternion=(0.0, 0.0, 0.0))
+    with pytest.raises(ValueError, match="four finite"):
+        SpatialFrameTransform("world", "nav", rotation_quaternion=(0.0, 0.0, 0.0, math.nan))
+    with pytest.raises(ValueError, match="cannot be zero"):
+        SpatialFrameTransform("world", "nav", rotation_quaternion=(0.0, 0.0, 0.0, 0.0))
+    with pytest.raises(ValueError, match="positive values"):
+        SpatialFrameTransform("world", "nav", scale=(1.0, 0.0, 1.0))
+    with pytest.raises(ValueError, match="positive values"):
+        SpatialFrameTransform("world", "nav", scale=(1.0, 1.0))
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        NegativeTraversalEvidence(
+            SpatialHazard.STEEP_SLOPE, observed_at_ns=1, source_run_id="run", expires_at_ns=-1
+        )
+    with pytest.raises(ValueError, match="cannot precede"):
+        NegativeTraversalEvidence(
+            SpatialHazard.STEEP_SLOPE, observed_at_ns=10, source_run_id="run", expires_at_ns=9
+        )
+    with pytest.raises(ValueError, match="bounded text"):
+        NegativeTraversalEvidence(
+            SpatialHazard.STEEP_SLOPE, observed_at_ns=1, source_run_id="run", detail=" "
+        )
+
+    stale = SpatialGraphEdge(
+        edge_id="edge.stale",
+        world_id="forest",
+        from_node_id="node.spawn",
+        to_node_id="node.shrine",
+        coordinate_frame="world",
+        source_run_id="run",
+        passability=TraversabilityStatus.STALE,
+    )
+    assert stale.status_at(0) is TraversabilityStatus.STALE
+    with pytest.raises(KeyError, match="unknown spatial edge"):
+        graph.edge_status("edge.missing", observed_at_ns=0)
+    with pytest.raises(ValueError, match="must match"):
+        graph.frontier_candidates(
+            world_id="forest",
+            from_node_id="node.spawn",
+            to_node_id="Node/invalid",
+            observed_at_ns=0,
+        )
+    with pytest.raises(ValueError, match="between 1 and 1000"):
+        graph.frontier_candidates(
+            world_id="forest", from_node_id="node.spawn", observed_at_ns=0, limit=0
+        )
+
+
+def test_spatial_graph_validation_rejects_structural_inconsistencies() -> None:
+    graph = _graph()
+    node = graph.nodes[0]
+    edge = graph.edges[0]
+    transform = graph.transforms[0]
+
+    with pytest.raises(ValueError, match="protocol_version"):
+        replace(graph, protocol_version="")
+    with pytest.raises(TypeError, match="nodes must contain"):
+        replace(graph, nodes=(object(),))
+    with pytest.raises(TypeError, match="edges must contain"):
+        replace(graph, edges=(object(),))
+    with pytest.raises(TypeError, match="transforms must contain"):
+        replace(graph, transforms=(object(),))
+    with pytest.raises(ValueError, match="duplicate node"):
+        replace(graph, nodes=(node, node))
+    with pytest.raises(ValueError, match="duplicate edge"):
+        replace(graph, edges=(edge, edge))
+    with pytest.raises(ValueError, match="crosses world"):
+        replace(graph, edges=(replace(edge, world_id="desert"),))
+    with pytest.raises(ValueError, match="duplicate frame pairs"):
+        replace(graph, transforms=(transform, transform))
+    mismatched = replace(edge, transform=SpatialFrameTransform("nav", "world"))
+    with pytest.raises(ValueError, match="does not match"):
+        replace(graph, edges=(mismatched,))
