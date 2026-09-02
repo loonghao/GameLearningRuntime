@@ -76,6 +76,17 @@ pub struct CheckpointPromotionRecord {
     pub updated_at_ns: i64,
 }
 
+struct StoredCheckpointPromotion {
+    metric: String,
+    mode: String,
+    best_metric: f64,
+    checkpoint_sha256: String,
+    checkpoint_path: String,
+    run_id: String,
+    trial_id: String,
+    updated_at_ns: i64,
+}
+
 pub struct CheckpointPromotionRequest<'a> {
     pub goal_id: &'a str,
     pub metric: &'a str,
@@ -510,20 +521,31 @@ impl Store {
             fs::create_dir_all(parent)?;
         }
         let connection = self.connect()?;
-        let previous: Option<(String, f64, String)> = connection
+        let previous: Option<StoredCheckpointPromotion> = connection
             .query_row(
-                "SELECT mode, best_metric, checkpoint_sha256 FROM checkpoint_promotions WHERE goal_id = ?",
+                "SELECT metric, mode, best_metric, checkpoint_sha256, checkpoint_path, run_id, trial_id, updated_at_ns FROM checkpoint_promotions WHERE goal_id = ?",
                 [goal_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| {
+                    Ok(StoredCheckpointPromotion {
+                        metric: row.get(0)?,
+                        mode: row.get(1)?,
+                        best_metric: row.get(2)?,
+                        checkpoint_sha256: row.get(3)?,
+                        checkpoint_path: row.get(4)?,
+                        run_id: row.get(5)?,
+                        trial_id: row.get(6)?,
+                        updated_at_ns: row.get(7)?,
+                    })
+                },
             )
             .optional()?;
         let mode_name = match mode {
             PromotionMode::Max => "max",
             PromotionMode::Min => "min",
         };
-        let improved = previous.as_ref().is_none_or(|(_, best, _)| match mode {
-            PromotionMode::Max => value > *best,
-            PromotionMode::Min => value < *best,
+        let improved = previous.as_ref().is_none_or(|stored| match mode {
+            PromotionMode::Max => value > stored.best_metric,
+            PromotionMode::Min => value < stored.best_metric,
         });
         let digest = sha256_file(candidate)?;
         if improved {
@@ -538,35 +560,37 @@ impl Store {
                 "INSERT INTO checkpoint_promotions(goal_id, metric, mode, best_metric, checkpoint_sha256, checkpoint_path, run_id, trial_id, updated_at_ns) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(goal_id) DO UPDATE SET metric=excluded.metric, mode=excluded.mode, best_metric=excluded.best_metric, checkpoint_sha256=excluded.checkpoint_sha256, checkpoint_path=excluded.checkpoint_path, run_id=excluded.run_id, trial_id=excluded.trial_id, updated_at_ns=excluded.updated_at_ns",
                 params![goal_id, metric, mode_name, value, digest, live.to_string_lossy(), run_id, trial_id, updated_at_ns],
             )?;
+            return Ok((
+                true,
+                CheckpointPromotionRecord {
+                    goal_id: goal_id.into(),
+                    metric: metric.into(),
+                    mode: mode_name.into(),
+                    best_metric: value,
+                    checkpoint_sha256: digest,
+                    checkpoint_path: live.to_string_lossy().into_owned(),
+                    run_id: run_id.into(),
+                    trial_id: trial_id.into(),
+                    updated_at_ns,
+                },
+            ));
         }
-        let record = if improved {
+        let stored = previous
+            .ok_or_else(|| Error::Contract("checkpoint promotion state disappeared".into()))?;
+        Ok((
+            false,
             CheckpointPromotionRecord {
                 goal_id: goal_id.into(),
-                metric: metric.into(),
-                mode: mode_name.into(),
-                best_metric: value,
-                checkpoint_sha256: digest,
-                checkpoint_path: live.to_string_lossy().into_owned(),
-                run_id: run_id.into(),
-                trial_id: trial_id.into(),
-                updated_at_ns: now_ns()?,
-            }
-        } else {
-            let (stored_mode, best_metric, checkpoint_sha256) = previous
-                .ok_or_else(|| Error::Contract("checkpoint promotion state disappeared".into()))?;
-            CheckpointPromotionRecord {
-                goal_id: goal_id.into(),
-                metric: metric.into(),
-                mode: stored_mode,
-                best_metric,
-                checkpoint_sha256,
-                checkpoint_path: live.to_string_lossy().into_owned(),
-                run_id: run_id.into(),
-                trial_id: trial_id.into(),
-                updated_at_ns: now_ns()?,
-            }
-        };
-        Ok((improved, record))
+                metric: stored.metric,
+                mode: stored.mode,
+                best_metric: stored.best_metric,
+                checkpoint_sha256: stored.checkpoint_sha256,
+                checkpoint_path: stored.checkpoint_path,
+                run_id: stored.run_id,
+                trial_id: stored.trial_id,
+                updated_at_ns: stored.updated_at_ns,
+            },
+        ))
     }
 
     pub fn has_metric_evidence(
@@ -1079,6 +1103,8 @@ mod tests {
             .unwrap();
         assert!(promoted);
         assert_eq!(record.best_metric, 3.0);
+        assert_eq!(record.run_id, run.run_id);
+        assert_eq!(record.trial_id, "trial-1");
         assert_eq!(fs::read(&live).unwrap(), b"first");
 
         let regression = temp.path().join("trial-2.checkpoint");
@@ -1097,8 +1123,29 @@ mod tests {
             .unwrap();
         assert!(!promoted);
         assert_eq!(record.best_metric, 3.0);
+        assert_eq!(record.run_id, run.run_id);
+        assert_eq!(record.trial_id, "trial-1");
         assert_eq!(fs::read(&live).unwrap(), b"first");
         assert_eq!(fs::read(&regression).unwrap(), b"regression");
+
+        let improvement = temp.path().join("trial-4.checkpoint");
+        fs::write(&improvement, b"improvement").unwrap();
+        let (promoted, record) = store
+            .promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 4.0,
+                run_id: &run.run_id,
+                trial_id: "trial-4",
+                candidate: &improvement,
+                live: &live,
+            })
+            .unwrap();
+        assert!(promoted);
+        assert_eq!(record.best_metric, 4.0);
+        assert_eq!(record.trial_id, "trial-4");
+        assert_eq!(fs::read(&live).unwrap(), b"improvement");
 
         let tie = temp.path().join("trial-3.checkpoint");
         fs::write(&tie, b"tie").unwrap();
@@ -1115,7 +1162,7 @@ mod tests {
             })
             .unwrap();
         assert!(!promoted);
-        assert_eq!(fs::read(&live).unwrap(), b"first");
+        assert_eq!(fs::read(&live).unwrap(), b"improvement");
     }
 }
 
