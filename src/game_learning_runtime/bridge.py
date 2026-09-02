@@ -22,7 +22,7 @@ from game_learning_runtime.contracts import (
     freeze_tree,
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
-from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.errors import CommandRefusal, ContractViolation
 from game_learning_runtime.realtime import (
     InputLeaseBook,
     InputLeaseReceipt,
@@ -30,6 +30,7 @@ from game_learning_runtime.realtime import (
     InputLeaseToken,
     RealtimeStepTiming,
 )
+from game_learning_runtime.refusals import RefusalFunnel
 from game_learning_runtime.specs import EnvironmentSpec
 
 _MAX_UINT64 = (1 << 64) - 1
@@ -215,12 +216,15 @@ class EnvironmentBridgeDriver:
     to reimplement episode and step fencing for each transport.
     """
 
-    def __init__(self, environment: GameEnvironment) -> None:
+    def __init__(
+        self, environment: GameEnvironment, *, refusal_funnel: RefusalFunnel | None = None
+    ) -> None:
         self._environment = (
             environment
             if isinstance(environment, ContractEnvironment)
-            else ContractEnvironment(environment)
+            else ContractEnvironment(environment, refusal_funnel=refusal_funnel)
         )
+        self._refusal_funnel = refusal_funnel
         self._current: TimeStep | None = None
         self._closed = False
         self._lease_book = InputLeaseBook()
@@ -289,7 +293,18 @@ class EnvironmentBridgeDriver:
                     raise ContractViolation(str(error)) from error
             if request.lease is not None and not self._lease_book.authorize(request.lease):
                 raise ContractViolation("realtime step lease is absent, stale, or mismatched")
-            result = self._environment.step(request.action)
+            try:
+                result = self._environment.step(request.action)
+            except CommandRefusal as refusal:
+                if self._refusal_funnel is not None:
+                    self._refusal_funnel.observe_exception(
+                        refusal,
+                        episode_id=request.episode_id,
+                        step_id=request.expected_step_id,
+                        action_id=request.action_id,
+                        issued_timestamp_ns=request.issued_at_ns,
+                    )
+                raise
             if result.episode_id != current.episode_id:
                 raise ContractViolation("bridge environment changed episode_id during step")
             if result.step_id != expected_step_id:
@@ -297,6 +312,8 @@ class EnvironmentBridgeDriver:
                     f"bridge environment returned step {result.step_id}; "
                     f"expected step {expected_step_id}"
                 )
+            if self._refusal_funnel is not None:
+                self._refusal_funnel.observe_timestep(result)
             self._current = result
             return result
 
@@ -354,10 +371,12 @@ class BridgeEnvironment(GameEnvironment):
         protocol_version: str = "1.0",
         metadata_allowlist: Iterable[str] = (),
         required_capabilities: Iterable[str] = (),
+        refusal_funnel: RefusalFunnel | None = None,
     ) -> None:
         if not protocol_version:
             raise ValueError("protocol_version cannot be empty")
         self._driver = driver
+        self._refusal_funnel = refusal_funnel
         self._closed = False
         self._current: TimeStep | None = None
         try:
@@ -434,7 +453,18 @@ class BridgeEnvironment(GameEnvironment):
             expected_step_id=expected_step_id,
             action=action,
         )
-        result = self._driver.step(request)
+        try:
+            result = self._driver.step(request)
+        except CommandRefusal as refusal:
+            if self._refusal_funnel is not None:
+                self._refusal_funnel.observe_exception(
+                    refusal,
+                    episode_id=current.episode_id,
+                    step_id=expected_step_id,
+                    action_id=request.action_id,
+                    issued_timestamp_ns=request.issued_at_ns,
+                )
+            raise
         if not isinstance(result, TimeStep):
             raise TypeError("bridge driver step() must return TimeStep")
         if result.episode_id != current.episode_id:
@@ -443,6 +473,8 @@ class BridgeEnvironment(GameEnvironment):
             raise ContractViolation(
                 f"bridge step returned step {result.step_id}; expected step {expected_step_id}"
             )
+        if self._refusal_funnel is not None:
+            self._refusal_funnel.observe_timestep(result)
         self._current = result
         return result
 

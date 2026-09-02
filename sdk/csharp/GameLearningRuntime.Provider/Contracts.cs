@@ -346,6 +346,15 @@ namespace GameLearningRuntime.Provider
         Blocked,
     }
 
+    /// <summary>Classifies why a provider refused a command.</summary>
+    public enum RefusalReasonClass
+    {
+        /// <summary>The command may succeed after a bounded retry.</summary>
+        Transient,
+        /// <summary>The command cannot succeed without changing the request or state.</summary>
+        Structural,
+    }
+
     /// <summary>Authoritative receipt tied to a provider post-state.</summary>
     public sealed class ActionReceipt
     {
@@ -361,7 +370,9 @@ namespace GameLearningRuntime.Provider
             double? progressDelta = null,
             ulong? authoritativeObservationSequence = null,
             bool retryable = false,
-            RealtimeActionReceipt? realtime = null)
+            RealtimeActionReceipt? realtime = null,
+            string? targetId = null,
+            RefusalReasonClass? reasonClass = null)
         {
             if (string.IsNullOrWhiteSpace(actionId) || actionId.Length > 128)
             {
@@ -392,6 +403,11 @@ namespace GameLearningRuntime.Provider
                 throw new ArgumentException("Progress delta must be finite.", nameof(progressDelta));
             }
 
+            if (targetId != null && (string.IsNullOrWhiteSpace(targetId) || targetId.Length > 128))
+            {
+                throw new ArgumentException("Target ID must contain 1-128 characters when present.", nameof(targetId));
+            }
+
             if (realtime != null && realtime.ActionId != actionId)
             {
                 throw new ArgumentException("Realtime receipt action ID must match the outer action ID.", nameof(realtime));
@@ -408,6 +424,8 @@ namespace GameLearningRuntime.Provider
             AuthoritativeObservationSequence = authoritativeObservationSequence;
             Retryable = retryable;
             Realtime = realtime;
+            TargetId = targetId;
+            ReasonClass = reasonClass;
         }
 
         /// <summary>Provider action identity.</summary>
@@ -442,6 +460,12 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>Optional typed realtime timing receipt.</summary>
         public RealtimeActionReceipt? Realtime { get; }
+
+        /// <summary>Optional provider target identity associated with a refusal.</summary>
+        public string? TargetId { get; }
+
+        /// <summary>Optional refusal reason class.</summary>
+        public RefusalReasonClass? ReasonClass { get; }
     }
 
     /// <summary>An immutable tensor payload using the GLR little-endian wire layout.</summary>

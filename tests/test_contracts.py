@@ -214,6 +214,10 @@ def test_action_receipt_validation_guards() -> None:
         make(authoritative_observation_sequence=-1)
     with pytest.raises(TypeError, match="retryable"):
         make(retryable=1)
+    with pytest.raises(ValueError, match="target_id"):
+        make(target_id="bad target")
+    with pytest.raises(ValueError, match="refusal reason class"):
+        make(reason_class="invalid")
 
 
 def test_action_reconciliation_validates_the_cursor_and_outcome() -> None:

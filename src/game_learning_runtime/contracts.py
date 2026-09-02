@@ -64,6 +64,13 @@ class ActionOutcome(str, Enum):
     BLOCKED = "blocked"
 
 
+class RefusalReasonClass(str, Enum):
+    """Coarse reason class used to decide whether a refused command can retry."""
+
+    TRANSIENT = "transient"
+    STRUCTURAL = "structural"
+
+
 @dataclass(frozen=True, slots=True)
 class ActionReceipt:
     """Bounded, authoritative receipt for a realtime action attempt."""
@@ -79,10 +86,22 @@ class ActionReceipt:
     authoritative_observation_sequence: int | None = None
     retryable: bool = False
     realtime: RealtimeActionReceipt | None = None
+    target_id: str | None = None
+    reason_class: RefusalReasonClass | None = None
 
     def __post_init__(self) -> None:
         if not self.action_id or len(self.action_id) > 128:
             raise ValueError("action_id must contain 1-128 characters")
+        if self.target_id is not None and (
+            not isinstance(self.target_id, str)
+            or not self.target_id
+            or len(self.target_id) > 128
+            or any(
+                character.isspace() or ord(character) < 32 or ord(character) == 127
+                for character in self.target_id
+            )
+        ):
+            raise ValueError("target_id must contain 1-128 non-control characters or None")
         if not isinstance(self.episode_id, UUID):
             raise TypeError("episode_id must be a UUID")
         if not isinstance(self.step_id, int) or isinstance(self.step_id, bool) or self.step_id <= 0:
@@ -92,6 +111,13 @@ class ActionReceipt:
                 object.__setattr__(self, "outcome", ActionOutcome(self.outcome))
             except ValueError as error:
                 raise ValueError(f"unsupported action outcome: {self.outcome!r}") from error
+        if self.reason_class is not None and not isinstance(self.reason_class, RefusalReasonClass):
+            try:
+                object.__setattr__(self, "reason_class", RefusalReasonClass(self.reason_class))
+            except ValueError as error:
+                raise ValueError(
+                    f"unsupported refusal reason class: {self.reason_class!r}"
+                ) from error
         for name in ("issued_timestamp_ns", "observed_timestamp_ns"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -126,6 +152,12 @@ class ActionReceipt:
 
         if self.episode_id != timestep.episode_id or self.step_id != timestep.step_id:
             raise ValueError("action receipt does not match the authoritative timestep")
+
+    @property
+    def is_refusal(self) -> bool:
+        """Whether this receipt represents a command refusal."""
+
+        return self.outcome in {ActionOutcome.REJECTED, ActionOutcome.BLOCKED}
 
 
 class ReconciliationOutcome(str, Enum):

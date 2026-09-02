@@ -19,6 +19,7 @@ inline constexpr std::string_view realtime_control_schema = "glr.realtime-contro
 enum class dtype { boolean, uint8, int32, int64, float32, float64 };
 enum class space_kind { continuous, discrete, multi_discrete, binary };
 enum class action_outcome { accepted, rejected, unknown, no_effect, partial, blocked };
+enum class refusal_reason_class { transient, structural };
 enum class reconciliation_outcome { applied, not_applied, unknown };
 enum class realtime_action_status { consumed, expired, cancelled, rejected };
 enum class input_lease_operation { acquire, renew, release, preempt };
@@ -173,6 +174,8 @@ struct action_receipt final {
   std::optional<std::uint64_t> authoritative_observation_sequence;
   bool retryable;
   std::optional<glr::realtime_action_receipt> realtime;
+  std::optional<std::string> target_id;
+  std::optional<glr::refusal_reason_class> reason_class;
 };
 
 struct provider_time_step final {

@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::args::{
     CheckpointCommand, Cli, Command as CliCommand, GoalCommand, KnowledgeCommand, QueryCommand,
-    ReportCommand, RunsCommand, RuntimeCommand, UpdateArgs,
+    ReportCommand, RunsCommand, RuntimeCommand, TransactionCommand, UpdateArgs,
 };
 use crate::contracts::{
     AgentGoal, GoalEvaluation, GoalEvidenceBundle, ResearchBundle, SpatialKnowledgeBundle,
@@ -22,12 +22,13 @@ use crate::process::{
 };
 use crate::project::{ProgressConfig, Project, ProjectCommand, find_project, load_project};
 use crate::report;
-use crate::store::{CheckpointPromotionRequest, EntityQuery, RunRecord, Store};
+use crate::store::{CheckpointPromotionRequest, EntityQuery, RunRecord, Store, TransactionRefusal};
 use crate::update::Updater;
 
 pub const CLI_OUTPUT_SCHEMA_VERSION: &str = "glr.cli-output.v1";
 const TRAINER_NO_DATA_EXIT_CODE: i32 = 75;
 const GOAL_STALLED_EXIT_CODE: i32 = 76;
+const TRANSACTION_ABANDONED_EXIT_CODE: i32 = 77;
 const TRAINER_RESULT_SCHEMA_VERSION: &str = "glr.trainer-result.v1";
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +93,11 @@ pub fn execute(cli: Cli) -> Result<i32> {
             crate::checkpoint::migrate(&absolute(manifest)?, &absolute(contract)?, *force)?;
         emit("checkpoint.migrate", &result, cli.json)?;
         return Ok(exit_code);
+    }
+    if let CliCommand::Transaction { command } = &cli.command {
+        let project = load_project(&cli.project)?;
+        let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
+        return run_transaction(&store, command.clone(), cli.json);
     }
     let project = load_project(&cli.project)?;
     let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
@@ -302,6 +308,9 @@ pub fn execute(cli: Cli) -> Result<i32> {
         },
         CliCommand::Update(_) => unreachable!("update handled before project loading"),
         CliCommand::Checkpoint { .. } => unreachable!("checkpoint handled before project loading"),
+        CliCommand::Transaction { .. } => {
+            unreachable!("transaction handled before project loading")
+        }
     }
 }
 
@@ -381,6 +390,40 @@ fn run_update(cli: &Cli, arguments: &UpdateArgs) -> Result<i32> {
     let result = updater.apply(plan, skills_dir.as_deref())?;
     emit("update.apply", &result, cli.json)?;
     Ok(0)
+}
+
+fn run_transaction(store: &Store, command: TransactionCommand, as_json: bool) -> Result<i32> {
+    match command {
+        TransactionCommand::Begin {
+            run_id,
+            transaction_id,
+            steps,
+            max_resume_attempts,
+        } => {
+            let steps: Vec<Value> = read_json(&absolute(&steps)?, "transaction steps")?;
+            let transaction =
+                store.begin_transaction(&run_id, &transaction_id, &steps, max_resume_attempts)?;
+            emit("transaction.begin", &transaction, as_json)?;
+            Ok(0)
+        }
+        TransactionCommand::Resume {
+            transaction_id,
+            refusal,
+        } => {
+            let refusal = refusal
+                .map(|path| {
+                    read_json::<TransactionRefusal>(&absolute(&path)?, "transaction refusal")
+                })
+                .transpose()?;
+            let result = store.resume_transaction(&transaction_id, refusal.as_ref())?;
+            emit("transaction.resume", &result, as_json)?;
+            Ok(if result.outcome == "abandoned" {
+                TRANSACTION_ABANDONED_EXIT_CODE
+            } else {
+                0
+            })
+        }
+    }
 }
 
 fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) -> Result<i32> {

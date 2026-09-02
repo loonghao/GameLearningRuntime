@@ -79,6 +79,7 @@ from game_learning_runtime.contracts import (
     EnvironmentConfigSnapshot,
     Event,
     ReconciliationOutcome,
+    RefusalReasonClass,
     TimeStep,
     Transition,
     Unroll,
@@ -96,6 +97,8 @@ from game_learning_runtime.demonstration_artifact import (
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
 from game_learning_runtime.errors import (
+    CommandRefusal,
+    CommandRefused,
     ContractViolation,
     GLRError,
     HostProtocolError,
@@ -165,6 +168,7 @@ from game_learning_runtime.realtime import (
     RealtimeStepTiming,
     RealtimeTimingContract,
 )
+from game_learning_runtime.refusals import RefusalFunnel, RefusalHandler, RefusalPolicy
 from game_learning_runtime.run_store import (
     RUN_STORE_SCHEMA_VERSION,
     ArtifactRecord,
@@ -315,6 +319,8 @@ __all__ = [
     "CheckpointMigrationResult",
     "CheckpointPromotion",
     "ClockMode",
+    "CommandRefusal",
+    "CommandRefused",
     "CompositeSpec",
     "ContractEnvironment",
     "ContractViolation",
@@ -397,6 +403,10 @@ __all__ = [
     "RealtimeStepTiming",
     "RealtimeTimingContract",
     "ReconciliationOutcome",
+    "RefusalFunnel",
+    "RefusalHandler",
+    "RefusalPolicy",
+    "RefusalReasonClass",
     "ResearchBundle",
     "ResearchCategory",
     "ResearchFinding",

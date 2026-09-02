@@ -330,6 +330,78 @@ fn standalone_cli_is_the_project_entrypoint_and_persists_runs() {
 }
 
 #[test]
+fn transaction_cli_reports_bounded_structural_abandonment() {
+    let project = create_project();
+    let training = stdout(&run(project.path(), &["train"]));
+    let run_id = training["data"]["run_id"].as_str().unwrap();
+    let connection = Connection::open(project.path().join(".glr/runs.sqlite3")).unwrap();
+    connection
+        .execute(
+            "UPDATE runs SET status = 'running' WHERE run_id = ?",
+            [run_id],
+        )
+        .unwrap();
+    drop(connection);
+    let steps = project.path().join("steps.json");
+    fs::write(&steps, br#"[{"action_id":"move-1"}]"#).unwrap();
+
+    let begin = stdout(&run(
+        project.path(),
+        &[
+            "transaction",
+            "begin",
+            "--run-id",
+            run_id,
+            "--transaction-id",
+            "txn.cli",
+            "--steps",
+            steps.to_str().unwrap(),
+            "--max-resume-attempts",
+            "1",
+        ],
+    ));
+    assert_eq!(begin["command"], "transaction.begin");
+    assert_eq!(begin["data"]["status"], "pending");
+
+    let refusal = project.path().join("refusal.json");
+    fs::write(
+        &refusal,
+        br#"{"action_id":"move-1","target_id":"card-1","reason_class":"structural","message":"blocked","retryable":false}"#,
+    )
+    .unwrap();
+    let resumed = run(
+        project.path(),
+        &[
+            "transaction",
+            "resume",
+            "--transaction-id",
+            "txn.cli",
+            "--refusal",
+            refusal.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(resumed.status.code(), Some(77));
+    let resumed: Value = serde_json::from_slice(&resumed.stdout).unwrap();
+    assert_eq!(resumed["command"], "transaction.resume");
+    assert_eq!(resumed["data"]["outcome"], "abandoned");
+
+    let terminal = run(
+        project.path(),
+        &[
+            "transaction",
+            "resume",
+            "--transaction-id",
+            "txn.cli",
+            "--refusal",
+            refusal.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(terminal.status.code(), Some(0));
+    let already_terminal: Value = serde_json::from_slice(&terminal.stdout).unwrap();
+    assert_eq!(already_terminal["data"]["outcome"], "already_terminal");
+}
+
+#[test]
 fn checkpoint_migration_reports_then_applies_explicit_confirmation() {
     let project = create_project();
     let recorded = checkpoint_contract(
