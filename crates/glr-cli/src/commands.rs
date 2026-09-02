@@ -17,8 +17,8 @@ use crate::contracts::{
 };
 use crate::error::{Error, Result};
 use crate::process::{
-    CaptureSession, CommandInvocation, executable_available, finish_capture, relative_portable,
-    run_command, start_capture,
+    CaptureLifecycle, CaptureSession, CaptureState, CommandInvocation, executable_available,
+    finish_capture, relative_portable, run_command, start_capture,
 };
 use crate::project::{Project, ProjectCommand, find_project, load_project};
 use crate::report;
@@ -364,10 +364,17 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         extra: &extra,
         timeout: None,
     });
-    let capture_complete = if let Some(session) = capture_session {
-        finish_capture(project, store, &run.run_id, &run_dir, &run_dir, session)?
+    let capture = if let Some(session) = capture_session {
+        Some(finish_capture(
+            project,
+            store,
+            &run.run_id,
+            &run_dir,
+            &run_dir,
+            session,
+        )?)
     } else {
-        true
+        None
     };
     let trainer_exit = match result {
         Ok(code) => code,
@@ -384,6 +391,9 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         "text/plain",
     )?;
     let capture_required = project.capture.as_ref().is_some_and(|value| value.required);
+    let capture_complete = capture
+        .as_ref()
+        .is_none_or(|value| value.state == CaptureState::Completed);
     let succeeded = trainer_exit == 0 && (capture_complete || !capture_required);
     let exit_code = if succeeded {
         0
@@ -397,7 +407,14 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         if succeeded { "succeeded" } else { "failed" },
         Some(exit_code),
     )?;
-    emit("train", &finished, as_json)?;
+    let mut output = serde_json::to_value(&finished)?;
+    if let Some(capture) = capture {
+        output
+            .as_object_mut()
+            .expect("RunRecord serializes as an object")
+            .insert("capture".into(), serde_json::to_value(capture)?);
+    }
+    emit("train", &output, as_json)?;
     Ok(exit_code)
 }
 
@@ -532,6 +549,7 @@ fn run_goal(
         evaluation,
         trainer_statuses,
         promotion,
+        captures,
     } = match result {
         Ok(value) => value,
         Err(error) => {
@@ -556,6 +574,7 @@ fn run_goal(
             "evaluation": evaluation,
             "trainer_statuses": trainer_statuses,
             "promotion": promotion,
+            "captures": captures,
         }),
         as_json,
     )?;
@@ -584,6 +603,7 @@ struct GoalRunResult {
     evaluation: Option<GoalEvaluation>,
     trainer_statuses: Vec<String>,
     promotion: Option<Value>,
+    captures: Vec<CaptureLifecycle>,
 }
 
 fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
@@ -643,6 +663,7 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
     let mut last_evaluation = None;
     let mut trainer_statuses = Vec::new();
     let mut last_promotion = None;
+    let mut captures = Vec::new();
     for trial_number in 1..=goal.budget.max_trials {
         remaining(deadline)?;
         let trial_id = format!("trial-{trial_number}");
@@ -777,10 +798,17 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             context.clone(),
             deadline,
         );
-        let capture_complete = if let Some(session) = capture {
-            finish_capture(project, store, &run.run_id, &trial_dir, run_dir, session)?
+        let capture = if let Some(session) = capture {
+            Some(finish_capture(
+                project,
+                store,
+                &run.run_id,
+                &trial_dir,
+                run_dir,
+                session,
+            )?)
         } else {
-            true
+            None
         };
         let trainer_outcome = trainer_result?;
         let trainer_log = trainer_outcome.log.clone();
@@ -794,6 +822,12 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             )?;
         }
         trainer_statuses.push(trainer_outcome.status.to_owned());
+        let capture_complete = capture
+            .as_ref()
+            .is_none_or(|value| value.state == CaptureState::Completed);
+        if let Some(capture) = capture {
+            captures.push(capture);
+        }
         store.append_event(
             &run.run_id,
             "trial.trainer",
@@ -928,6 +962,7 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
         evaluation: last_evaluation,
         trainer_statuses,
         promotion: last_promotion,
+        captures,
     })
 }
 

@@ -19,6 +19,7 @@ _PLACEHOLDERS = frozenset(
         "bridge_path",
         "bundle",
         "capture_index",
+        "capture_status",
         "capture_video",
         "evaluation_path",
         "goal_path",
@@ -41,8 +42,14 @@ def _mapping(value: object, *, path: str) -> Mapping[str, Any]:
     return value
 
 
-def _reject_unknown(value: Mapping[str, Any], *, allowed: frozenset[str], path: str) -> None:
-    missing = sorted(allowed - set(value))
+def _reject_unknown(
+    value: Mapping[str, Any],
+    *,
+    allowed: frozenset[str],
+    path: str,
+    required: frozenset[str] | None = None,
+) -> None:
+    missing = sorted((allowed if required is None else required) - set(value))
     unexpected = sorted(set(value) - allowed)
     if missing or unexpected:
         raise ValueError(f"{path} has missing={missing} and unexpected={unexpected} fields")
@@ -126,6 +133,63 @@ class ProjectCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class CaptureSessionConfig:
+    """Optional recorder lifecycle handshake and data-grade gates."""
+
+    status_file: str = "capture-status.jsonl"
+    startup_timeout_seconds: float = 5.0
+    heartbeat_timeout_seconds: float = 5.0
+    minimum_frames: int = 1
+    minimum_steps: int = 1
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> CaptureSessionConfig:
+        _reject_unknown(
+            value,
+            allowed=frozenset(
+                {
+                    "status_file",
+                    "startup_timeout_seconds",
+                    "heartbeat_timeout_seconds",
+                    "minimum_frames",
+                    "minimum_steps",
+                }
+            ),
+            path="project.capture.session",
+            required=frozenset(),
+        )
+        startup_timeout = float(value.get("startup_timeout_seconds", 5.0))
+        heartbeat_timeout = float(value.get("heartbeat_timeout_seconds", 5.0))
+        for name, timeout in (
+            ("startup_timeout_seconds", startup_timeout),
+            ("heartbeat_timeout_seconds", heartbeat_timeout),
+        ):
+            if not math.isfinite(timeout) or not 0.1 <= timeout <= 60:
+                raise ValueError(
+                    f"project.capture.session.{name} must be finite and between 0.1 and 60 seconds"
+                )
+        minimum_frames = value.get("minimum_frames", 1)
+        minimum_steps = value.get("minimum_steps", 1)
+        if any(
+            not isinstance(item, int) or isinstance(item, bool) or item <= 0
+            for item in (minimum_frames, minimum_steps)
+        ):
+            raise ValueError(
+                "project.capture.session minimum_frames and minimum_steps must be positive integers"
+            )
+        return cls(
+            status_file=_portable_relative(
+                value.get("status_file", "capture-status.jsonl"),
+                path="project.capture.session.status_file",
+            ).as_posix(),
+            startup_timeout_seconds=startup_timeout,
+            heartbeat_timeout_seconds=heartbeat_timeout,
+            minimum_frames=minimum_frames,
+            minimum_steps=minimum_steps,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CaptureConfig:
     """Project-owned recorder process and the data-grade capture outputs it must produce."""
 
@@ -138,6 +202,7 @@ class CaptureConfig:
     frame_rate: float
     width: int
     height: int
+    session: CaptureSessionConfig | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> CaptureConfig:
@@ -154,9 +219,23 @@ class CaptureConfig:
                     "frame_rate",
                     "width",
                     "height",
+                    "session",
                 }
             ),
             path="project.capture",
+            required=frozenset(
+                {
+                    "argv",
+                    "required",
+                    "stop",
+                    "video_file",
+                    "index_file",
+                    "codec",
+                    "frame_rate",
+                    "width",
+                    "height",
+                }
+            ),
         )
         required = value["required"]
         if not isinstance(required, bool):
@@ -193,6 +272,13 @@ class CaptureConfig:
             frame_rate=frame_rate,
             width=width,
             height=height,
+            session=(
+                None
+                if value.get("session") is None
+                else CaptureSessionConfig.from_mapping(
+                    _mapping(value["session"], path="project.capture.session")
+                )
+            ),
         )
 
 
@@ -335,6 +421,7 @@ __all__ = [
     "PROJECT_FILE_NAME",
     "PROJECT_SCHEMA_VERSION",
     "CaptureConfig",
+    "CaptureSessionConfig",
     "GLRProject",
     "ProjectCommand",
     "find_project",
