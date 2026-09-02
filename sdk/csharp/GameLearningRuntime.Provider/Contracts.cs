@@ -5,6 +5,149 @@ using System.Linq;
 
 namespace GameLearningRuntime.Provider
 {
+    /// <summary>Wire schema for checkpoint contract bindings.</summary>
+    public sealed class CheckpointContract
+    {
+        /// <summary>Checkpoint contract schema identifier.</summary>
+        public const string SchemaVersion = "glr.checkpoint-contract.v1";
+
+        /// <summary>Create a learner-neutral checkpoint contract binding.</summary>
+        public CheckpointContract(
+            string protocolVersion,
+            string observationSha256,
+            string actionSha256,
+            string rewardSha256,
+            string? knowledgeSha256 = null,
+            string schemaVersion = SchemaVersion)
+        {
+            if (schemaVersion != SchemaVersion)
+            {
+                throw new ArgumentException("Unsupported checkpoint contract schema.", nameof(schemaVersion));
+            }
+
+            if (string.IsNullOrWhiteSpace(protocolVersion))
+            {
+                throw new ArgumentException("Protocol version cannot be empty.", nameof(protocolVersion));
+            }
+
+            ValidateDigest(observationSha256, nameof(observationSha256));
+            ValidateDigest(actionSha256, nameof(actionSha256));
+            ValidateDigest(rewardSha256, nameof(rewardSha256));
+            if (knowledgeSha256 != null)
+            {
+                ValidateDigest(knowledgeSha256, nameof(knowledgeSha256));
+            }
+
+            SchemaVersionValue = schemaVersion;
+            ProtocolVersion = protocolVersion;
+            ObservationSha256 = observationSha256;
+            ActionSha256 = actionSha256;
+            RewardSha256 = rewardSha256;
+            KnowledgeSha256 = knowledgeSha256;
+        }
+
+        /// <summary>Contract schema identifier on the wire.</summary>
+        public string SchemaVersionValue { get; }
+        /// <summary>Runtime protocol version.</summary>
+        public string ProtocolVersion { get; }
+        /// <summary>Canonical observation schema digest.</summary>
+        public string ObservationSha256 { get; }
+        /// <summary>Canonical action schema digest.</summary>
+        public string ActionSha256 { get; }
+        /// <summary>Canonical reward contract digest.</summary>
+        public string RewardSha256 { get; }
+        /// <summary>Optional knowledge contract digest.</summary>
+        public string? KnowledgeSha256 { get; }
+
+        private static void ValidateDigest(string value, string parameterName)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length != 64
+                || value.Any(character => !((character >= '0' && character <= '9')
+                    || (character >= 'a' && character <= 'f'))))
+            {
+                throw new ArgumentException("Digest must be a lowercase SHA-256 value.", parameterName);
+            }
+        }
+    }
+
+    /// <summary>Portable checkpoint manifest fields shared by provider projections.</summary>
+    public sealed class CheckpointManifest
+    {
+        /// <summary>Checkpoint manifest schema identifier.</summary>
+        public const string SchemaVersion = "glr.checkpoint-manifest.v1";
+
+        /// <summary>Create a validated checkpoint manifest projection.</summary>
+        public CheckpointManifest(
+            string checkpointPath,
+            string checkpointSha256,
+            ulong checkpointSizeBytes,
+            CheckpointContract contract,
+            string contractSha256,
+            IReadOnlyDictionary<string, string>? metadata = null,
+            string schemaVersion = SchemaVersion)
+        {
+            if (schemaVersion != SchemaVersion)
+            {
+                throw new ArgumentException("Unsupported checkpoint manifest schema.", nameof(schemaVersion));
+            }
+
+            if (checkpointPath == null)
+            {
+                throw new ArgumentNullException(nameof(checkpointPath));
+            }
+
+            var pathParts = checkpointPath.Split('/');
+            if (string.IsNullOrWhiteSpace(checkpointPath) || checkpointPath.IndexOf('\\') >= 0
+                || checkpointPath.IndexOf(':') >= 0 || checkpointPath.StartsWith("/", StringComparison.Ordinal)
+                || pathParts.Any(part => part == "." || part == ".."))
+            {
+                throw new ArgumentException("Checkpoint path must be portable and relative.", nameof(checkpointPath));
+            }
+
+            ValidateDigest(checkpointSha256, nameof(checkpointSha256));
+            ValidateDigest(contractSha256, nameof(contractSha256));
+            if (contract == null)
+            {
+                throw new ArgumentNullException(nameof(contract));
+            }
+
+            SchemaVersionValue = schemaVersion;
+            CheckpointPath = checkpointPath;
+            CheckpointSha256 = checkpointSha256;
+            CheckpointSizeBytes = checkpointSizeBytes;
+            Contract = contract;
+            ContractSha256 = contractSha256;
+            Metadata = new ReadOnlyDictionary<string, string>(
+                metadata?.ToDictionary(pair => pair.Key, pair => pair.Value)
+                    ?? new Dictionary<string, string>());
+        }
+
+        /// <summary>Manifest schema identifier on the wire.</summary>
+        public string SchemaVersionValue { get; }
+        /// <summary>Portable checkpoint file path.</summary>
+        public string CheckpointPath { get; }
+        /// <summary>Checkpoint bytes digest.</summary>
+        public string CheckpointSha256 { get; }
+        /// <summary>Checkpoint bytes size.</summary>
+        public ulong CheckpointSizeBytes { get; }
+        /// <summary>Bound learner contract.</summary>
+        public CheckpointContract Contract { get; }
+        /// <summary>Digest of the canonical contract object.</summary>
+        public string ContractSha256 { get; }
+        /// <summary>Non-sensitive manifest metadata.</summary>
+        public IReadOnlyDictionary<string, string> Metadata { get; }
+
+        private static void ValidateDigest(string value, string parameterName)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length != 64
+                || value.Any(character => !((character >= '0' && character <= '9')
+                    || (character >= 'a' && character <= 'f'))))
+            {
+                throw new ArgumentException("Digest must be a lowercase SHA-256 value.", parameterName);
+            }
+        }
+    }
+
     /// <summary>Versioned descriptor-level realtime timing bounds.</summary>
     public sealed class RealtimeTimingContract
     {

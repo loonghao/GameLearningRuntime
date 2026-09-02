@@ -5,6 +5,15 @@
 #include <vector>
 
 int main() {
+  glr::checkpoint_contract checkpoint{
+      std::string(glr::checkpoint_contract_schema), "glr.v1", std::string(64, '1'),
+      std::string(64, '2'), std::string(64, '3'), std::nullopt};
+  checkpoint.validate();
+  glr::checkpoint_manifest manifest{
+      std::string(glr::checkpoint_manifest_schema), "policy.ckpt", std::string(64, '4'), 8,
+      checkpoint, std::string(64, '5'), {}};
+  manifest.validate();
+
   static_assert(glr::host_schema == "glr.host.v1");
   const glr::tensor_buffer tensor{{1}, glr::dtype::int64, std::vector<std::uint8_t>(8)};
   if (tensor.shape.size() != 1 || tensor.data.size() != 8) {

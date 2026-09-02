@@ -15,6 +15,8 @@ namespace glr {
 inline constexpr std::string_view host_schema = "glr.host.v1";
 inline constexpr std::string_view environment_protocol_version = "1.0";
 inline constexpr std::string_view realtime_control_schema = "glr.realtime-control.v1";
+inline constexpr std::string_view checkpoint_contract_schema = "glr.checkpoint-contract.v1";
+inline constexpr std::string_view checkpoint_manifest_schema = "glr.checkpoint-manifest.v1";
 
 enum class dtype { boolean, uint8, int32, int64, float32, float64 };
 enum class space_kind { continuous, discrete, multi_discrete, binary };
@@ -24,6 +26,78 @@ enum class reconciliation_outcome { applied, not_applied, unknown };
 enum class realtime_action_status { consumed, expired, cancelled, rejected };
 enum class input_lease_operation { acquire, renew, release, preempt };
 enum class input_lease_status { acquired, renewed, released, preempted, rejected };
+
+inline bool valid_sha256(std::string_view value) {
+  if (value.size() != 64) {
+    return false;
+  }
+  for (const char character : value) {
+    if (!((character >= '0' && character <= '9')
+          || (character >= 'a' && character <= 'f'))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline bool valid_checkpoint_path(std::string_view value) {
+  if (value.empty() || value.front() == '/' || value.find('\\') != std::string_view::npos
+      || value.find(':') != std::string_view::npos) {
+    return false;
+  }
+  std::size_t start = 0;
+  while (start <= value.size()) {
+    const std::size_t end = value.find('/', start);
+    const std::string_view part = value.substr(start, end == std::string_view::npos
+                                                         ? value.size() - start
+                                                         : end - start);
+    if (part == "." || part == "..") {
+      return false;
+    }
+    if (end == std::string_view::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return true;
+}
+
+struct checkpoint_contract final {
+  std::string schema_version = std::string(checkpoint_contract_schema);
+  std::string protocol_version;
+  std::string observation_sha256;
+  std::string action_sha256;
+  std::string reward_sha256;
+  std::optional<std::string> knowledge_sha256;
+
+  void validate() const {
+    if (schema_version != checkpoint_contract_schema || protocol_version.empty()
+        || !valid_sha256(observation_sha256) || !valid_sha256(action_sha256)
+        || !valid_sha256(reward_sha256)
+        || (knowledge_sha256.has_value() && !valid_sha256(*knowledge_sha256))) {
+      throw std::invalid_argument("invalid checkpoint contract");
+    }
+  }
+};
+
+struct checkpoint_manifest final {
+  std::string schema_version = std::string(checkpoint_manifest_schema);
+  std::string checkpoint_path;
+  std::string checkpoint_sha256;
+  std::uint64_t checkpoint_size_bytes;
+  checkpoint_contract contract;
+  std::string contract_sha256;
+  std::map<std::string, std::string> metadata;
+
+  void validate() const {
+    if (schema_version != checkpoint_manifest_schema || !valid_checkpoint_path(checkpoint_path)
+        || !valid_sha256(checkpoint_sha256)
+        || !valid_sha256(contract_sha256)) {
+      throw std::invalid_argument("invalid checkpoint manifest");
+    }
+    contract.validate();
+  }
+};
 
 struct tensor_buffer final {
   std::vector<std::uint64_t> shape;
