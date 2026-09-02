@@ -107,6 +107,35 @@ def test_action_receipt_is_typed_and_counted_without_info_parsing() -> None:
         ).validate_against(_timestep(step_id=1))
 
 
+def test_unroll_reports_mask_freedom_without_counting_action_heads() -> None:
+    episode_id = uuid4()
+
+    def make(mask: object) -> Transition:
+        return Transition(
+            episode_id=episode_id,
+            step_id=0,
+            observation={"value": np.array([0], dtype=np.int64)},
+            action={"value": np.array([1], dtype=np.int64)},
+            reward=np.array([0.0], dtype=np.float32),
+            next_observation={"value": np.array([1], dtype=np.int64)},
+            terminated=np.array([False], dtype=np.bool_),
+            truncated=np.array([False], dtype=np.bool_),
+            action_mask=mask,  # type: ignore[arg-type]
+        )
+
+    free = make({"action": np.array([True, True, False], dtype=np.bool_)})
+    forced = make({"action": np.array([True, False, False], dtype=np.bool_)})
+    assert Unroll((free, forced), actor_id="actor", sequence_id=0).mask_freedom == 0.5
+    assert (
+        Unroll(
+            (make({"action": np.array([True, True], dtype=np.bool_)}),),
+            actor_id="actor",
+            sequence_id=0,
+        ).mask_freedom
+        == 1.0
+    )
+
+
 def test_action_receipt_validation_guards() -> None:
     episode_id = uuid4()
 

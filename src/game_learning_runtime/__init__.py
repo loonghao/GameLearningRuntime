@@ -198,7 +198,13 @@ from game_learning_runtime.spatial_knowledge import (
     SpatialKnowledgeGraph,
     TraversabilityStatus,
 )
-from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKind, TensorSpec
+from game_learning_runtime.specs import (
+    CompositeSpec,
+    EnvironmentSpec,
+    SpaceKind,
+    TensorSpec,
+    mask_valid_counts,
+)
 from game_learning_runtime.training import (
     TRAINING_SCHEMA_VERSION,
     BridgeConfig,
@@ -422,6 +428,7 @@ __all__ = [
     "load_reward_safety_config",
     "load_runtime_integration",
     "load_training_config",
+    "mask_valid_counts",
     "protocol_path",
     "read_capture_index",
     "read_jsonl_transitions",

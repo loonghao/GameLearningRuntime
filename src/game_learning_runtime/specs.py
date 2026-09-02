@@ -150,6 +150,32 @@ class CompositeSpec:
         return result
 
 
+def mask_valid_counts(
+    spec: CompositeSpec,
+    mask: Mapping[str, Any] | None,
+) -> dict[str, int]:
+    """Return the number of legal actions for every action-mask leaf.
+
+    ``None`` means that no mask was supplied and therefore returns an empty
+    mapping. A supplied mask is validated against the recursive composite
+    contract before counting flattened leaves, avoiding the common mistake of
+    counting action-head keys instead of boolean entries.
+    """
+
+    if mask is None:
+        return {}
+    spec.validate(mask, path="action_mask")
+    counts: dict[str, int] = {}
+    for path, leaf_spec in spec.flatten().items():
+        if leaf_spec.kind is not SpaceKind.BINARY:
+            raise ValueError(f"{path} is not a binary action-mask leaf")
+        value: Any = mask
+        for name in path.split("."):
+            value = value[name]
+        counts[path] = int(np.count_nonzero(np.asarray(value).reshape(-1)))
+    return counts
+
+
 def _default_reward_spec() -> TensorSpec:
     return TensorSpec(shape=(1,), dtype=np.float32)
 

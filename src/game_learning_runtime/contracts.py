@@ -292,3 +292,33 @@ class Unroll:
             if receipt is not None:
                 counts[receipt.outcome.value] = counts.get(receipt.outcome.value, 0) + 1
         return MappingProxyType(counts)
+
+    @property
+    def mask_freedom(self) -> float:
+        """Fraction of masked transitions with more than one legal action.
+
+        The denominator contains only transitions carrying an action mask;
+        unmasked transitions have no mask-local count and are therefore not
+        classified as forced or free by this property.
+        """
+
+        masked = [
+            transition.action_mask for transition in self.transitions if transition.action_mask
+        ]
+        if not masked:
+            return 0.0
+        free = sum(
+            any(np.count_nonzero(np.asarray(leaf).reshape(-1)) > 1 for leaf in _tree_leaves(mask))
+            for mask in masked
+        )
+        return free / len(masked)
+
+
+def _tree_leaves(value: TensorTree) -> tuple[NDArray[Any], ...]:
+    leaves: list[NDArray[Any]] = []
+    for child in value.values():
+        if isinstance(child, Mapping):
+            leaves.extend(_tree_leaves(child))
+        else:
+            leaves.append(np.asarray(child))
+    return tuple(leaves)
