@@ -48,7 +48,17 @@ from game_learning_runtime.capture import (
     read_capture_index,
     verify_capture_manifest,
 )
-from game_learning_runtime.collector import Policy, SyncCollector
+from game_learning_runtime.collector import (
+    ActorQueueCancelled,
+    ActorQueueClosed,
+    ActorQueueCommitError,
+    ActorQueueFull,
+    ActorQueueMetrics,
+    BoundedActorQueue,
+    Policy,
+    QueuedUnroll,
+    SyncCollector,
+)
 from game_learning_runtime.contracts import (
     ActionOutcome,
     ActionReceipt,
@@ -251,9 +261,15 @@ __all__ = [
     "ActionOutcome",
     "ActionReceipt",
     "ActionReconciliation",
+    "ActorQueueCancelled",
+    "ActorQueueClosed",
+    "ActorQueueCommitError",
+    "ActorQueueFull",
+    "ActorQueueMetrics",
     "AgentGoal",
     "ArtifactLineage",
     "ArtifactRecord",
+    "BoundedActorQueue",
     "BridgeAttachRequest",
     "BridgeConfig",
     "BridgeDriver",
@@ -345,6 +361,7 @@ __all__ = [
     "Policy",
     "ProjectCommand",
     "PromotionMode",
+    "QueuedUnroll",
     "RealtimeActionReceipt",
     "RealtimeActionStatus",
     "RealtimeStepTiming",

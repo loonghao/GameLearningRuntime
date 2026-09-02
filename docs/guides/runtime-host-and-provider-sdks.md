@@ -123,5 +123,5 @@ bundle. Never store authentication material or local executable/game paths.
 | Reconnect/resume reconciliation | Implemented as opt-in `reconnect-resume-v1` |
 | Authenticated target-bound local IPC | Not implemented |
 | Live external C#/C++ provider connection | Not implemented |
-| Shared memory / asynchronous actor queue | Benchmark-gated, not implemented |
+| Shared memory / asynchronous actor queue | Optional standard-library `BoundedActorQueue`; shared memory remains benchmark-gated |
 | Universal injection/bootstrap | Intentionally not provided |
