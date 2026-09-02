@@ -147,7 +147,7 @@ environment IDs, metadata, paths, and timestamps never enter its report.
 | Step before reset/after terminal | Contract and bridge wrappers fail closed | Attach/reset policy profiles |
 | Stale episode or skipped step | Client and server bridge fencing reject it | Reconnect/resume reconciliation |
 | Dataset corruption | Reader reports the exact record line | Checksummed chunk containers |
-| Slow actor/backpressure | Fixed synchronous unroll only | Bounded async queues and metrics |
+| Slow actor/backpressure | Fixed synchronous unroll plus optional bounded actor queue | Queue policy and backpressure metrics |
 | Transport loss during action | No implicit retry; opt-in resume reconciles the authoritative cursor | Authenticated target-bound transport |
 | Stale or conflicting guide claim | Advisory only; preserve provenance and verify at runtime | Automated source refresh policy |
 | Missing/wrong reward source | Composer fails closed before returning a reward | Multi-agent/vector reward policy |

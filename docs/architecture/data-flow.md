@@ -131,10 +131,12 @@ authority, or model compatibility.
 
 - PPO consumes fixed-length `Unroll` values; the optional PyTorch integration
   provides masked clipped loss and truncation-aware GAE primitives.
-- IMPALA actors attach `actor_id`, `sequence_id`, and `policy_version`; a future
-  distributed queue transports those unrolls to a learner. The optional
-  objective layer already provides detached V-trace targets and IMPALA loss
-  components without prescribing actor or learner topology.
+- IMPALA actors attach `actor_id`, `sequence_id`, and `policy_version`. The
+  optional `BoundedActorQueue` transports those unrolls through a bounded,
+  learner-neutral lease/commit boundary. Its block, drop-oldest, and fail
+  policies expose queue depth, actor lag, policy-version lag, and dropped or
+  uncommitted unrolls without importing an async runtime. The synchronous
+  collector remains the compatibility path.
 - BC writes expert actions as ordinary transitions, preserving masks and next
   observations for later DAgger or offline RL; masked cross-entropy is reusable
   across project-specific policies.

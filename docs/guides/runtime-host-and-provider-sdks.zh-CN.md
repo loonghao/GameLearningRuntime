@@ -89,5 +89,5 @@ episode ID 和自己最后提交的 step；Provider 返回权威 `ProviderTimeSt
 | 重连/resume 动作对账 | 已实现；opt-in `reconnect-resume-v1` |
 | 认证且 target-bound 的本地 IPC | 尚未实现 |
 | 实机 C#/C++ Provider 连接 | 尚未实现 |
-| 共享内存/异步 actor queue | 需基准达标，尚未实现 |
+| 共享内存/异步 actor queue | 可选标准库 `BoundedActorQueue`；共享内存仍需基准达标 |
 | 通用注入/启动器 | 明确不提供 |
