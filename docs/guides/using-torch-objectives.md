@@ -27,6 +27,22 @@ Action masks must be boolean, exactly match the logits, and keep at least one
 valid action in every row. An expert or sampled action excluded by its mask is
 rejected instead of silently trained.
 
+For a structured action contract, inspect the number of legal actions per mask
+head before assembling a learner batch:
+
+```python
+from game_learning_runtime import mask_valid_counts
+
+mask_spec = environment.spec.action_mask
+valid_actions = mask_valid_counts(mask_spec, timestep.action_mask) if mask_spec else {}
+```
+
+The helper recursively flattens nested heads and returns paths such as
+`{"combat.verb": 2, "combat.target": 1}`. It returns an empty mapping when
+the timestep has no mask. An `Unroll` also exposes `mask_freedom`, the fraction
+of its masked transitions with more than one legal action. This makes a
+masked-policy no-op visible before trusting entropy, KL, or clip diagnostics.
+
 `terminated` and `truncated` are intentionally separate. A terminated state has
 no bootstrap value. A truncated state bootstraps from the next-state value but
 stops advantage or V-trace recursion at that boundary.

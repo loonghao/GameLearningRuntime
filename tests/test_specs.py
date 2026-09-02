@@ -9,6 +9,7 @@ from game_learning_runtime import (
     EnvironmentSpec,
     SpaceKind,
     TensorSpec,
+    mask_valid_counts,
 )
 
 
@@ -99,6 +100,38 @@ def test_composite_spec_rejects_invalid_declarations() -> None:
         CompositeSpec({"bad.path": TensorSpec((1,), np.float32)})
     with pytest.raises(TypeError, match="not a TensorSpec"):
         CompositeSpec({"bad": object()})  # type: ignore[dict-item]
+
+
+def test_mask_valid_counts_flattens_heads_instead_of_counting_mapping_keys() -> None:
+    spec = CompositeSpec(
+        {
+            "combat": CompositeSpec(
+                {
+                    "verb": TensorSpec((3,), np.bool_, kind=SpaceKind.BINARY),
+                    "target": TensorSpec((2,), np.bool_, kind=SpaceKind.BINARY),
+                }
+            )
+        }
+    )
+    mask = {
+        "combat": {
+            "verb": np.array([False, True, True], dtype=np.bool_),
+            "target": np.array([True, False], dtype=np.bool_),
+        }
+    }
+
+    assert mask_valid_counts(spec, mask) == {"combat.verb": 2, "combat.target": 1}
+    assert mask_valid_counts(spec, None) == {}
+    with pytest.raises(ContractViolation, match="dtype"):
+        mask_valid_counts(
+            spec,
+            {
+                "combat": {
+                    "verb": np.array([0, 1, 1], dtype=np.int64),
+                    "target": np.array([True, False], dtype=np.bool_),
+                }
+            },
+        )
 
 
 def test_environment_spec_rejects_invalid_identity_and_signal_specs() -> None:
