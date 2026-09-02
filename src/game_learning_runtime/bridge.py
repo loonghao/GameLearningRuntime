@@ -14,7 +14,12 @@ from types import MappingProxyType
 from typing import Any, Protocol
 from uuid import UUID
 
-from game_learning_runtime.contracts import TensorTree, TimeStep, freeze_tree
+from game_learning_runtime.contracts import (
+    ActionReconciliation,
+    TensorTree,
+    TimeStep,
+    freeze_tree,
+)
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.specs import EnvironmentSpec
@@ -78,6 +83,56 @@ class BridgeStepRequest:
         object.__setattr__(self, "action", freeze_tree(self.action))
 
 
+@dataclass(frozen=True, slots=True)
+class BridgeResumeRequest:
+    """Reconnect request carrying the last client-committed cursor."""
+
+    episode_id: UUID
+    last_committed_step_id: int
+    target_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.episode_id, UUID):
+            raise TypeError("episode_id must be a UUID")
+        if (
+            not isinstance(self.last_committed_step_id, int)
+            or isinstance(self.last_committed_step_id, bool)
+            or self.last_committed_step_id < 0
+        ):
+            raise ValueError("last_committed_step_id must be a non-negative integer")
+        if self.target_id is not None:
+            if not isinstance(self.target_id, str):
+                raise TypeError("target_id must be a string or None")
+            if not self.target_id or len(self.target_id) > 128:
+                raise ValueError("target_id must contain 1-128 characters or None")
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeResumeResult:
+    """Authoritative cursor plus an optional in-flight action verdict."""
+
+    timestep: TimeStep
+    committed_step_id: int
+    reconciliation: ActionReconciliation | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.timestep, TimeStep):
+            raise TypeError("timestep must be a TimeStep")
+        if (
+            not isinstance(self.committed_step_id, int)
+            or isinstance(self.committed_step_id, bool)
+            or self.committed_step_id < 0
+        ):
+            raise ValueError("committed_step_id must be a non-negative integer")
+        if self.timestep.step_id != self.committed_step_id:
+            raise ValueError("committed_step_id must match timestep.step_id")
+        if (
+            self.reconciliation is not None
+            and self.reconciliation.episode_id != self.timestep.episode_id
+        ):
+            raise ValueError("reconciliation episode_id must match timestep.episode_id")
+
+
 class BridgeDriver(Protocol):
     """Transport-side port implemented by HTTP, JSONL, pipe, or native drivers."""
 
@@ -95,6 +150,10 @@ class BridgeDriver(Protocol):
 
     def step(self, request: BridgeStepRequest) -> TimeStep:
         """Apply one fenced action and return its authoritative post-state."""
+        ...
+
+    def resume(self, request: BridgeResumeRequest) -> BridgeResumeResult:
+        """Reconcile an in-flight action and return the authoritative cursor."""
         ...
 
     def close(self) -> None:
@@ -171,6 +230,18 @@ class EnvironmentBridgeDriver:
                 )
             self._current = result
             return result
+
+    def resume(self, request: BridgeResumeRequest) -> BridgeResumeResult:
+        with self._lock:
+            self._ensure_open()
+            current = self._current
+            if current is None:
+                raise ContractViolation("bridge resume requires reset or attach first")
+            if request.episode_id != current.episode_id:
+                raise ContractViolation("bridge resume episode_id does not match current episode")
+            if request.last_committed_step_id > current.step_id:
+                raise ContractViolation("bridge resume cursor is ahead of the authoritative step")
+            return BridgeResumeResult(timestep=current, committed_step_id=current.step_id)
 
     def close(self) -> None:
         with self._lock:
@@ -291,6 +362,38 @@ class BridgeEnvironment(GameEnvironment):
         self._current = result
         return result
 
+    def resume(
+        self,
+        *,
+        episode_id: UUID,
+        last_committed_step_id: int,
+        target_id: str | None = None,
+    ) -> BridgeResumeResult:
+        """Reconnect without replaying a mutating action."""
+
+        self._ensure_open()
+        if "reconnect-resume-v1" not in self._spec.capabilities:
+            raise ContractViolation("bridge does not declare reconnect-resume-v1 capability")
+        request = BridgeResumeRequest(
+            episode_id=episode_id,
+            last_committed_step_id=last_committed_step_id,
+            target_id=target_id,
+        )
+        resume = getattr(self._driver, "resume", None)
+        if resume is None:
+            raise ContractViolation("bridge declares reconnect-resume-v1 but has no resume method")
+        result = resume(request)
+        if not isinstance(result, BridgeResumeResult):
+            raise TypeError("bridge driver resume() must return BridgeResumeResult")
+        if result.timestep.episode_id != request.episode_id:
+            raise ContractViolation("bridge resume returned a different episode_id")
+        if result.committed_step_id < request.last_committed_step_id:
+            raise ContractViolation("bridge resume returned a cursor older than the client cursor")
+        if self._current is not None and result.committed_step_id < self._current.step_id:
+            raise ContractViolation("bridge resume would rewind the authoritative cursor")
+        self._current = result.timestep
+        return result
+
     def close(self) -> None:
         if self._closed:
             return
@@ -318,6 +421,8 @@ __all__ = [
     "BridgeDriver",
     "BridgeEnvironment",
     "BridgeResetRequest",
+    "BridgeResumeRequest",
+    "BridgeResumeResult",
     "BridgeStepRequest",
     "EnvironmentBridgeDriver",
 ]

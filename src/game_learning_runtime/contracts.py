@@ -87,6 +87,55 @@ class ActionReceipt:
             raise ValueError("action receipt does not match the authoritative timestep")
 
 
+class ReconciliationOutcome(str, Enum):
+    """Provider verdict for an action whose response was lost in transit."""
+
+    APPLIED = "applied"
+    NOT_APPLIED = "not_applied"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class ActionReconciliation:
+    """One in-flight action verdict returned by a reconnect handshake."""
+
+    episode_id: UUID
+    expected_step_id: int
+    outcome: ReconciliationOutcome
+    authoritative_step_id: int
+    timestamp_ns: int
+    retryable: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.episode_id, UUID):
+            raise TypeError("episode_id must be a UUID")
+        if (
+            not isinstance(self.expected_step_id, int)
+            or isinstance(self.expected_step_id, bool)
+            or self.expected_step_id <= 0
+        ):
+            raise ValueError("expected_step_id must be a positive integer")
+        if not isinstance(self.outcome, ReconciliationOutcome):
+            try:
+                object.__setattr__(self, "outcome", ReconciliationOutcome(self.outcome))
+            except ValueError as error:
+                raise ValueError(f"unsupported reconciliation outcome: {self.outcome!r}") from error
+        if (
+            not isinstance(self.authoritative_step_id, int)
+            or isinstance(self.authoritative_step_id, bool)
+            or self.authoritative_step_id < 0
+        ):
+            raise ValueError("authoritative_step_id must be a non-negative integer")
+        if (
+            not isinstance(self.timestamp_ns, int)
+            or isinstance(self.timestamp_ns, bool)
+            or self.timestamp_ns < 0
+        ):
+            raise ValueError("timestamp_ns must be a non-negative integer")
+        if not isinstance(self.retryable, bool):
+            raise TypeError("retryable must be bool")
+
+
 def freeze_tree(value: Mapping[str, Any]) -> TensorTree:
     """Copy a nested tensor mapping and make each array read-only."""
 

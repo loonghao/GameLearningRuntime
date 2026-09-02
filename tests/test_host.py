@@ -15,6 +15,7 @@ from game_learning_runtime import (
     BridgeAttachRequest,
     BridgeEnvironment,
     BridgeResetRequest,
+    BridgeResumeRequest,
     BridgeStepRequest,
     ContractEnvironment,
     HostBridgeDriver,
@@ -209,6 +210,93 @@ def test_host_driver_parses_and_binds_action_receipt() -> None:
     assert result.action_receipt is not None
     assert result.action_receipt.outcome.value == "no_effect"
     assert result.action_receipt.authoritative_observation_sequence == 3
+    driver.close()
+
+
+def test_host_driver_round_trips_resume_reconciliation() -> None:
+    class _ResumeChannel(_ScriptedChannel):
+        def exchange(self, request: Mapping[str, object]) -> Mapping[str, object]:
+            if request["operation"] != "resume":
+                return super().exchange(request)
+            self.requests.append(request)
+            request_id = request["request_id"]
+            return {
+                "schema": HOST_SCHEMA,
+                "request_id": request_id,
+                "ok": True,
+                "result": {
+                    "timestep": _timestep(self.episode_id, 0, terminal=False),
+                    "committed_step_id": 0,
+                    "reconciliation": {
+                        "episode_id": str(self.episode_id),
+                        "expected_step_id": 1,
+                        "outcome": "unknown",
+                        "authoritative_step_id": 0,
+                        "timestamp_ns": 42,
+                        "retryable": False,
+                    },
+                },
+            }
+
+    channel = _ResumeChannel()
+    driver = HostBridgeDriver(channel)
+    initial = driver.reset(BridgeResetRequest())
+
+    result = driver.resume(
+        BridgeResumeRequest(
+            episode_id=initial.episode_id,
+            last_committed_step_id=0,
+            target_id="runtime-1",
+        )
+    )
+
+    assert result.timestep.episode_id == initial.episode_id
+    assert result.timestep.step_id == initial.step_id
+    assert result.reconciliation is not None
+    assert result.reconciliation.outcome.value == "unknown"
+    assert channel.requests[-1]["payload"] == {
+        "episode_id": str(initial.episode_id),
+        "last_committed_step_id": 0,
+        "target_id": "runtime-1",
+    }
+    driver.close()
+
+
+def test_host_driver_rejects_resume_reconciliation_cursor_mismatch() -> None:
+    class _InvalidResumeChannel(_ScriptedChannel):
+        def exchange(self, request: Mapping[str, object]) -> Mapping[str, object]:
+            if request["operation"] == "resume":
+                self.requests.append(request)
+                return {
+                    "schema": HOST_SCHEMA,
+                    "request_id": request["request_id"],
+                    "ok": True,
+                    "result": {
+                        "timestep": _timestep(self.episode_id, 0, terminal=False),
+                        "committed_step_id": 0,
+                        "reconciliation": {
+                            "episode_id": str(self.episode_id),
+                            "expected_step_id": 1,
+                            "outcome": "applied",
+                            "authoritative_step_id": 1,
+                            "timestamp_ns": 42,
+                        },
+                    },
+                }
+            return super().exchange(request)
+
+    channel = _InvalidResumeChannel()
+    driver = HostBridgeDriver(channel)
+    initial = driver.reset(BridgeResetRequest())
+
+    with pytest.raises(HostProtocolError, match="authoritative_step_id"):
+        driver.resume(
+            BridgeResumeRequest(
+                episode_id=initial.episode_id,
+                last_committed_step_id=0,
+            )
+        )
+
     driver.close()
 
 

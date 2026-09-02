@@ -399,4 +399,90 @@ namespace GameLearningRuntime.Provider
                 source.ToDictionary(pair => pair.Key, pair => pair.Value));
         }
     }
+
+    /// <summary>Authoritative result for reconnecting an interrupted logical episode.</summary>
+    public sealed class ProviderResumeResult
+    {
+        /// <summary>Create a validated reconnect result.</summary>
+        public ProviderResumeResult(
+            ProviderTimeStep timestep,
+            ulong committedStepId,
+            ActionReconciliation? reconciliation = null)
+        {
+            Timestep = timestep ?? throw new ArgumentNullException(nameof(timestep));
+            if (committedStepId != timestep.StepId)
+            {
+                throw new ArgumentException(
+                    "Committed step ID must match the returned time step.",
+                    nameof(committedStepId));
+            }
+
+            if (reconciliation != null
+                && (reconciliation.EpisodeId != timestep.EpisodeId
+                    || reconciliation.AuthoritativeStepId != committedStepId))
+            {
+                throw new ArgumentException(
+                    "Reconciliation must match the returned authoritative cursor.",
+                    nameof(reconciliation));
+            }
+
+            CommittedStepId = committedStepId;
+            Reconciliation = reconciliation;
+        }
+
+        /// <summary>Authoritative post-state after reconnect.</summary>
+        public ProviderTimeStep Timestep { get; }
+
+        /// <summary>Last committed step known by the runtime.</summary>
+        public ulong CommittedStepId { get; }
+
+        /// <summary>Optional result for the in-flight action being reconciled.</summary>
+        public ActionReconciliation? Reconciliation { get; }
+    }
+
+    /// <summary>Authoritative outcome for one action submitted before reconnect.</summary>
+    public sealed class ActionReconciliation
+    {
+        /// <summary>Create an immutable action reconciliation record.</summary>
+        public ActionReconciliation(
+            Guid episodeId,
+            ulong expectedStepId,
+            ReconciliationOutcome outcome,
+            ulong authoritativeStepId,
+            ulong timestampNanoseconds,
+            bool retryable = false)
+        {
+            if (expectedStepId == 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(expectedStepId),
+                    "Expected step ID must be non-zero.");
+            }
+
+            EpisodeId = episodeId;
+            ExpectedStepId = expectedStepId;
+            Outcome = outcome;
+            AuthoritativeStepId = authoritativeStepId;
+            TimestampNanoseconds = timestampNanoseconds;
+            Retryable = retryable;
+        }
+
+        /// <summary>Logical GLR episode identity.</summary>
+        public Guid EpisodeId { get; }
+
+        /// <summary>Step ID of the action submitted before reconnect.</summary>
+        public ulong ExpectedStepId { get; }
+
+        /// <summary>Authoritative action application outcome.</summary>
+        public ReconciliationOutcome Outcome { get; }
+
+        /// <summary>Authoritative post-state cursor.</summary>
+        public ulong AuthoritativeStepId { get; }
+
+        /// <summary>Runtime timestamp for the reconciliation decision.</summary>
+        public ulong TimestampNanoseconds { get; }
+
+        /// <summary>Whether the caller may safely retry the action.</summary>
+        public bool Retryable { get; }
+    }
 }

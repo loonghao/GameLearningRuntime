@@ -79,6 +79,28 @@ message StepRequest {
   map<string, Tensor> action = 3;
 }
 
+enum ReconciliationOutcome {
+  RECONCILIATION_OUTCOME_UNSPECIFIED = 0;
+  RECONCILIATION_OUTCOME_APPLIED = 1;
+  RECONCILIATION_OUTCOME_NOT_APPLIED = 2;
+  RECONCILIATION_OUTCOME_UNKNOWN = 3;
+}
+
+message ActionReconciliation {
+  string episode_id = 1;
+  uint64 expected_step_id = 2;
+  ReconciliationOutcome outcome = 3;
+  uint64 authoritative_step_id = 4;
+  uint64 timestamp_ns = 5;
+  bool retryable = 6;
+}
+
+message ResumeRequest {
+  string episode_id = 1;
+  uint64 last_committed_step_id = 2;
+  optional string target_id = 3;
+}
+
 message RuntimeEvent {
   string name = 1;
   uint64 timestamp_ns = 2;
@@ -112,11 +134,18 @@ message TimeStep {
   optional ActionReceipt action_receipt = 11;
 }
 
+message ResumeResult {
+  TimeStep timestep = 1;
+  uint64 committed_step_id = 2;
+  optional ActionReconciliation reconciliation = 3;
+}
+
 service GameRuntime {
   rpc Describe(DescribeRequest) returns (EnvironmentDescriptor);
   rpc Reset(ResetRequest) returns (TimeStep);
   rpc Attach(AttachRequest) returns (TimeStep);
   rpc Step(StepRequest) returns (TimeStep);
+  rpc Resume(ResumeRequest) returns (ResumeResult);
   rpc Interact(stream StepRequest) returns (stream TimeStep);
 }
 

@@ -46,6 +46,15 @@ environment = ContractEnvironment(
 
 `HostProcessConfig` 会拒绝相对路径和不存在的程序，不通过 shell 启动，也不会搜索游戏。当前 Host 只提供 `synthetic-counter` 与串行 stdio；它是真实端到端契约测试，但不是 Unity/Unreal 实机验收。响应超时或帧损坏会让该子进程会话立即 fail-closed；调用方必须启动新 Host，不能让迟到响应与下一动作错配。
 
+## 重连与未完成动作对账
+
+能够证明 episode 状态已持久化的 Provider 可以声明
+`reconnect-resume-v1`，并实现可选的 resumable Provider 契约。调用方发送
+episode ID 和自己最后提交的 step；Provider 返回权威 `ProviderTimeStep`，并可为
+传输中断时尚未确认的动作返回 `ActionReconciliation`。`applied`、`not_applied`、
+`unknown` 是权威结果；只有 Provider 能证明重试安全时才能将 `retryable` 设为 true。
+重连结果不能把游标推进到权威返回 step 之外，episode 或游标不匹配必须拒绝。
+
 ## 实现 Unity Provider
 
 构建或下载 `GameLearningRuntime.Provider`，在已授权的 Unity 插件中引用这个 .NET Standard 2.0 程序集并实现 `IRuntimeProvider`。Unity 官方插件或 BepInEx 插件只保留薄启动职责：
@@ -77,6 +86,7 @@ environment = ContractEnvironment(
 | 合成子进程 smoke | 已实现；只输出聚合证据 |
 | C# Unity/Provider 契约 | 已实现；.NET Standard 2.0 |
 | C++ Unreal/Provider 契约 | 已实现；header-only C++20 |
+| 重连/resume 动作对账 | 已实现；opt-in `reconnect-resume-v1` |
 | 认证且 target-bound 的本地 IPC | 尚未实现 |
 | 实机 C#/C++ Provider 连接 | 尚未实现 |
 | 共享内存/异步 actor queue | 需基准达标，尚未实现 |
