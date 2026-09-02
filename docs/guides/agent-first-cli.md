@@ -66,6 +66,11 @@ GLR never invokes a shell.
   "researcher": {"argv": ["python", "tools/research.py", "{research_path}"]},
   "planner": {"argv": ["python", "tools/plan.py", "{trial_path}"]},
   "evaluator": {"argv": ["python", "tools/evaluate.py", "{evaluation_path}"]},
+  "progress": {
+    "signal": "day_counter",
+    "window_steps": 256,
+    "max_stalled_rounds": 3
+  },
   "capture": {
     "argv": ["python", "tools/record_window.py", "{capture_video}", "{capture_index}"],
     "required": true,
@@ -87,6 +92,29 @@ UI readability and learner needs rather than presentation quality.
 Project roles receive `GLR_PROJECT_ROOT`, `GLR_BRIDGE_PATH`, `GLR_RUN_ID`, `GLR_RUN_DIR`,
 `GLR_STORE_PATH`, environment identity, capture output paths, and goal-loop paths through
 environment variables. They must stay bounded and validate the exact game target independently.
+
+Progress detection is opt-in. When `progress` is declared, a completed trainer must include this
+shape in `trainer.result.json`:
+
+```json
+{
+  "schema_version": "glr.trainer-result.v1",
+  "status": "completed",
+  "metrics": {},
+  "progress": {
+    "signal": "day_counter",
+    "first_value": 12,
+    "last_value": 12,
+    "steps_since_change": 256,
+    "accepted_steps": 256
+  }
+}
+```
+
+The CLI marks a trial `stalled` when the declared value is unchanged for the configured window,
+and aborts the goal with exit code `76` after the configured consecutive-round threshold. The
+verdict includes the signal, first/last values, and unchanged-step count. Without `progress`, no
+signal is invented and no stall detection runs.
 
 ## Start the runtime and train
 

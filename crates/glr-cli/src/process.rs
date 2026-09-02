@@ -163,6 +163,18 @@ fn configure_command(
         .env("GLR_CAPTURE_VIDEO", &context["capture_video"])
         .env("GLR_CAPTURE_INDEX", &context["capture_index"])
         .env("GLR_CAPTURE_STATUS", &context["capture_status"]);
+    if let Some(progress) = &project.progress {
+        process
+            .env("GLR_PROGRESS_SIGNAL", &progress.signal)
+            .env(
+                "GLR_PROGRESS_WINDOW_STEPS",
+                progress.window_steps.to_string(),
+            )
+            .env(
+                "GLR_PROGRESS_MAX_STALLED_ROUNDS",
+                progress.max_stalled_rounds.to_string(),
+            );
+    }
     if let Some(bundle) = bundle {
         process.env("GLR_MODEL_BUNDLE", bundle);
     }
