@@ -14,6 +14,8 @@ from game_learning_runtime import (
     TimeStep,
     Transition,
     Unroll,
+    environment_config_digest,
+    normalize_environment_config,
 )
 
 
@@ -69,6 +71,46 @@ def test_transition_and_unroll_metadata_guards() -> None:
         Unroll((transition,), actor_id="", sequence_id=0)
     with pytest.raises(ValueError, match="cannot be negative"):
         Unroll((transition,), actor_id="actor", sequence_id=-1)
+
+
+def test_environment_config_snapshots_are_canonical_and_digest_bound() -> None:
+    transition = Transition(
+        episode_id=uuid4(),
+        step_id=0,
+        observation={"value": np.array([0], dtype=np.int64)},
+        action={"value": np.array([1], dtype=np.int64)},
+        reward=np.array([0.0], dtype=np.float32),
+        next_observation={"value": np.array([1], dtype=np.int64)},
+        terminated=np.array([False], dtype=np.bool_),
+        truncated=np.array([False], dtype=np.bool_),
+    )
+    first = {"revive": "on", "difficulty": "normal"}
+    second = {"difficulty": "normal", "revive": "on"}
+    assert normalize_environment_config(first) == second
+    assert environment_config_digest(first) == environment_config_digest(second)
+    assert normalize_environment_config(None) is None
+    assert environment_config_digest(None) is None
+    with pytest.raises(TypeError, match="mapping"):
+        normalize_environment_config(object())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="values"):
+        normalize_environment_config({"difficulty": 3})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="keys"):
+        normalize_environment_config({"": "normal"})
+    with pytest.raises(ValueError, match="lowercase SHA-256"):
+        Unroll(
+            (transition,),
+            actor_id="actor",
+            sequence_id=0,
+            environment_config_digest="A" * 64,
+        )
+    with pytest.raises(ValueError, match="does not match"):
+        Unroll(
+            (transition,),
+            actor_id="actor",
+            sequence_id=0,
+            environment_config_snapshot=first,
+            environment_config_digest="0" * 64,
+        )
 
 
 def test_action_receipt_is_typed_and_counted_without_info_parsing() -> None:

@@ -127,6 +127,16 @@ only when environment and protocol match, and imports become advisory. Similar
 games can reuse family-scoped research findings, never coordinates, action
 authority, or model compatibility.
 
+An adapter may expose mutable environment options through
+`GameEnvironment.config_snapshot()`. `SyncCollector` takes that snapshot at
+episode start and binds its canonical SHA-256 digest to the resulting `Unroll`.
+`TrainingStore.create_run()` and `record_metric()` accept the same snapshot or
+digest, while `list_environment_config_changes()` returns the campaign runs at
+which a new digest first appeared. This keeps an environment toggle change
+attributable instead of making it look like a learner regression. The hook is
+optional; adapters that do not expose mutable options continue to produce
+`None`.
+
 ## Learning paths
 
 - PPO consumes fixed-length `Unroll` values; the optional PyTorch integration

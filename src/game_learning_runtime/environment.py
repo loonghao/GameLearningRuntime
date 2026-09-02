@@ -8,7 +8,12 @@ from types import TracebackType
 from typing import Any
 from uuid import UUID
 
-from game_learning_runtime.contracts import TensorTree, TimeStep
+from game_learning_runtime.contracts import (
+    EnvironmentConfigSnapshot,
+    TensorTree,
+    TimeStep,
+    normalize_environment_config,
+)
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.specs import EnvironmentSpec
 
@@ -32,6 +37,11 @@ class GameEnvironment(ABC):
 
         del options
         raise ContractViolation("environment does not support live attach")
+
+    def config_snapshot(self) -> EnvironmentConfigSnapshot | None:
+        """Return mutable environment options in force for the active episode."""
+
+        return None
 
     @abstractmethod
     def step(self, action: TensorTree) -> TimeStep:
@@ -79,6 +89,11 @@ class ContractEnvironment(GameEnvironment):
             raise ContractViolation("environment does not declare live-attach capability")
         timestep = self._environment.attach(options=options)
         return self._accept_start(timestep, operation="attach")
+
+    def config_snapshot(self) -> EnvironmentConfigSnapshot | None:
+        """Return a validated, immutable snapshot from the wrapped adapter."""
+
+        return normalize_environment_config(self._environment.config_snapshot())
 
     def _accept_start(self, timestep: TimeStep, *, operation: str) -> TimeStep:
         self._validate_timestep(timestep)

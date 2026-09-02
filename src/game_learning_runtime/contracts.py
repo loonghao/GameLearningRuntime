@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -17,6 +19,38 @@ from numpy.typing import NDArray
 from game_learning_runtime.realtime import RealtimeActionReceipt
 
 TensorTree: TypeAlias = Mapping[str, "NDArray[Any] | TensorTree"]
+EnvironmentConfigSnapshot: TypeAlias = Mapping[str, str]
+
+
+def normalize_environment_config(
+    snapshot: EnvironmentConfigSnapshot | None,
+) -> Mapping[str, str] | None:
+    """Copy and validate a mutable environment configuration snapshot."""
+
+    if snapshot is None:
+        return None
+    if not isinstance(snapshot, Mapping):
+        raise TypeError("environment config snapshot must be a mapping or None")
+    normalized: dict[str, str] = {}
+    for key, value in snapshot.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError("environment config snapshot keys must be non-empty strings")
+        if not isinstance(value, str):
+            raise TypeError("environment config snapshot values must be strings")
+        normalized[key] = value
+    return MappingProxyType(dict(sorted(normalized.items())))
+
+
+def environment_config_digest(snapshot: EnvironmentConfigSnapshot | None) -> str | None:
+    """Return a deterministic SHA-256 digest for a configuration snapshot."""
+
+    normalized = normalize_environment_config(snapshot)
+    if normalized is None:
+        return None
+    payload = json.dumps(
+        dict(normalized), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 class ActionOutcome(str, Enum):
@@ -265,6 +299,8 @@ class Unroll:
     actor_id: str
     sequence_id: int
     policy_version: int = 0
+    environment_config_snapshot: Mapping[str, str] | None = None
+    environment_config_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not self.transitions:
@@ -274,6 +310,23 @@ class Unroll:
         if self.sequence_id < 0 or self.policy_version < 0:
             raise ValueError("sequence_id and policy_version cannot be negative")
         object.__setattr__(self, "transitions", tuple(self.transitions))
+        snapshot = normalize_environment_config(self.environment_config_snapshot)
+        expected_digest = environment_config_digest(snapshot)
+        if self.environment_config_digest is not None:
+            if (
+                not isinstance(self.environment_config_digest, str)
+                or len(self.environment_config_digest) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in self.environment_config_digest
+                )
+            ):
+                raise ValueError("environment_config_digest must be a lowercase SHA-256 digest")
+            if expected_digest is not None and self.environment_config_digest != expected_digest:
+                raise ValueError("environment_config_digest does not match the snapshot")
+        elif expected_digest is not None:
+            object.__setattr__(self, "environment_config_digest", expected_digest)
+        object.__setattr__(self, "environment_config_snapshot", snapshot)
 
     @property
     def total_reward(self) -> NDArray[Any]:
