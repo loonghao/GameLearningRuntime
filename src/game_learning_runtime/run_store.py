@@ -7,7 +7,7 @@ import json
 import math
 import re
 import sqlite3
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -36,6 +36,7 @@ from game_learning_runtime.training import KnowledgeAuthority
 RUN_STORE_SCHEMA_VERSION = 2
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _MAX_JSON_BYTES = 1024 * 1024
+_MAX_RUN_STATE_BYTES = 64 * 1024
 
 
 class RunStatus(str, Enum):
@@ -101,6 +102,36 @@ def _json_mapping(value: Mapping[str, Any], *, path: str) -> tuple[str, Mapping[
     return encoded, MappingProxyType(decoded)
 
 
+def _run_state_namespace(value: object) -> str:
+    if not isinstance(value, str) or not 1 <= len(value) <= 128:
+        raise ValueError("run state namespace must be 1-128 characters")
+    parts = value.split("/")
+    if any(_IDENTIFIER.fullmatch(part) is None for part in parts):
+        raise ValueError("run state namespace must contain identifier segments separated by '/'")
+    return value
+
+
+def _run_state_schema_version(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535:
+        raise ValueError("run state schema_version must be between 1 and 65535")
+    return value
+
+
+def _run_state_mapping(value: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]]:
+    if not isinstance(value, Mapping) or any(
+        not isinstance(key, str) or _IDENTIFIER.fullmatch(key) is None for key in value
+    ):
+        raise ValueError("run state must be an object with identifier keys")
+    try:
+        encoded = json.dumps(dict(value), sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as error:
+        raise ValueError("run state must contain finite JSON data") from error
+    if len(encoded.encode("utf-8")) > _MAX_RUN_STATE_BYTES:
+        raise ValueError("run state exceeds the 64 KiB limit")
+    decoded = json.loads(encoded)
+    return encoded, MappingProxyType(decoded)
+
+
 @dataclass(frozen=True, slots=True)
 class RunRecord:
     run_id: str
@@ -147,6 +178,71 @@ class ArtifactRecord:
     sha256: str
     size_bytes: int
     metadata: Mapping[str, Any]
+
+
+class RunState(MutableMapping[str, Any]):
+    """Adapter-owned, run-scoped JSON state with write-through persistence.
+
+    Values are opaque to GLR. Assign a key to persist a new snapshot; nested
+    mutable values should be replaced after editing rather than mutated in
+    place, because only mapping operations are write-through.
+    """
+
+    def __init__(
+        self,
+        store: TrainingStore,
+        run_id: str,
+        namespace: str,
+        schema_version: int,
+        values: Mapping[str, Any],
+    ) -> None:
+        self._store = store
+        self.run_id = run_id
+        self.namespace = namespace
+        self.schema_version = schema_version
+        self._values = dict(values)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._values[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        _identifier(key, path="run state key")
+        updated = dict(self._values)
+        updated[key] = value
+        encoded, frozen = _run_state_mapping(updated)
+        self._store._write_run_state(
+            self.run_id,
+            self.namespace,
+            self.schema_version,
+            encoded,
+        )
+        self._values = dict(frozen)
+
+    def __delitem__(self, key: str) -> None:
+        if key not in self._values:
+            raise KeyError(key)
+        updated = dict(self._values)
+        del updated[key]
+        encoded, frozen = _run_state_mapping(updated)
+        self._store._write_run_state(
+            self.run_id,
+            self.namespace,
+            self.schema_version,
+            encoded,
+        )
+        self._values = dict(frozen)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def snapshot(self) -> Mapping[str, Any]:
+        """Return an immutable copy of the currently loaded state."""
+
+        _, frozen = _run_state_mapping(self._values)
+        return frozen
 
 
 def _portable_path(value: object, *, path: str) -> str:
@@ -353,6 +449,16 @@ class TrainingStore:
                 );
                 CREATE INDEX IF NOT EXISTS runs_environment_started
                     ON runs(environment_id, started_at_ns DESC);
+                CREATE TABLE IF NOT EXISTS run_state (
+                    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+                    namespace TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    state_json TEXT NOT NULL,
+                    updated_at_ns INTEGER NOT NULL,
+                    PRIMARY KEY(run_id, namespace)
+                );
+                CREATE INDEX IF NOT EXISTS run_state_run
+                    ON run_state(run_id, namespace);
                 CREATE TABLE IF NOT EXISTS events (
                     run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
                     sequence_id INTEGER NOT NULL,
@@ -562,7 +668,98 @@ class TrainingStore:
             )
             if cursor.rowcount != 1:
                 raise ContractViolation("run is missing or already terminal")
+            connection.execute("DELETE FROM run_state WHERE run_id = ?", (run_id,))
         return self.get_run(run_id)
+
+    def run_state(
+        self,
+        run_id: str,
+        namespace: str,
+        *,
+        schema_version: int,
+    ) -> RunState:
+        """Open adapter-owned state scoped to one active run.
+
+        A namespace is created lazily. Existing state must be opened with the
+        same schema version; a mismatch fails closed instead of returning data
+        the adapter may misinterpret.
+        """
+
+        _identifier(run_id, path="run_id")
+        resolved_namespace = _run_state_namespace(namespace)
+        resolved_schema = _run_state_schema_version(schema_version)
+        with self._connect() as connection:
+            run = connection.execute(
+                "SELECT status FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if run is None:
+                raise KeyError(f"unknown run_id: {run_id}")
+            if run["status"] != RunStatus.RUNNING.value:
+                raise ContractViolation("run state is available only while the run is running")
+            row = connection.execute(
+                "SELECT schema_version, state_json FROM run_state "
+                "WHERE run_id = ? AND namespace = ?",
+                (run_id, resolved_namespace),
+            ).fetchone()
+            if row is None:
+                encoded, frozen = _run_state_mapping({})
+                connection.execute(
+                    "INSERT INTO run_state("
+                    "run_id, namespace, schema_version, state_json, updated_at_ns"
+                    ") VALUES (?, ?, ?, ?, ?)",
+                    (run_id, resolved_namespace, resolved_schema, encoded, time_ns()),
+                )
+            else:
+                if row["schema_version"] != resolved_schema:
+                    raise ContractViolation(
+                        f"run state namespace {resolved_namespace!r} uses schema_version "
+                        f"{row['schema_version']}, requested {resolved_schema}"
+                    )
+                try:
+                    decoded = json.loads(row["state_json"])
+                except (TypeError, json.JSONDecodeError) as error:
+                    raise ContractViolation(
+                        f"run state namespace {resolved_namespace!r} is corrupt"
+                    ) from error
+                if not isinstance(decoded, Mapping):
+                    raise ContractViolation(
+                        f"run state namespace {resolved_namespace!r} is not a JSON object"
+                    )
+                try:
+                    _, frozen = _run_state_mapping(decoded)
+                except (TypeError, ValueError) as error:
+                    raise ContractViolation(
+                        f"run state namespace {resolved_namespace!r} is corrupt"
+                    ) from error
+        return RunState(self, run_id, resolved_namespace, resolved_schema, frozen)
+
+    def _write_run_state(
+        self,
+        run_id: str,
+        namespace: str,
+        schema_version: int,
+        encoded: str,
+    ) -> None:
+        with self._connect() as connection:
+            run = connection.execute(
+                "SELECT status FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if run is None:
+                raise KeyError(f"unknown run_id: {run_id}")
+            if run["status"] != RunStatus.RUNNING.value:
+                raise ContractViolation("cannot write run state after the run is terminal")
+            cursor = connection.execute(
+                """
+                UPDATE run_state
+                SET state_json = ?, updated_at_ns = ?
+                WHERE run_id = ? AND namespace = ? AND schema_version = ?
+                """,
+                (encoded, time_ns(), run_id, namespace, schema_version),
+            )
+            if cursor.rowcount != 1:
+                raise ContractViolation(
+                    f"run state namespace {namespace!r} disappeared or changed schema_version"
+                )
 
     def get_run(self, run_id: str) -> RunRecord:
         with self._connect() as connection:
@@ -1350,6 +1547,7 @@ __all__ = [
     "RouteWaypoint",
     "RunEvent",
     "RunRecord",
+    "RunState",
     "RunStatus",
     "SpatialEntity",
     "SpatialRoute",

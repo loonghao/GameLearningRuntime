@@ -47,6 +47,104 @@ def test_training_store_records_queryable_run_lifecycle_and_events(tmp_path: Pat
     assert store.list_metrics(run.run_id)[0].value == 3.5
 
 
+def test_run_state_survives_trials_is_isolated_and_is_discarded_on_finish(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "runs.sqlite3"
+    store = TrainingStore(database)
+    first = store.create_run(
+        environment_id="example.adventure-v1", protocol_version="1.0", kind="training"
+    )
+    second = store.create_run(
+        environment_id="example.adventure-v1", protocol_version="1.0", kind="training"
+    )
+
+    state = store.run_state(first.run_id, "adapter/inventory", schema_version=1)
+    state["unusable_targets"] = ["target.one"]
+    assert list(state) == ["unusable_targets"]
+    assert len(state) == 1
+    assert state.snapshot()["unusable_targets"] == ["target.one"]
+    del state["unusable_targets"]
+    assert state == {}
+    with pytest.raises(KeyError):
+        del state["missing"]
+    state["unusable_targets"] = ["target.one"]
+    reopened = TrainingStore(database).run_state(
+        first.run_id, "adapter/inventory", schema_version=1
+    )
+    assert reopened["unusable_targets"] == ["target.one"]
+    assert (
+        TrainingStore(database).run_state(second.run_id, "adapter/inventory", schema_version=1)
+        == {}
+    )
+
+    with pytest.raises(ContractViolation, match="schema_version"):
+        store.run_state(first.run_id, "adapter/inventory", schema_version=2)
+    with pytest.raises(ValueError, match="namespace"):
+        store.run_state(first.run_id, "adapter/../unsafe", schema_version=1)
+    with pytest.raises(ValueError, match="schema_version"):
+        store.run_state(first.run_id, "adapter/inventory", schema_version=0)
+    with pytest.raises(KeyError, match="unknown run_id"):
+        store.run_state("run-missing", "adapter/inventory", schema_version=1)
+    with pytest.raises(ValueError, match="run state key"):
+        state["Not-a-key"] = True
+    with pytest.raises(ValueError, match="finite JSON"):
+        state["nonfinite"] = math.nan
+    with pytest.raises(ValueError, match="64 KiB"):
+        state["too_large"] = "x" * (64 * 1024)
+    assert state["unusable_targets"] == ["target.one"]
+
+    # An uncommitted writer leaves the last committed snapshot intact.
+    connection = sqlite3.connect(database)
+    connection.execute("BEGIN IMMEDIATE")
+    connection.execute(
+        "UPDATE run_state SET state_json = ? WHERE run_id = ?",
+        ('{"partial":', first.run_id),
+    )
+    connection.rollback()
+    connection.close()
+    assert TrainingStore(database).run_state(first.run_id, "adapter/inventory", schema_version=1)[
+        "unusable_targets"
+    ] == ["target.one"]
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE run_state SET state_json = ? WHERE run_id = ?",
+            ("[]", first.run_id),
+        )
+    with pytest.raises(ContractViolation, match="not a JSON object"):
+        TrainingStore(database).run_state(first.run_id, "adapter/inventory", schema_version=1)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE run_state SET state_json = ? WHERE run_id = ?",
+            ('{"Bad":true}', first.run_id),
+        )
+    with pytest.raises(ContractViolation, match="is corrupt"):
+        TrainingStore(database).run_state(first.run_id, "adapter/inventory", schema_version=1)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE run_state SET state_json = ? WHERE run_id = ?",
+            ('{"unusable_targets":["target.one"]}', first.run_id),
+        )
+
+    store.finish_run(first.run_id, status=RunStatus.SUCCEEDED, exit_code=0)
+    with pytest.raises(ContractViolation, match="terminal"):
+        state["after_finish"] = True
+    with pytest.raises(ContractViolation, match="only while"):
+        store.run_state(first.run_id, "adapter/inventory", schema_version=1)
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM run_state WHERE run_id = ?", (first.run_id,)
+            ).fetchone()[0]
+            == 0
+        )
+    assert (
+        TrainingStore(database).run_state(second.run_id, "adapter/inventory", schema_version=1)
+        == {}
+    )
+
+
 def test_training_store_records_and_queries_environment_config_changes(tmp_path: Path) -> None:
     store = TrainingStore(tmp_path / "runs.sqlite3")
     normal = {"difficulty": "normal", "revive": "on"}

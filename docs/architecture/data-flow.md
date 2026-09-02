@@ -137,6 +137,16 @@ attributable instead of making it look like a learner regression. The hook is
 optional; adapters that do not expose mutable options continue to produce
 `None`.
 
+### Run-scoped adapter scratch state
+
+Adapters that need small bookkeeping across trial and process boundaries can
+open `TrainingStore.run_state(run_id, "adapter/name", schema_version=1)`. The
+store persists only JSON bytes under the active run, enforces identifier keys
+and a 64 KiB snapshot bound, and does not interpret the contents. Opening an
+existing namespace with a different schema version fails closed. State is
+transactionally write-through and is deleted when the run reaches a terminal
+status, so it cannot leak into another run or become a second checkpoint.
+
 ## Learning paths
 
 - PPO consumes fixed-length `Unroll` values; the optional PyTorch integration
