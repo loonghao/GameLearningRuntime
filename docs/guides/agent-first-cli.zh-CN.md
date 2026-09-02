@@ -220,6 +220,22 @@ authority。
 glr --project . --json play --bundle artifacts/model-bundle
 ```
 
+Checkpoint 合同预检与显式迁移：
+
+```shell
+glr --json checkpoint migrate \
+  --manifest checkpoints/policy.manifest.json \
+  --contract contracts/live-checkpoint-contract.json
+glr --json checkpoint migrate \
+  --manifest checkpoints/policy.manifest.json \
+  --contract contracts/live-checkpoint-contract.json \
+  --force
+```
+
+第一个命令对可迁移变化执行 dry-run（退出码 `3`）；action、observation、protocol
+或 schema 变化会 fail-closed（退出码 `4`）。`--force` 会创建备份、保持 checkpoint
+字节不变，并校验重写后的 manifest。
+
 `play` 会先逐文件校验哈希，并要求 environment/protocol 完全一致，再启动项目 player。
 “成功加载”不等于“成功复现”。必须在新实例再次运行权威 evaluator，并比较目标指标。
 

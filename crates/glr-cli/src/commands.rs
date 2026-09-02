@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::args::{
-    Cli, Command as CliCommand, GoalCommand, KnowledgeCommand, QueryCommand, ReportCommand,
-    RunsCommand, RuntimeCommand, UpdateArgs,
+    CheckpointCommand, Cli, Command as CliCommand, GoalCommand, KnowledgeCommand, QueryCommand,
+    ReportCommand, RunsCommand, RuntimeCommand, UpdateArgs,
 };
 use crate::contracts::{
     AgentGoal, GoalEvaluation, GoalEvidenceBundle, ResearchBundle, SpatialKnowledgeBundle,
@@ -48,6 +48,20 @@ struct TrainerOutcome {
 pub fn execute(cli: Cli) -> Result<i32> {
     if let CliCommand::Update(arguments) = &cli.command {
         return run_update(&cli, arguments);
+    }
+    if let CliCommand::Checkpoint {
+        command:
+            CheckpointCommand::Migrate {
+                manifest,
+                contract,
+                force,
+            },
+    } = &cli.command
+    {
+        let (result, exit_code) =
+            crate::checkpoint::migrate(&absolute(manifest)?, &absolute(contract)?, *force)?;
+        emit("checkpoint.migrate", &result, cli.json)?;
+        return Ok(exit_code);
     }
     let project = load_project(&cli.project)?;
     let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
@@ -257,6 +271,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
             }
         },
         CliCommand::Update(_) => unreachable!("update handled before project loading"),
+        CliCommand::Checkpoint { .. } => unreachable!("checkpoint handled before project loading"),
     }
 }
 

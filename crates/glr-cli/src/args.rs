@@ -61,8 +61,29 @@ pub enum Command {
         #[arg(long)]
         bundle: PathBuf,
     },
+    /// Inspect and explicitly migrate a checkpoint contract manifest.
+    Checkpoint {
+        #[command(subcommand)]
+        command: CheckpointCommand,
+    },
     /// Check or apply a checksum-verified GLR distribution update.
     Update(UpdateArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CheckpointCommand {
+    /// Report or apply a contract migration after an explicit confirmation.
+    Migrate {
+        /// Checkpoint manifest to inspect or rewrite.
+        #[arg(long)]
+        manifest: PathBuf,
+        /// JSON file containing the live checkpoint contract.
+        #[arg(long)]
+        contract: PathBuf,
+        /// Confirm the migration and create adjacent backups.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
