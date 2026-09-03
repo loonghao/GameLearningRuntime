@@ -11,6 +11,9 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>Optional descriptor and step realtime timing contract.</summary>
         public const string RealtimeControlSchemaVersion = "glr.realtime-control.v1";
+
+        /// <summary>Optional read-only runtime identity and health contract.</summary>
+        public const string RuntimeHealthSchemaVersion = "glr.runtime-health.v1";
     }
 
     /// <summary>Tensor element types supported by the GLR v1 wire contract.</summary>
@@ -41,6 +44,21 @@ namespace GameLearningRuntime.Provider
         MultiDiscrete,
         /// <summary>Boolean values.</summary>
         Binary,
+    }
+
+    /// <summary>Read-only lifecycle status reported by a runtime provider.</summary>
+    public enum RuntimeHealthStatus
+    {
+        /// <summary>Provider is starting and is not ready for new sessions.</summary>
+        Starting,
+        /// <summary>Provider is healthy and may accept new sessions.</summary>
+        Ready,
+        /// <summary>Provider is draining existing sessions.</summary>
+        Draining,
+        /// <summary>Provider health checks are failing.</summary>
+        Unhealthy,
+        /// <summary>Provider has stopped and cannot accept sessions.</summary>
+        Stopped,
     }
 
     /// <summary>Authoritative result used to reconcile an action after reconnect.</summary>

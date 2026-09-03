@@ -189,6 +189,13 @@ from game_learning_runtime.runtime_evidence import (
     RouteHealthTelemetry,
     RouteTransitionEvidence,
 )
+from game_learning_runtime.runtime_health import (
+    RUNTIME_HEALTH_SCHEMA_VERSION,
+    RuntimeHealth,
+    RuntimeHealthStatus,
+    RuntimeIdentity,
+    RuntimeLease,
+)
 from game_learning_runtime.runtime_integration import (
     RUNTIME_INTEGRATION_SCHEMA_VERSION,
     ActionMode,
@@ -280,6 +287,7 @@ __all__ = [
     "REALTIME_CONTROL_SCHEMA_VERSION",
     "RESEARCH_BUNDLE_SCHEMA_VERSION",
     "REWARD_SAFETY_SCHEMA_VERSION",
+    "RUNTIME_HEALTH_SCHEMA_VERSION",
     "RUNTIME_INTEGRATION_SCHEMA_VERSION",
     "RUN_STORE_SCHEMA_VERSION",
     "SPATIAL_KNOWLEDGE_SCHEMA_VERSION",
@@ -428,7 +436,11 @@ __all__ = [
     "RunRecord",
     "RunState",
     "RunStatus",
+    "RuntimeHealth",
+    "RuntimeHealthStatus",
+    "RuntimeIdentity",
     "RuntimeIntegrationProfile",
+    "RuntimeLease",
     "SpaceKind",
     "SpatialEntity",
     "SpatialFrameTransform",

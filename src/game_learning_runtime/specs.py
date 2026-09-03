@@ -13,6 +13,7 @@ from numpy.typing import NDArray
 
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.realtime import RealtimeTimingContract
+from game_learning_runtime.runtime_health import RuntimeIdentity
 
 
 class SpaceKind(str, Enum):
@@ -198,6 +199,7 @@ class EnvironmentSpec:
     capabilities: frozenset[str] = frozenset()
     metadata: Mapping[str, str] = field(default_factory=dict)
     realtime_timing: RealtimeTimingContract | None = None
+    runtime_identity: RuntimeIdentity | None = None
 
     def __post_init__(self) -> None:
         if not self.environment_id or any(character.isspace() for character in self.environment_id):
@@ -210,5 +212,9 @@ class EnvironmentSpec:
             self.realtime_timing, RealtimeTimingContract
         ):
             raise TypeError("realtime_timing must be a RealtimeTimingContract or None")
+        if self.runtime_identity is not None and not isinstance(
+            self.runtime_identity, RuntimeIdentity
+        ):
+            raise TypeError("runtime_identity must be a RuntimeIdentity or None")
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))

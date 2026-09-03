@@ -3,6 +3,9 @@
 `glr-hostd` is the first transport and lifecycle host for Game Learning Runtime.
 It provides a bounded, serialized `glr.host.v1` JSON-lines session and enforces
 episode/step fencing before a semantic action reaches a provider.
+Providers may also opt into the read-only `health` operation from
+`glr.runtime-health.v1`, which reports stable runtime identity and bounded
+lifecycle/lease metadata for launcher coordination.
 
 This release contains only the explicit `synthetic-counter` conformance
 provider:

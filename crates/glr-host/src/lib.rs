@@ -19,6 +19,23 @@ pub const HOST_SCHEMA: &str = "glr.host.v1";
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 1_048_576;
 pub const HARD_MAX_FRAME_BYTES: usize = 1_048_576;
 pub const REALTIME_CONTROL_SCHEMA: &str = "glr.realtime-control.v1";
+pub const RUNTIME_HEALTH_SCHEMA: &str = "glr.runtime-health.v1";
+
+fn validate_runtime_identifier(value: &str, field: &str) -> Result<(), ProviderError> {
+    let mut characters = value.chars();
+    let first_is_valid = characters
+        .next()
+        .is_some_and(|character| character.is_ascii_alphanumeric());
+    let rest_is_valid = characters.all(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | ':' | '-')
+    });
+    if value.len() > 128 || !first_is_valid || !rest_is_valid {
+        return Err(ProviderError::InvalidData(format!(
+            "{field} must be a bounded runtime identifier"
+        )));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -162,6 +179,79 @@ pub enum RefusalReasonClass {
     Structural,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeHealthStatus {
+    Starting,
+    Ready,
+    Draining,
+    Unhealthy,
+    Stopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireRuntimeIdentity {
+    pub runtime_id: String,
+    pub runtime_version: String,
+}
+
+impl WireRuntimeIdentity {
+    fn validate(&self) -> Result<(), ProviderError> {
+        validate_runtime_identifier(&self.runtime_id, "runtime_id")?;
+        validate_runtime_identifier(&self.runtime_version, "runtime_version")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireRuntimeLease {
+    pub lease_id: String,
+    pub owner_id: String,
+    pub expires_at_ns: u64,
+}
+
+impl WireRuntimeLease {
+    fn validate(&self, observed_at_ns: u64) -> Result<(), ProviderError> {
+        validate_runtime_identifier(&self.lease_id, "runtime lease_id")?;
+        validate_runtime_identifier(&self.owner_id, "runtime owner_id")?;
+        if self.expires_at_ns <= observed_at_ns {
+            return Err(ProviderError::InvalidData(
+                "runtime lease expiry must be after observed_at_ns".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireRuntimeHealth {
+    pub schema_version: String,
+    pub identity: WireRuntimeIdentity,
+    pub status: RuntimeHealthStatus,
+    pub observed_at_ns: u64,
+    pub accepting_new_sessions: bool,
+    pub active_sessions: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease: Option<WireRuntimeLease>,
+}
+
+impl WireRuntimeHealth {
+    fn validate(&self) -> Result<(), ProviderError> {
+        if self.schema_version != RUNTIME_HEALTH_SCHEMA {
+            return Err(ProviderError::InvalidData(
+                "unsupported runtime health schema".into(),
+            ));
+        }
+        self.identity.validate()?;
+        if let Some(lease) = &self.lease {
+            lease.validate(self.observed_at_ns)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WireTensorSpec {
@@ -194,6 +284,17 @@ pub struct WireEnvironmentDescriptor {
     pub metadata: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub realtime_timing: Option<WireRealtimeTimingContract>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_identity: Option<WireRuntimeIdentity>,
+}
+
+impl WireEnvironmentDescriptor {
+    fn validate(&self) -> Result<(), ProviderError> {
+        if let Some(identity) = &self.runtime_identity {
+            identity.validate()?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -592,6 +693,12 @@ pub enum ProviderError {
 pub trait RuntimeProvider: Send {
     fn describe(&self) -> WireEnvironmentDescriptor;
 
+    fn health(&self) -> Result<WireRuntimeHealth, ProviderError> {
+        Err(ProviderError::Unsupported(
+            "provider does not support runtime-health-v1".into(),
+        ))
+    }
+
     fn reset(
         &mut self,
         seed: Option<u64>,
@@ -766,6 +873,7 @@ pub struct Host {
     max_frame_bytes: usize,
     active_lease: Option<(WireInputLeaseToken, u64)>,
     cancelled_actions: Vec<String>,
+    descriptor_identity: Option<WireRuntimeIdentity>,
 }
 
 impl Host {
@@ -789,6 +897,7 @@ impl Host {
             max_frame_bytes,
             active_lease: None,
             cancelled_actions: Vec::new(),
+            descriptor_identity: None,
         })
     }
 
@@ -863,13 +972,29 @@ impl Host {
             "describe" => {
                 parse_payload::<EmptyPayload>(request.payload)?;
                 let mut descriptor = self.provider.describe();
+                descriptor.validate().map_err(provider_failure)?;
                 if let Some(timing) = &descriptor.realtime_timing {
                     timing.validate().map_err(provider_failure)?;
                 }
                 descriptor.capabilities.push("host-stdio".into());
                 descriptor.capabilities.sort();
                 descriptor.capabilities.dedup();
+                self.descriptor_identity = descriptor.runtime_identity.clone();
                 serde_json::to_value(descriptor).map_err(internal_serialization_failure)
+            }
+            "health" => {
+                parse_payload::<EmptyPayload>(request.payload)?;
+                let health = self.provider.health().map_err(provider_failure)?;
+                health.validate().map_err(provider_failure)?;
+                if let Some(identity) = &self.descriptor_identity
+                    && identity != &health.identity
+                {
+                    return Err(HostFailure::new(
+                        "provider_contract_violation",
+                        "runtime health identity does not match descriptor",
+                    ));
+                }
+                serde_json::to_value(health).map_err(internal_serialization_failure)
             }
             "reset" => {
                 let payload = parse_payload::<ResetPayload>(request.payload)?;
@@ -918,6 +1043,7 @@ impl Host {
                 self.current = None;
                 self.active_lease = None;
                 self.cancelled_actions.clear();
+                self.descriptor_identity = None;
                 self.closed = true;
                 Ok(json!({"closed": true}))
             }
@@ -1438,7 +1564,26 @@ impl RuntimeProvider for SyntheticCounterProvider {
             capabilities: vec!["reset".into(), "step".into(), "synthetic-provider".into()],
             metadata: BTreeMap::new(),
             realtime_timing: None,
+            runtime_identity: Some(WireRuntimeIdentity {
+                runtime_id: "synthetic-counter".into(),
+                runtime_version: env!("CARGO_PKG_VERSION").into(),
+            }),
         }
+    }
+
+    fn health(&self) -> Result<WireRuntimeHealth, ProviderError> {
+        Ok(WireRuntimeHealth {
+            schema_version: RUNTIME_HEALTH_SCHEMA.into(),
+            identity: WireRuntimeIdentity {
+                runtime_id: "synthetic-counter".into(),
+                runtime_version: env!("CARGO_PKG_VERSION").into(),
+            },
+            status: RuntimeHealthStatus::Ready,
+            observed_at_ns: now_ns(),
+            accepting_new_sessions: true,
+            active_sessions: if self.episode_id.is_some() { 1 } else { 0 },
+            lease: None,
+        })
     }
 
     fn reset(

@@ -39,8 +39,28 @@ fn describe_exposes_only_truthful_stdio_and_synthetic_capabilities() {
     assert!(capabilities.contains(&json!("host-stdio")));
     assert!(capabilities.contains(&json!("reset")));
     assert!(capabilities.contains(&json!("step")));
+    assert_eq!(
+        response["result"]["runtime_identity"]["runtime_id"],
+        "synthetic-counter"
+    );
     assert!(!capabilities.contains(&json!("authenticated")));
     assert!(!capabilities.contains(&json!("target-bound")));
+}
+
+#[test]
+fn health_returns_stable_identity_and_read_only_lifecycle_state() {
+    let mut host = Host::new(Box::new(SyntheticCounterProvider::new(2)));
+
+    let response = send(&mut host, "health-1", "health", json!({}));
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(
+        response["result"]["schema_version"],
+        "glr.runtime-health.v1"
+    );
+    assert_eq!(response["result"]["status"], "ready");
+    assert_eq!(response["result"]["accepting_new_sessions"], true);
+    assert_eq!(response["result"]["active_sessions"], 0);
 }
 
 #[test]

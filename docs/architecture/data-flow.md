@@ -3,7 +3,7 @@
 ## Environment handshake
 
 1. A client calls `Describe` and obtains the environment ID, protocol version,
-   tensor specs, masks, capabilities, and metadata.
+   tensor specs, masks, capabilities, metadata, and optional runtime identity.
 2. The client decides whether it supports that exact contract.
 3. `Reset` starts an episode and returns `step_id = 0`.
 4. Every action carries the current `episode_id` and expected next step ID.
@@ -68,6 +68,11 @@ The client does not retry a failed `Step`. A lost mutating response can mean
 the action happened, so a concrete driver must reconcile through an
 authoritative readback or report an unknown outcome. Read-only health and
 observation requests may use a separate retry policy.
+
+`Health` is the versioned read-only lifecycle read for launcher coordination.
+It reports the runtime identity, readiness/draining status, session admission,
+active-session count, and optional lease metadata. It never grants mutation
+authority and contains no process or filesystem identifiers.
 
 ## Knowledge and reward flow
 

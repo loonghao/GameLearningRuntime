@@ -75,6 +75,20 @@ before provider dispatch. `cancel` fences an obsolete action. The typed receipt
 reports `consumed`, `expired`, `cancelled`, or `rejected` and is never retried
 implicitly.
 
+### Runtime identity and health
+
+Providers that participate in launcher upgrades may include a stable
+`runtime_identity` in `Describe` and implement the read-only `Health` request.
+The identity contains only a public runtime ID and immutable provider version.
+The health snapshot carries `starting`, `ready`, `draining`, `unhealthy`, or
+`stopped`, the provider timestamp, whether new sessions are accepted, a bounded
+active-session count, and optional lease metadata. A launcher should bind each
+training session to the identity it observed, require a fresh `ready` snapshot
+before switching its `current` selection, and treat an identity mismatch or
+ambiguous health response as a failed check. Runtime health does not expose
+paths, PIDs, hostnames, or credentials, and it does not replace launcher-owned
+drain, process-ownership, or atomic executable replacement logic.
+
 ## Implement a Unity provider
 
 Build or download `GameLearningRuntime.Provider`, reference the .NET Standard
@@ -121,6 +135,7 @@ bundle. Never store authentication material or local executable/game paths.
 | C# Unity/provider contract | Implemented; .NET Standard 2.0 |
 | C++ Unreal/provider contract | Implemented; header-only C++20 |
 | Reconnect/resume reconciliation | Implemented as opt-in `reconnect-resume-v1` |
+| Runtime identity and read-only health | Implemented as opt-in `runtime-health-v1` |
 | Authenticated target-bound local IPC | Not implemented |
 | Live external C#/C++ provider connection | Not implemented |
 | Shared memory / asynchronous actor queue | Optional standard-library `BoundedActorQueue`; shared memory remains benchmark-gated |

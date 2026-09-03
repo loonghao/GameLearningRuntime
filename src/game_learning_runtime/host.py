@@ -50,6 +50,7 @@ from game_learning_runtime.realtime import (
     RealtimeActionStatus,
     RealtimeTimingContract,
 )
+from game_learning_runtime.runtime_health import RuntimeHealth, RuntimeIdentity
 from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKind, TensorSpec
 
 HOST_SCHEMA = "glr.host.v1"
@@ -272,6 +273,17 @@ class HostBridgeDriver:
     def describe(self) -> EnvironmentSpec:
         self._ensure_open()
         return self._spec
+
+    def health(self) -> RuntimeHealth:
+        """Read the provider health snapshot without mutating runtime state."""
+
+        health = _runtime_health_from_wire(self._request("health", {}))
+        if (
+            self._spec.runtime_identity is not None
+            and health.identity != self._spec.runtime_identity
+        ):
+            raise HostProtocolError("runtime health identity does not match descriptor")
+        return health
 
     def reset(self, request: BridgeResetRequest) -> TimeStep:
         payload: dict[str, object] = {"options": dict(request.options)}
@@ -854,6 +866,15 @@ def _environment_spec_from_wire(value: Mapping[str, object]) -> EnvironmentSpec:
             )
         except (TypeError, ValueError) as error:
             raise HostProtocolError(f"invalid descriptor.realtime_timing: {error}") from error
+    identity_raw = value.get("runtime_identity")
+    runtime_identity = None
+    if identity_raw is not None:
+        try:
+            runtime_identity = RuntimeIdentity.from_mapping(
+                _mapping(identity_raw, path="descriptor.runtime_identity")
+            )
+        except (TypeError, ValueError) as error:
+            raise HostProtocolError(f"invalid descriptor.runtime_identity: {error}") from error
     return EnvironmentSpec(
         environment_id=_string(value.get("environment_id"), path="descriptor.environment_id"),
         protocol_version=_string(value.get("protocol_version"), path="descriptor.protocol_version"),
@@ -871,7 +892,15 @@ def _environment_spec_from_wire(value: Mapping[str, object]) -> EnvironmentSpec:
         capabilities=frozenset(cast(Sequence[str], capabilities_raw)),
         metadata=cast(Mapping[str, str], metadata),
         realtime_timing=realtime_timing,
+        runtime_identity=runtime_identity,
     )
+
+
+def _runtime_health_from_wire(value: Mapping[str, object]) -> RuntimeHealth:
+    try:
+        return RuntimeHealth.from_mapping(value)
+    except (TypeError, ValueError) as error:
+        raise HostProtocolError(f"invalid runtime health: {error}") from error
 
 
 __all__ = [

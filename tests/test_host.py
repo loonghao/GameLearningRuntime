@@ -26,6 +26,7 @@ from game_learning_runtime import (
     InputLeaseOperation,
     InputLeaseRequest,
     JsonLineHostChannel,
+    RuntimeHealthStatus,
 )
 from game_learning_runtime.host import HOST_SCHEMA, HostChannel
 
@@ -98,6 +99,10 @@ def _descriptor() -> dict[str, object]:
         },
         "capabilities": ["host-stdio", "reset", "step"],
         "metadata": {"private_origin": "filtered by BridgeEnvironment"},
+        "runtime_identity": {
+            "runtime_id": "synthetic-counter",
+            "runtime_version": "0.10.0",
+        },
         "realtime_timing": {
             "schema_version": "glr.realtime-control.v1",
             "minimum_hold_ns": 10,
@@ -149,6 +154,18 @@ class _ScriptedChannel(HostChannel):
             result = _timestep(self.episode_id, 0, terminal=False)
         elif operation == "step":
             result = _timestep(self.episode_id, 1, terminal=True)
+        elif operation == "health":
+            result = {
+                "schema_version": "glr.runtime-health.v1",
+                "identity": {
+                    "runtime_id": "synthetic-counter",
+                    "runtime_version": "0.10.0",
+                },
+                "status": "ready",
+                "observed_at_ns": 10,
+                "accepting_new_sessions": True,
+                "active_sessions": 1,
+            }
         elif operation == "close":
             result = {"closed": True}
         else:  # pragma: no cover - the production driver owns the operation vocabulary
@@ -185,6 +202,41 @@ def test_host_driver_maps_the_wire_contract_to_the_standard_environment() -> Non
         "action": {"choice": _tensor(np.array([1], dtype=np.int64))},
     }
     assert channel.closed
+
+
+def test_host_driver_reads_identity_and_health_without_mutation() -> None:
+    channel = _ScriptedChannel()
+    driver = HostBridgeDriver(channel)
+
+    assert driver.describe().runtime_identity is not None
+    assert driver.describe().runtime_identity.runtime_version == "0.10.0"
+    health = driver.health()
+
+    assert health.status is RuntimeHealthStatus.READY
+    assert health.identity.runtime_id == "synthetic-counter"
+    assert health.accepting_new_sessions
+    assert health.active_sessions == 1
+    assert [request["operation"] for request in channel.requests] == ["describe", "health"]
+    driver.close()
+
+
+def test_host_driver_rejects_health_identity_drift() -> None:
+    class _DriftedHealthChannel(_ScriptedChannel):
+        def exchange(self, request: Mapping[str, object]) -> Mapping[str, object]:
+            response = dict(super().exchange(request))
+            if request["operation"] == "health":
+                result = response["result"]
+                assert isinstance(result, dict)
+                identity = result["identity"]
+                assert isinstance(identity, dict)
+                identity["runtime_version"] = "9.9.9"
+            return response
+
+    channel = _DriftedHealthChannel()
+    driver = HostBridgeDriver(channel)
+    with pytest.raises(HostProtocolError, match="identity does not match"):
+        driver.health()
+    driver.close()
 
 
 def test_host_driver_parses_and_binds_action_receipt() -> None:
@@ -598,6 +650,11 @@ def test_json_line_channel_rejects_non_json_and_oversized_requests() -> None:
         ("action_masks", {}, "action_masks"),
         ("capabilities", [""], "capabilities"),
         ("metadata", {"key": 1}, "metadata values"),
+        (
+            "runtime_identity",
+            {"runtime_id": "bad/path", "runtime_version": "0.10.0"},
+            "runtime_identity",
+        ),
         ("observations", [], "non-empty list"),
     ],
 )

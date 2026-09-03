@@ -59,6 +59,36 @@ enum InputLeaseStatus {
   INPUT_LEASE_STATUS_REJECTED = 5;
 }
 
+enum RuntimeHealthStatus {
+  RUNTIME_HEALTH_STATUS_UNSPECIFIED = 0;
+  RUNTIME_HEALTH_STATUS_STARTING = 1;
+  RUNTIME_HEALTH_STATUS_READY = 2;
+  RUNTIME_HEALTH_STATUS_DRAINING = 3;
+  RUNTIME_HEALTH_STATUS_UNHEALTHY = 4;
+  RUNTIME_HEALTH_STATUS_STOPPED = 5;
+}
+
+message RuntimeIdentity {
+  string runtime_id = 1;
+  string runtime_version = 2;
+}
+
+message RuntimeLease {
+  string lease_id = 1;
+  string owner_id = 2;
+  uint64 expires_at_ns = 3;
+}
+
+message RuntimeHealth {
+  string schema_version = 1;
+  RuntimeIdentity identity = 2;
+  RuntimeHealthStatus status = 3;
+  uint64 observed_at_ns = 4;
+  bool accepting_new_sessions = 5;
+  uint32 active_sessions = 6;
+  optional RuntimeLease lease = 7;
+}
+
 message RealtimeTimingContract {
   string schema_version = 1;
   uint64 minimum_hold_ns = 2;
@@ -143,9 +173,11 @@ message EnvironmentDescriptor {
   repeated string capabilities = 8;
   map<string, string> metadata = 9;
   optional RealtimeTimingContract realtime_timing = 10;
+  optional RuntimeIdentity runtime_identity = 11;
 }
 
 message DescribeRequest {}
+message HealthRequest {}
 
 message ResetRequest {
   optional uint64 seed = 1;
@@ -233,6 +265,7 @@ message ResumeResult {
 
 service GameRuntime {
   rpc Describe(DescribeRequest) returns (EnvironmentDescriptor);
+  rpc Health(HealthRequest) returns (RuntimeHealth);
   rpc Reset(ResetRequest) returns (TimeStep);
   rpc Attach(AttachRequest) returns (TimeStep);
   rpc Step(StepRequest) returns (TimeStep);
