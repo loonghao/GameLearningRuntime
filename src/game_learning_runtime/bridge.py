@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from threading import RLock
-from time import time_ns
+from time import monotonic_ns, time_ns
 from types import MappingProxyType
 from typing import Any, Protocol
 from uuid import UUID
@@ -23,6 +23,11 @@ from game_learning_runtime.contracts import (
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
 from game_learning_runtime.errors import CommandRefusal, ContractViolation
+from game_learning_runtime.readiness import (
+    EnvironmentReadinessError,
+    ReadinessMonitor,
+    ReadinessProbe,
+)
 from game_learning_runtime.realtime import (
     InputLeaseBook,
     InputLeaseReceipt,
@@ -372,10 +377,21 @@ class BridgeEnvironment(GameEnvironment):
         metadata_allowlist: Iterable[str] = (),
         required_capabilities: Iterable[str] = (),
         refusal_funnel: RefusalFunnel | None = None,
+        readiness_probe: ReadinessProbe | None = None,
+        readiness_poll_interval_seconds: float | None = None,
     ) -> None:
         if not protocol_version:
             raise ValueError("protocol_version cannot be empty")
         self._driver = driver
+        self._readiness = ReadinessMonitor(readiness_probe) if readiness_probe is not None else None
+        if readiness_poll_interval_seconds is not None and readiness_poll_interval_seconds <= 0:
+            raise ValueError("readiness_poll_interval_seconds must be positive or None")
+        self._readiness_poll_interval_ns = (
+            None
+            if readiness_poll_interval_seconds is None
+            else int(readiness_poll_interval_seconds * 1_000_000_000)
+        )
+        self._last_readiness_poll_ns: int | None = None
         self._refusal_funnel = refusal_funnel
         self._closed = False
         self._current: TimeStep | None = None
@@ -423,6 +439,9 @@ class BridgeEnvironment(GameEnvironment):
         self, *, seed: int | None = None, options: Mapping[str, object] | None = None
     ) -> TimeStep:
         self._ensure_open()
+        if self._readiness is not None:
+            self._readiness.require_ready()
+            self._last_readiness_poll_ns = monotonic_ns()
         request = BridgeResetRequest(
             seed=seed,
             options={} if options is None else _copy_string_options(options),
@@ -432,6 +451,9 @@ class BridgeEnvironment(GameEnvironment):
 
     def attach(self, *, options: Mapping[str, object] | None = None) -> TimeStep:
         self._ensure_open()
+        if self._readiness is not None:
+            self._readiness.require_ready()
+            self._last_readiness_poll_ns = monotonic_ns()
         if "live-attach" not in self._spec.capabilities:
             raise ContractViolation("bridge does not declare live-attach capability")
         request = BridgeAttachRequest(
@@ -442,6 +464,7 @@ class BridgeEnvironment(GameEnvironment):
 
     def step(self, action: TensorTree) -> TimeStep:
         self._ensure_open()
+        self._poll_readiness_if_due()
         current = self._current
         if current is None:
             raise ContractViolation("bridge step requires reset first")
@@ -604,6 +627,20 @@ class BridgeEnvironment(GameEnvironment):
     def _ensure_open(self) -> None:
         if self._closed:
             raise ContractViolation("bridge environment is closed")
+
+    def _poll_readiness_if_due(self) -> None:
+        if self._readiness is None or self._readiness_poll_interval_ns is None:
+            return
+        now = monotonic_ns()
+        if (
+            self._last_readiness_poll_ns is not None
+            and now - self._last_readiness_poll_ns < self._readiness_poll_interval_ns
+        ):
+            return
+        self._last_readiness_poll_ns = now
+        result = self._readiness.check()
+        if not result.ready:
+            raise EnvironmentReadinessError(result)
 
 
 __all__ = [

@@ -155,6 +155,14 @@ from game_learning_runtime.project import (
     load_project,
 )
 from game_learning_runtime.protocol import protocol_path
+from game_learning_runtime.readiness import (
+    READINESS_SCHEMA_VERSION,
+    EnvironmentReadinessError,
+    ReadinessMonitor,
+    ReadinessProbe,
+    ReadinessResult,
+    ReadinessState,
+)
 from game_learning_runtime.realtime import (
     REALTIME_CONTROL_SCHEMA_VERSION,
     InputLeaseBook,
@@ -284,6 +292,7 @@ __all__ = [
     "MODEL_BUNDLE_SCHEMA_VERSION",
     "PROJECT_FILE_NAME",
     "PROJECT_SCHEMA_VERSION",
+    "READINESS_SCHEMA_VERSION",
     "REALTIME_CONTROL_SCHEMA_VERSION",
     "RESEARCH_BUNDLE_SCHEMA_VERSION",
     "REWARD_SAFETY_SCHEMA_VERSION",
@@ -344,6 +353,7 @@ __all__ = [
     "EngineFamily",
     "EnvironmentBridgeDriver",
     "EnvironmentConfigSnapshot",
+    "EnvironmentReadinessError",
     "EnvironmentSpec",
     "EpisodeRewardGuard",
     "Event",
@@ -406,6 +416,10 @@ __all__ = [
     "ProjectCommand",
     "PromotionMode",
     "QueuedUnroll",
+    "ReadinessMonitor",
+    "ReadinessProbe",
+    "ReadinessResult",
+    "ReadinessState",
     "RealtimeActionReceipt",
     "RealtimeActionStatus",
     "RealtimeStepTiming",
