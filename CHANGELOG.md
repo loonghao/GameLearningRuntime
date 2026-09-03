@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.11.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.10.0...v0.11.0) (2026-09-03)
+
+
+### Features
+
+* add runtime identity health contract ([bdddd7a](https://github.com/loonghao/GameLearningRuntime/commit/bdddd7a33e4ab20728704018a6b7c5f59e8a5232))
+
+
+### Bug Fixes
+
+* qualify runtime identity type in cpp sdk ([9fa2c78](https://github.com/loonghao/GameLearningRuntime/commit/9fa2c78f0ea760e54e7b09898abc60b3bdcc004a))
+
 ## [0.10.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.9.0...v0.10.0) (2026-09-02)
 
 
