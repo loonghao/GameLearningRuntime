@@ -293,7 +293,7 @@ struct provider_descriptor final {
   std::vector<std::string> capabilities;
   std::map<std::string, std::string> metadata;
   std::optional<realtime_timing_contract> realtime_timing;
-  std::optional<runtime_identity> runtime_identity;
+  std::optional<glr::runtime_identity> runtime_identity;
 };
 
 struct provider_event final {
