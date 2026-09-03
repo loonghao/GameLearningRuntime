@@ -710,6 +710,152 @@ namespace GameLearningRuntime.Provider
         public string Description { get; }
     }
 
+    /// <summary>Stable public identity for one runtime family and version.</summary>
+    public sealed class RuntimeIdentity
+    {
+        /// <summary>Create a stable public runtime identity.</summary>
+        public RuntimeIdentity(string runtimeId, string runtimeVersion)
+        {
+            ValidateIdentifier(runtimeId, nameof(runtimeId));
+            ValidateIdentifier(runtimeVersion, nameof(runtimeVersion));
+            RuntimeId = runtimeId;
+            RuntimeVersion = runtimeVersion;
+        }
+
+        /// <summary>Stable runtime family identifier.</summary>
+        public string RuntimeId { get; }
+
+        /// <summary>Immutable executable/provider version.</summary>
+        public string RuntimeVersion { get; }
+
+        private static void ValidateIdentifier(string value, string name)
+        {
+            if (!IsValidIdentifier(value))
+            {
+                throw new ArgumentException("Runtime identifiers must be bounded and portable.", name);
+            }
+        }
+
+        private static bool IsValidIdentifier(string value)
+        {
+            return !string.IsNullOrEmpty(value) && value.Length <= 128
+                && IsAsciiLetterOrDigit(value[0])
+                && value.Skip(1).All(character => IsAsciiLetterOrDigit(character)
+                    || character == '_' || character == '.' || character == ':' || character == '-');
+        }
+
+        private static bool IsAsciiLetterOrDigit(char value)
+        {
+            return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
+                || (value >= '0' && value <= '9');
+        }
+    }
+
+    /// <summary>Optional lease state observed during a health read.</summary>
+    public sealed class RuntimeLease
+    {
+        /// <summary>Create runtime lease metadata.</summary>
+        public RuntimeLease(string leaseId, string ownerId, ulong expiresAtNanoseconds)
+        {
+            ValidateIdentifier(leaseId, nameof(leaseId));
+            ValidateIdentifier(ownerId, nameof(ownerId));
+            if (expiresAtNanoseconds == 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(expiresAtNanoseconds));
+            }
+
+            LeaseId = leaseId;
+            OwnerId = ownerId;
+            ExpiresAtNanoseconds = expiresAtNanoseconds;
+        }
+
+        /// <summary>Opaque lease identity.</summary>
+        public string LeaseId { get; }
+
+        /// <summary>Opaque owner identity.</summary>
+        public string OwnerId { get; }
+
+        /// <summary>Absolute provider clock expiry.</summary>
+        public ulong ExpiresAtNanoseconds { get; }
+
+        private static void ValidateIdentifier(string value, string name)
+        {
+            if (!IsValidIdentifier(value))
+            {
+                throw new ArgumentException("Runtime identifiers must be bounded and portable.", name);
+            }
+        }
+
+        private static bool IsValidIdentifier(string value)
+        {
+            return !string.IsNullOrEmpty(value) && value.Length <= 128
+                && IsAsciiLetterOrDigit(value[0])
+                && value.Skip(1).All(character => IsAsciiLetterOrDigit(character)
+                    || character == '_' || character == '.' || character == ':' || character == '-');
+        }
+
+        private static bool IsAsciiLetterOrDigit(char value)
+        {
+            return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
+                || (value >= '0' && value <= '9');
+        }
+    }
+
+    /// <summary>Bounded, read-only health snapshot for launcher coordination.</summary>
+    public sealed class RuntimeHealth
+    {
+        /// <summary>Create runtime health metadata.</summary>
+        public RuntimeHealth(
+            RuntimeIdentity identity,
+            RuntimeHealthStatus status,
+            ulong observedAtNanoseconds,
+            bool acceptingNewSessions,
+            uint activeSessions,
+            RuntimeLease? lease = null,
+            string schemaVersion = HostProtocol.RuntimeHealthSchemaVersion)
+        {
+            if (schemaVersion != HostProtocol.RuntimeHealthSchemaVersion)
+            {
+                throw new ArgumentException("Unsupported runtime health schema.", nameof(schemaVersion));
+            }
+
+            Identity = identity ?? throw new ArgumentNullException(nameof(identity));
+            Status = status;
+            ObservedAtNanoseconds = observedAtNanoseconds;
+            AcceptingNewSessions = acceptingNewSessions;
+            ActiveSessions = activeSessions;
+            if (lease != null && lease.ExpiresAtNanoseconds <= observedAtNanoseconds)
+            {
+                throw new ArgumentException(
+                    "Runtime lease expiry must be after the observation.", nameof(lease));
+            }
+
+            Lease = lease;
+            SchemaVersion = schemaVersion;
+        }
+
+        /// <summary>Health schema identifier.</summary>
+        public string SchemaVersion { get; }
+
+        /// <summary>Runtime identity observed by the provider.</summary>
+        public RuntimeIdentity Identity { get; }
+
+        /// <summary>Current provider lifecycle status.</summary>
+        public RuntimeHealthStatus Status { get; }
+
+        /// <summary>Provider clock timestamp for this snapshot.</summary>
+        public ulong ObservedAtNanoseconds { get; }
+
+        /// <summary>Whether new training sessions may be accepted.</summary>
+        public bool AcceptingNewSessions { get; }
+
+        /// <summary>Bounded count of active training sessions.</summary>
+        public uint ActiveSessions { get; }
+
+        /// <summary>Optional lease state observed with this snapshot.</summary>
+        public RuntimeLease? Lease { get; }
+    }
+
     /// <summary>Immutable environment descriptor returned by a provider.</summary>
     public sealed class ProviderDescriptor
     {
@@ -723,7 +869,8 @@ namespace GameLearningRuntime.Provider
             TensorSpec done,
             IEnumerable<string> capabilities,
             IReadOnlyDictionary<string, string>? metadata = null,
-            RealtimeTimingContract? realtimeTiming = null)
+            RealtimeTimingContract? realtimeTiming = null,
+            RuntimeIdentity? runtimeIdentity = null)
         {
             if (string.IsNullOrWhiteSpace(environmentId))
             {
@@ -739,6 +886,7 @@ namespace GameLearningRuntime.Provider
             Capabilities = CopyList(capabilities, nameof(capabilities));
             Metadata = CopyDictionary(metadata ?? new Dictionary<string, string>());
             RealtimeTiming = realtimeTiming;
+            RuntimeIdentity = runtimeIdentity;
         }
 
         /// <summary>Stable public environment identity.</summary>
@@ -770,6 +918,9 @@ namespace GameLearningRuntime.Provider
 
         /// <summary>Optional descriptor-level realtime timing bounds.</summary>
         public RealtimeTimingContract? RealtimeTiming { get; }
+
+        /// <summary>Optional stable runtime identity for launcher binding.</summary>
+        public RuntimeIdentity? RuntimeIdentity { get; }
 
         private static IReadOnlyList<T> CopyList<T>(IEnumerable<T> source, string name)
         {

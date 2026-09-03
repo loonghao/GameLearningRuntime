@@ -32,6 +32,12 @@ int main() {
   step_timing.validate(timing);
   const glr::input_lease_token lease{"session.one.lease", "session.one", "target.game"};
   lease.validate();
+  const glr::runtime_identity identity{"synthetic-counter", "0.10.0"};
+  identity.validate();
+  const glr::runtime_health health{
+      std::string(glr::runtime_health_schema), identity, glr::runtime_health_status::ready,
+      10, true, 1, std::nullopt};
+  health.validate();
   std::cout << glr::host_schema << " provider-sdk-ok\n";
   return 0;
 }

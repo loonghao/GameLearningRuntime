@@ -405,6 +405,7 @@ class BridgeEnvironment(GameEnvironment):
                 protocol_version=described.protocol_version,
                 capabilities=described.capabilities,
                 realtime_timing=described.realtime_timing,
+                runtime_identity=described.runtime_identity,
                 metadata={
                     key: value for key, value in described.metadata.items() if key in allowed
                 },

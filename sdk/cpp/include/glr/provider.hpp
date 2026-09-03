@@ -17,6 +17,7 @@ inline constexpr std::string_view environment_protocol_version = "1.0";
 inline constexpr std::string_view realtime_control_schema = "glr.realtime-control.v1";
 inline constexpr std::string_view checkpoint_contract_schema = "glr.checkpoint-contract.v1";
 inline constexpr std::string_view checkpoint_manifest_schema = "glr.checkpoint-manifest.v1";
+inline constexpr std::string_view runtime_health_schema = "glr.runtime-health.v1";
 
 enum class dtype { boolean, uint8, int32, int64, float32, float64 };
 enum class space_kind { continuous, discrete, multi_discrete, binary };
@@ -26,6 +27,26 @@ enum class reconciliation_outcome { applied, not_applied, unknown };
 enum class realtime_action_status { consumed, expired, cancelled, rejected };
 enum class input_lease_operation { acquire, renew, release, preempt };
 enum class input_lease_status { acquired, renewed, released, preempted, rejected };
+enum class runtime_health_status { starting, ready, draining, unhealthy, stopped };
+
+inline bool ascii_letter_or_digit(unsigned char value) {
+  return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
+      || (value >= '0' && value <= '9');
+}
+
+inline bool valid_runtime_identifier(std::string_view value) {
+  if (value.empty() || value.size() > 128
+      || !ascii_letter_or_digit(static_cast<unsigned char>(value.front()))) {
+    return false;
+  }
+  for (const unsigned char character : value.substr(1)) {
+    if (!(ascii_letter_or_digit(character) || character == '_' || character == '.'
+          || character == ':' || character == '-')) {
+      return false;
+    }
+  }
+  return true;
+}
 
 inline bool valid_sha256(std::string_view value) {
   if (value.size() != 64) {
@@ -218,6 +239,50 @@ struct input_lease_receipt final {
   }
 };
 
+struct runtime_identity final {
+  std::string runtime_id;
+  std::string runtime_version;
+
+  void validate() const {
+    if (!valid_runtime_identifier(runtime_id) || !valid_runtime_identifier(runtime_version)) {
+      throw std::invalid_argument("invalid runtime identity");
+    }
+  }
+};
+
+struct runtime_lease final {
+  std::string lease_id;
+  std::string owner_id;
+  std::uint64_t expires_at_ns;
+
+  void validate(std::uint64_t observed_at_ns) const {
+    if (!valid_runtime_identifier(lease_id) || !valid_runtime_identifier(owner_id)
+        || expires_at_ns <= observed_at_ns) {
+      throw std::invalid_argument("invalid runtime lease");
+    }
+  }
+};
+
+struct runtime_health final {
+  std::string schema_version = std::string(runtime_health_schema);
+  runtime_identity identity;
+  runtime_health_status status;
+  std::uint64_t observed_at_ns;
+  bool accepting_new_sessions;
+  std::uint32_t active_sessions;
+  std::optional<runtime_lease> lease;
+
+  void validate() const {
+    if (schema_version != runtime_health_schema) {
+      throw std::invalid_argument("invalid runtime health schema");
+    }
+    identity.validate();
+    if (lease.has_value()) {
+      lease->validate(observed_at_ns);
+    }
+  }
+};
+
 struct provider_descriptor final {
   std::string environment_id;
   std::vector<tensor_spec> observations;
@@ -228,6 +293,7 @@ struct provider_descriptor final {
   std::vector<std::string> capabilities;
   std::map<std::string, std::string> metadata;
   std::optional<realtime_timing_contract> realtime_timing;
+  std::optional<runtime_identity> runtime_identity;
 };
 
 struct provider_event final {
@@ -317,6 +383,9 @@ class runtime_provider {
   virtual ~runtime_provider() = default;
 
   [[nodiscard]] virtual provider_descriptor describe() const = 0;
+  [[nodiscard]] virtual runtime_health health() const {
+    throw std::logic_error("provider does not support runtime-health-v1");
+  }
   [[nodiscard]] virtual provider_time_step reset(const reset_request& request) = 0;
   [[nodiscard]] virtual provider_time_step attach(const attach_request& request) = 0;
   [[nodiscard]] virtual provider_time_step step(const step_request& request) = 0;

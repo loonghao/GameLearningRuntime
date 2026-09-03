@@ -28,4 +28,16 @@ if (manifest.Contract.ProtocolVersion != "glr.v1" || manifest.CheckpointSizeByte
     throw new InvalidOperationException("C# checkpoint contract failed");
 }
 
+var identity = new RuntimeIdentity("synthetic-counter", "0.10.0");
+var health = new RuntimeHealth(
+    identity,
+    RuntimeHealthStatus.Ready,
+    10,
+    acceptingNewSessions: true,
+    activeSessions: 1);
+if (health.Identity.RuntimeId != identity.RuntimeId || !health.AcceptingNewSessions)
+{
+    throw new InvalidOperationException("C# runtime health contract failed");
+}
+
 Console.WriteLine($"{HostProtocol.Schema} provider-sdk-ok");

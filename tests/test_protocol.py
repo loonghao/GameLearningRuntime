@@ -45,3 +45,5 @@ def test_protocol_exposes_live_attach_without_aliasing_reset(tmp_path: Path) -> 
     assert result == 0
     assert "AttachRequest" in messages
     assert "Attach" in methods
+    assert "RuntimeHealth" in messages
+    assert "Health" in methods

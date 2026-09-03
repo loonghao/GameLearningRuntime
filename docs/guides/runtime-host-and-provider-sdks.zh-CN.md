@@ -55,6 +55,17 @@ episode ID 和自己最后提交的 step；Provider 返回权威 `ProviderTimeSt
 `unknown` 是权威结果；只有 Provider 能证明重试安全时才能将 `retryable` 设为 true。
 重连结果不能把游标推进到权威返回 step 之外，episode 或游标不匹配必须拒绝。
 
+### Runtime identity 与健康状态
+
+参与启动器升级的 Provider 可以在 `Describe` 中返回稳定的
+`runtime_identity`，并实现只读的 `Health` 请求。identity 只包含公开的
+runtime ID 与不可变的 Provider 版本。健康快照包含 `starting`、`ready`、
+`draining`、`unhealthy` 或 `stopped` 状态、Provider 时间戳、是否接受新会话、
+有界活跃会话数以及可选的 lease 元数据。启动器应把每个训练会话绑定到首次
+观察到的 identity，在切换 `current` 选择前要求新鲜的 `ready` 快照；identity
+不一致或健康响应不明确时必须把检查视为失败。该健康契约不返回路径、PID、
+主机名或凭据，也不取代启动器负责的 drain、进程所有权和原子程序替换逻辑。
+
 ## 实现 Unity Provider
 
 构建或下载 `GameLearningRuntime.Provider`，在已授权的 Unity 插件中引用这个 .NET Standard 2.0 程序集并实现 `IRuntimeProvider`。Unity 官方插件或 BepInEx 插件只保留薄启动职责：
@@ -87,6 +98,7 @@ episode ID 和自己最后提交的 step；Provider 返回权威 `ProviderTimeSt
 | C# Unity/Provider 契约 | 已实现；.NET Standard 2.0 |
 | C++ Unreal/Provider 契约 | 已实现；header-only C++20 |
 | 重连/resume 动作对账 | 已实现；opt-in `reconnect-resume-v1` |
+| Runtime identity 与只读健康状态 | 已实现；opt-in `runtime-health-v1` |
 | 认证且 target-bound 的本地 IPC | 尚未实现 |
 | 实机 C#/C++ Provider 连接 | 尚未实现 |
 | 共享内存/异步 actor queue | 可选标准库 `BoundedActorQueue`；共享内存仍需基准达标 |

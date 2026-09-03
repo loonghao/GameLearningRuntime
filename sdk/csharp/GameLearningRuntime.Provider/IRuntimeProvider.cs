@@ -162,6 +162,13 @@ namespace GameLearningRuntime.Provider
         InputLeaseReceipt Lease(InputLeaseRequest request);
     }
 
+    /// <summary>Optional read-only runtime identity and health capability.</summary>
+    public interface IRuntimeHealthProvider : IRuntimeProvider
+    {
+        /// <summary>Return a bounded health snapshot without mutating runtime state.</summary>
+        RuntimeHealth Health();
+    }
+
     /// <summary>Optional provider capability for reconnect and action reconciliation.</summary>
     public interface IResumableRuntimeProvider : IRuntimeProvider
     {
