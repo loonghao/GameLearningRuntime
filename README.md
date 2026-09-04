@@ -141,8 +141,9 @@ game-specific launcher, scraper, or learning algorithm.
 update request, `glr update --yes` verifies the exact target archive and
 `SHA256SUMS`, then updates `glr`, its sibling `glr-hostd`, and the project-owned
 Skills. It never changes game code, trainer dependencies, models, datasets, or
-project configuration. Use `--no-skills` for binary-only maintenance or
-`--skills-dir` for an explicitly selected Skills directory.
+project configuration. The check uses GitHub's public latest-release asset link
+without consuming anonymous REST API quota. Use `--no-skills` for binary-only
+maintenance or `--skills-dir` for an explicitly selected Skills directory.
 
 ### Library integration
 

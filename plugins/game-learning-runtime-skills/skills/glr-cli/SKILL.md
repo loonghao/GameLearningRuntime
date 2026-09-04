@@ -63,9 +63,9 @@ running a goal, transferring knowledge, or claiming reproduction.
 - SHA-256 protects same-release artifact integrity; it is not publisher
   signature verification. Report the first unified-release smoke boundary when
   no matching target archive exists yet.
-- Public checks use the GitHub API anonymously. If GitHub returns a rate-limit
-  error, pass an existing token only through the process-scoped
-  `GLR_GITHUB_TOKEN`; never print, persist, or add it to project configuration.
+- Public checks use GitHub's latest-release asset link rather than the REST API,
+  so they do not consume anonymous API quota. The updater derives the version,
+  exact target archive, and digest from the published `SHA256SUMS`.
 
 ## Preserve knowledge scope
 

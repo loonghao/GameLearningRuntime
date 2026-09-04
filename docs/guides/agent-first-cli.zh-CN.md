@@ -37,8 +37,8 @@ glr --json update --yes --no-skills
 它不会运行安装脚本，也不会修改游戏代码、角色依赖、虚拟环境、模型、数据集或
 `glr-project.json`。SHA-256 只验证同一 Release 的产物完整性，不等同于发布者签名。
 更新后重新执行 `--version`、`doctor` 和 `update --check`。
-检查默认匿名访问 GitHub。若遇到 API 限流，只通过当前进程的 `GLR_GITHUB_TOKEN`
-传入已有 token；不要打印它，也不要把它写入项目配置。
+检查通过 GitHub 的公开 latest-release 资源链接完成，不消耗匿名 REST API 配额。
+Updater 会先从发布的 `SHA256SUMS` 推导版本与准确平台产物，再执行任何更新。
 
 ## 配置项目
 
