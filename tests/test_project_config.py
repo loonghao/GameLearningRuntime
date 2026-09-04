@@ -60,6 +60,12 @@ def test_project_config_resolves_project_owned_bridge_and_commands(tmp_path: Pat
                         "heartbeat_timeout_seconds": 3,
                         "minimum_frames": 2,
                         "minimum_steps": 1,
+                        "content_liveness": {
+                            "enabled": True,
+                            "required": True,
+                            "max_bad_fraction": 0.25,
+                            "sample_every": 2,
+                        },
                     },
                 },
             }
@@ -85,6 +91,9 @@ def test_project_config_resolves_project_owned_bridge_and_commands(tmp_path: Pat
     assert project.capture.video_file == "capture.mp4"
     assert project.capture.session is not None
     assert project.capture.session.minimum_frames == 2
+    assert project.capture.session.content_liveness is not None
+    assert project.capture.session.content_liveness.enabled
+    assert project.capture.session.content_liveness.sample_every == 2
 
 
 def test_project_discovers_parent_and_loads_all_optional_roles(tmp_path: Path) -> None:
@@ -211,4 +220,25 @@ def test_project_rejects_invalid_capture_session(
     config = tmp_path / "glr-project.json"
     config.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises((TypeError, ValueError), match=message):
+        load_project(config)
+
+
+def test_project_rejects_invalid_content_liveness_configuration(tmp_path: Path) -> None:
+    (tmp_path / "bridge").mkdir()
+    value = _project_value()
+    value["capture"] = {
+        "argv": ["recorder", "{capture_video}"],
+        "required": False,
+        "stop": "stdin-q",
+        "video_file": "capture.mp4",
+        "index_file": "capture.jsonl",
+        "codec": "h264",
+        "frame_rate": 12,
+        "width": 640,
+        "height": 360,
+        "session": {"content_liveness": {"unknown": True}},
+    }
+    config = tmp_path / "glr-project.json"
+    config.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(ValueError, match="unexpected"):
         load_project(config)

@@ -11,6 +11,8 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, Literal
 
+from game_learning_runtime.capture_liveness import ContentLivenessConfig
+
 PROJECT_SCHEMA_VERSION = "glr.project.v1"
 PROJECT_FILE_NAME = "glr-project.json"
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
@@ -141,6 +143,7 @@ class CaptureSessionConfig:
     heartbeat_timeout_seconds: float = 5.0
     minimum_frames: int = 1
     minimum_steps: int = 1
+    content_liveness: ContentLivenessConfig | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> CaptureSessionConfig:
@@ -153,6 +156,7 @@ class CaptureSessionConfig:
                     "heartbeat_timeout_seconds",
                     "minimum_frames",
                     "minimum_steps",
+                    "content_liveness",
                 }
             ),
             path="project.capture.session",
@@ -186,6 +190,17 @@ class CaptureSessionConfig:
             heartbeat_timeout_seconds=heartbeat_timeout,
             minimum_frames=minimum_frames,
             minimum_steps=minimum_steps,
+            content_liveness=(
+                None
+                if value.get("content_liveness") is None
+                else ContentLivenessConfig.from_mapping(
+                    _mapping(
+                        value["content_liveness"],
+                        path="project.capture.session.content_liveness",
+                    ),
+                    path="project.capture.session.content_liveness",
+                )
+            ),
         )
 
 

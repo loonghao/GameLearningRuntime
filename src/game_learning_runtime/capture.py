@@ -14,6 +14,9 @@ from types import TracebackType
 from typing import IO, Any
 from uuid import UUID
 
+from game_learning_runtime.capture_liveness import (
+    ContentLivenessReport,
+)
 from game_learning_runtime.errors import ContractViolation
 
 CAPTURE_MANIFEST_SCHEMA_VERSION = "glr.capture.v1"
@@ -241,6 +244,7 @@ class CaptureManifest:
     height: int
     frames: tuple[CaptureFrame, ...] = field(repr=False)
     schema_version: str = CAPTURE_MANIFEST_SCHEMA_VERSION
+    content_liveness: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != CAPTURE_MANIFEST_SCHEMA_VERSION:
@@ -265,9 +269,20 @@ class CaptureManifest:
         if any(frame.run_id != self.run_id for frame in frames):
             raise ContractViolation("capture frame run_id does not match the manifest")
         object.__setattr__(self, "frames", frames)
+        if self.content_liveness is not None:
+            if not isinstance(self.content_liveness, Mapping):
+                raise TypeError("capture content_liveness must be a mapping or None")
+            try:
+                liveness = ContentLivenessReport.from_mapping(self.content_liveness)
+                encoded = json.dumps(liveness.to_mapping(), allow_nan=False)
+            except (TypeError, ValueError, ContractViolation) as error:
+                raise ValueError("capture content_liveness must be JSON-compatible") from error
+            if len(encoded.encode("utf-8")) > _MAX_INDEX_LINE_BYTES:
+                raise ValueError("capture content_liveness exceeds the 1 MiB limit")
+            object.__setattr__(self, "content_liveness", liveness.to_mapping())
 
     def to_mapping(self) -> dict[str, object]:
-        return {
+        mapping: dict[str, object] = {
             "schema_version": self.schema_version,
             "environment_id": self.environment_id,
             "run_id": self.run_id,
@@ -278,6 +293,9 @@ class CaptureManifest:
             "width": self.width,
             "height": self.height,
         }
+        if self.content_liveness is not None:
+            mapping["content_liveness"] = dict(self.content_liveness)
+        return mapping
 
 
 def _file_entry(path: Path, *, relative_to: Path, label: str) -> CaptureFile:
@@ -300,6 +318,8 @@ def build_capture_manifest(
     frame_rate: float,
     width: int,
     height: int,
+    content_liveness: ContentLivenessReport | Mapping[str, object] | None = None,
+    content_liveness_required: bool = False,
 ) -> CaptureManifest:
     requested_target = Path(manifest_path)
     if requested_target.is_symlink():
@@ -309,6 +329,20 @@ def build_capture_manifest(
     if target.exists():
         raise FileExistsError(f"capture manifest already exists: {target}")
     frames = tuple(read_capture_index(index_path))
+    if isinstance(content_liveness, ContentLivenessReport):
+        content_liveness.require_usable(
+            required=content_liveness_required,
+            max_bad_fraction=content_liveness.max_bad_fraction,
+        )
+        liveness_mapping: Mapping[str, object] | None = content_liveness.to_mapping()
+    elif content_liveness is None:
+        liveness_mapping = None
+    elif isinstance(content_liveness, Mapping):
+        report = ContentLivenessReport.from_mapping(content_liveness)
+        report.require_usable(required=content_liveness_required)
+        liveness_mapping = report.to_mapping()
+    else:
+        raise TypeError("content_liveness must be a ContentLivenessReport, mapping, or None")
     manifest = CaptureManifest(
         environment_id=environment_id,
         run_id=run_id,
@@ -319,6 +353,7 @@ def build_capture_manifest(
         width=width,
         height=height,
         frames=frames,
+        content_liveness=liveness_mapping,
     )
     payload = json.dumps(manifest.to_mapping(), indent=2, allow_nan=False) + "\n"
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
@@ -345,23 +380,27 @@ def verify_capture_manifest(
         raise ValueError("capture manifest must be UTF-8 JSON") from error
     if not isinstance(value, Mapping):
         raise TypeError("capture manifest must contain an object")
-    _strict_fields(
-        value,
-        expected=frozenset(
-            {
-                "schema_version",
-                "environment_id",
-                "run_id",
-                "video",
-                "index",
-                "codec",
-                "frame_rate",
-                "width",
-                "height",
-            }
-        ),
-        path="capture manifest",
+    expected_fields = frozenset(
+        {
+            "schema_version",
+            "environment_id",
+            "run_id",
+            "video",
+            "index",
+            "codec",
+            "frame_rate",
+            "width",
+            "height",
+        }
     )
+    if "content_liveness" in value:
+        _strict_fields(
+            value,
+            expected=expected_fields | {"content_liveness"},
+            path="capture manifest",
+        )
+    else:
+        _strict_fields(value, expected=expected_fields, path="capture manifest")
     if value["environment_id"] != expected_environment_id:
         raise ContractViolation("capture environment_id does not match the expected project")
     video = CaptureFile.from_mapping(value["video"])
@@ -382,6 +421,7 @@ def verify_capture_manifest(
         width=value["width"],
         height=value["height"],
         frames=frames,
+        content_liveness=value.get("content_liveness"),
     )
 
 
