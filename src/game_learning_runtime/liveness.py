@@ -81,7 +81,7 @@ class LivenessMonitor:
         ):
             raise ValueError("observation_sequence must be a non-negative integer")
         now = monotonic_ns() if now_ns is None else now_ns
-        if now < 0:
+        if not isinstance(now, int) or isinstance(now, bool) or now < 0:
             raise ValueError("now_ns must be non-negative")
         if produced_at_ns is not None and (
             not isinstance(produced_at_ns, int) or produced_at_ns < 0
