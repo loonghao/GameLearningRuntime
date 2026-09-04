@@ -88,6 +88,7 @@ class ActionReceipt:
     realtime: RealtimeActionReceipt | None = None
     target_id: str | None = None
     reason_class: RefusalReasonClass | None = None
+    issued_against_observation_sequence: int | None = None
 
     def __post_init__(self) -> None:
         if not self.action_id or len(self.action_id) > 128:
@@ -139,6 +140,14 @@ class ActionReceipt:
         ):
             raise ValueError(
                 "authoritative_observation_sequence must be a non-negative integer or None"
+            )
+        if self.issued_against_observation_sequence is not None and (
+            not isinstance(self.issued_against_observation_sequence, int)
+            or isinstance(self.issued_against_observation_sequence, bool)
+            or self.issued_against_observation_sequence < 0
+        ):
+            raise ValueError(
+                "issued_against_observation_sequence must be a non-negative integer or None"
             )
         if not isinstance(self.retryable, bool):
             raise TypeError("retryable must be bool")

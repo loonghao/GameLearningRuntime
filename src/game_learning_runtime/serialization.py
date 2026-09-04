@@ -117,6 +117,7 @@ def _action_receipt_to_record(receipt: ActionReceipt | None) -> dict[str, Any] |
         "postcondition": receipt.postcondition,
         "progress_delta": receipt.progress_delta,
         "authoritative_observation_sequence": receipt.authoritative_observation_sequence,
+        "issued_against_observation_sequence": receipt.issued_against_observation_sequence,
         "retryable": receipt.retryable,
         "realtime": None if receipt.realtime is None else receipt.realtime.to_mapping(),
         "target_id": receipt.target_id,
@@ -167,6 +168,11 @@ def _action_receipt_from_record(value: object) -> ActionReceipt | None:
         authoritative_observation_sequence=(
             int(value["authoritative_observation_sequence"])
             if value.get("authoritative_observation_sequence") is not None
+            else None
+        ),
+        issued_against_observation_sequence=(
+            int(value["issued_against_observation_sequence"])
+            if value.get("issued_against_observation_sequence") is not None
             else None
         ),
         retryable=bool(value.get("retryable", False)),

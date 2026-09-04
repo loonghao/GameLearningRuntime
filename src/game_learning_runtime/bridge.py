@@ -8,7 +8,7 @@ lifecycle and request fencing shared by all transports.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from threading import RLock
 from time import monotonic_ns, time_ns
 from types import MappingProxyType
@@ -91,6 +91,7 @@ class BridgeStepRequest:
     hold_ns: int | None = None
     lease: InputLeaseToken | None = None
     cancellation_token: str | None = None
+    issued_against_observation_sequence: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.episode_id, UUID):
@@ -125,6 +126,14 @@ class BridgeStepRequest:
             raise TypeError("lease must be an InputLeaseToken or None")
         if self.cancellation_token is not None and not self.cancellation_token:
             raise ValueError("cancellation_token cannot be empty")
+        if self.issued_against_observation_sequence is not None and (
+            not isinstance(self.issued_against_observation_sequence, int)
+            or isinstance(self.issued_against_observation_sequence, bool)
+            or self.issued_against_observation_sequence < 0
+        ):
+            raise ValueError(
+                "issued_against_observation_sequence must be a non-negative integer or None"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,6 +485,7 @@ class BridgeEnvironment(GameEnvironment):
             episode_id=current.episode_id,
             expected_step_id=expected_step_id,
             action=action,
+            issued_against_observation_sequence=_observation_sequence(current),
         )
         try:
             result = self._driver.step(request)
@@ -497,6 +507,7 @@ class BridgeEnvironment(GameEnvironment):
             raise ContractViolation(
                 f"bridge step returned step {result.step_id}; expected step {expected_step_id}"
             )
+        result = _annotate_receipt(result, request.issued_against_observation_sequence)
         if self._refusal_funnel is not None:
             self._refusal_funnel.observe_timestep(result)
         self._current = result
@@ -641,6 +652,29 @@ class BridgeEnvironment(GameEnvironment):
         result = self._readiness.check()
         if not result.ready:
             raise EnvironmentReadinessError(result)
+
+
+def _observation_sequence(timestep: TimeStep) -> int | None:
+    value = timestep.info.get("observation_sequence")
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ContractViolation("timestep.info.observation_sequence must be a non-negative integer")
+    return value
+
+
+def _annotate_receipt(timestep: TimeStep, sequence: int | None) -> TimeStep:
+    receipt = timestep.action_receipt
+    if (
+        sequence is None
+        or receipt is None
+        or receipt.issued_against_observation_sequence is not None
+    ):
+        return timestep
+    return replace(
+        timestep,
+        action_receipt=replace(receipt, issued_against_observation_sequence=sequence),
+    )
 
 
 __all__ = [
