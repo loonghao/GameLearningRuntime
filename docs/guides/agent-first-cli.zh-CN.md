@@ -157,6 +157,18 @@ manifest 与 `--json` 会包含有界采样窗口、heartbeat、`content_static`
 登记前失败；optional capture 仍可完成，但会标记为 `degraded`。该功能默认关闭，且不会保留
 帧内容。
 
+## 用数值闭合视觉验证
+
+`game_learning_runtime.visual_acceptance` 为无法直接查看像素的 Agent 提供与宿主无关的视觉
+验收契约。`write_capture_atomically` 先写临时文件、flush/fsync 后再原子替换目标，并返回
+回显的 `request_id`、尺寸、字节数和 SHA-256；`CaptureJobRegistry` 提供有界的
+`pending`/`completed`/`failed` 轮询和严格请求关联。
+
+`compute_visual_metrics` 与 `evaluate_visual_acceptance` 返回可直接写入 JSON 的 coverage、
+包围盒/比例、distinct colours、chroma、luminance 以及可选 silhouette IoU。required 检查
+使用 `require_visual_acceptance`；optional 检查可保留报告和失败原因供后续复核。该契约不
+暗示任何宿主截图旁路，也不会保留图像内容。
+
 ## 让 Agent 按目标闭环
 
 目标使用 `glr.agent-goal.v1`，必须包含稳定的目标 ID、环境品类、机器可判断的成功指标，
