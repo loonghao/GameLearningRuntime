@@ -14,6 +14,7 @@ from game_learning_runtime.integrations.torch_objectives import (  # noqa: E402
     impala_loss,
     masked_logits,
     ppo_loss,
+    ppo_loss_from_log_prob,
     vtrace_targets,
 )
 
@@ -193,6 +194,54 @@ def test_ppo_loss_uses_masked_policy_and_explicit_components() -> None:
     result.loss.backward()
     assert torch.isfinite(logits.grad).all()
     assert torch.isfinite(values.grad).all()
+
+
+def test_ppo_loss_from_log_prob_supports_joint_hybrid_policies() -> None:
+    continuous_log_prob = torch.tensor([-0.2, -0.4], requires_grad=True)
+    skill_log_prob = torch.tensor([-0.3, -0.5], requires_grad=True)
+    utility_log_prob = torch.tensor([-0.2, -0.3], requires_grad=True)
+    new_log_prob = continuous_log_prob + skill_log_prob + utility_log_prob
+    values = torch.zeros(2, requires_grad=True)
+
+    result = ppo_loss_from_log_prob(
+        new_log_prob=new_log_prob,
+        old_log_prob=new_log_prob.detach(),
+        entropy=torch.tensor([1.5, 1.0]),
+        advantages=torch.tensor([2.0, 1.0]),
+        values=values,
+        value_targets=torch.tensor([1.0, -1.0]),
+        valid_action_counts=torch.tensor([1.0, 4.0]),
+        normalize_advantage=False,
+        value_coefficient=0.5,
+        entropy_coefficient=0.0,
+    )
+
+    assert result.policy_loss.item() == pytest.approx(-1.5)
+    assert result.value_loss.item() == pytest.approx(0.5)
+    assert result.loss.item() == pytest.approx(-1.25)
+    assert result.forced_action_ratio.item() == pytest.approx(0.5)
+    assert result.mean_valid_actions.item() == pytest.approx(2.5)
+    result.loss.backward()
+    assert torch.isfinite(continuous_log_prob.grad).all()
+    assert torch.isfinite(skill_log_prob.grad).all()
+    assert torch.isfinite(utility_log_prob.grad).all()
+    assert torch.isfinite(values.grad).all()
+
+
+def test_ppo_loss_from_log_prob_rejects_invalid_distribution_statistics() -> None:
+    common = {
+        "new_log_prob": torch.zeros(2),
+        "old_log_prob": torch.zeros(2),
+        "entropy": torch.ones(2),
+        "advantages": torch.ones(2),
+        "values": torch.zeros(2),
+        "value_targets": torch.zeros(2),
+    }
+
+    with pytest.raises(ValueError, match="entropy must match"):
+        ppo_loss_from_log_prob(**(common | {"entropy": torch.ones(1)}))
+    with pytest.raises(ValueError, match="valid_action_counts must be non-negative"):
+        ppo_loss_from_log_prob(**common, valid_action_counts=torch.tensor([1.0, -1.0]))
 
 
 def test_ppo_reports_degenerate_one_hot_action_masks() -> None:

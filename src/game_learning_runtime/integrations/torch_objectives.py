@@ -278,6 +278,115 @@ def generalized_advantage_estimate(
     return AdvantageTargets(advantages=advantages, value_targets=value_targets)
 
 
+def ppo_loss_from_log_prob(
+    *,
+    new_log_prob: Tensor,
+    old_log_prob: Tensor,
+    entropy: Tensor,
+    advantages: Tensor,
+    values: Tensor,
+    value_targets: Tensor,
+    old_values: Tensor | None = None,
+    valid_action_counts: Tensor | None = None,
+    clip_epsilon: float = 0.2,
+    value_clip_epsilon: float | None = None,
+    value_coefficient: float = 0.5,
+    entropy_coefficient: float = 0.01,
+    normalize_advantage: bool = True,
+) -> PPOLoss:
+    """Compute PPO from distribution-independent policy statistics.
+
+    Learners with continuous, multi-head, or hybrid action distributions can
+    sum their per-head log probabilities and entropies before calling this
+    function. ``valid_action_counts`` is an optional per-sample diagnostic for
+    the learner's discrete masked heads. For multiple heads, pass the minimum
+    number of valid choices across heads; omit it when no such head exists.
+    """
+
+    _require_positive("clip_epsilon", clip_epsilon)
+    if (old_values is None) != (value_clip_epsilon is None):
+        raise ValueError("old_values and value_clip_epsilon must be provided together")
+    if value_clip_epsilon is not None:
+        _require_positive("value_clip_epsilon", value_clip_epsilon)
+    _require_non_negative("value_coefficient", value_coefficient)
+    _require_non_negative("entropy_coefficient", entropy_coefficient)
+    for name, value in (
+        ("new_log_prob", new_log_prob),
+        ("old_log_prob", old_log_prob),
+        ("entropy", entropy),
+        ("advantages", advantages),
+        ("values", values),
+        ("value_targets", value_targets),
+    ):
+        _require_floating(name, value)
+        if value.shape != new_log_prob.shape:
+            raise ValueError(f"{name} must match the policy batch shape")
+        if value.device != new_log_prob.device:
+            raise ValueError(f"{name} and new_log_prob must be on the same device")
+    if old_values is not None:
+        _require_floating("old_values", old_values)
+        if old_values.shape != new_log_prob.shape:
+            raise ValueError("old_values must match the policy batch shape")
+        if old_values.device != new_log_prob.device:
+            raise ValueError("old_values and new_log_prob must be on the same device")
+    if valid_action_counts is not None:
+        if valid_action_counts.dtype is torch.bool:
+            raise TypeError("valid_action_counts must use a numeric dtype")
+        if valid_action_counts.shape != new_log_prob.shape:
+            raise ValueError("valid_action_counts must match the policy batch shape")
+        if valid_action_counts.device != new_log_prob.device:
+            raise ValueError("valid_action_counts and new_log_prob must be on the same device")
+        counts = valid_action_counts.to(dtype=new_log_prob.dtype)
+        if not torch.isfinite(counts).all().item():
+            raise ValueError("valid_action_counts must contain only finite values")
+        if (counts < 0).any().item():
+            raise ValueError("valid_action_counts must be non-negative")
+    else:
+        counts = None
+
+    prepared_advantages = advantages.detach()
+    if normalize_advantage and prepared_advantages.numel() > 1:
+        prepared_advantages = (prepared_advantages - prepared_advantages.mean()) / (
+            prepared_advantages.std(unbiased=False) + 1e-8
+        )
+    maximum_log_ratio = min(20.0, math.log(torch.finfo(new_log_prob.dtype).max) - 2.0)
+    log_ratio = (new_log_prob - old_log_prob.detach()).clamp(
+        min=-maximum_log_ratio, max=maximum_log_ratio
+    )
+    ratio = log_ratio.exp()
+    unclipped = ratio * prepared_advantages
+    clipped = ratio.clamp(1.0 - clip_epsilon, 1.0 + clip_epsilon) * prepared_advantages
+    policy_loss = -torch.minimum(unclipped, clipped).mean()
+    value_error = torch.square(value_targets.detach() - values)
+    if old_values is not None and value_clip_epsilon is not None:
+        clipped_values = old_values.detach() + (values - old_values.detach()).clamp(
+            min=-value_clip_epsilon, max=value_clip_epsilon
+        )
+        clipped_value_error = torch.square(value_targets.detach() - clipped_values)
+        value_error = torch.maximum(value_error, clipped_value_error)
+    value_loss = 0.5 * value_error.mean()
+    mean_entropy = entropy.mean()
+    loss = policy_loss + value_coefficient * value_loss - entropy_coefficient * mean_entropy
+    approximate_kl = ((ratio - 1.0) - log_ratio).mean().detach()
+    clip_fraction = ((ratio - 1.0).abs() > clip_epsilon).to(new_log_prob.dtype).mean().detach()
+    if counts is None:
+        forced_action_ratio = torch.zeros((), dtype=new_log_prob.dtype, device=new_log_prob.device)
+        mean_valid_actions = torch.zeros((), dtype=new_log_prob.dtype, device=new_log_prob.device)
+    else:
+        forced_action_ratio = (counts < 2).to(new_log_prob.dtype).mean().detach()
+        mean_valid_actions = counts.mean().detach()
+    return PPOLoss(
+        loss=loss,
+        policy_loss=policy_loss,
+        value_loss=value_loss,
+        entropy=mean_entropy,
+        approximate_kl=approximate_kl,
+        clip_fraction=clip_fraction,
+        forced_action_ratio=forced_action_ratio,
+        mean_valid_actions=mean_valid_actions,
+    )
+
+
 def ppo_loss(
     *,
     policy_logits: Tensor,
@@ -296,62 +405,9 @@ def ppo_loss(
 ) -> PPOLoss:
     """Compute the clipped discrete-action PPO objective."""
 
-    _require_positive("clip_epsilon", clip_epsilon)
-    if (old_values is None) != (value_clip_epsilon is None):
-        raise ValueError("old_values and value_clip_epsilon must be provided together")
-    if value_clip_epsilon is not None:
-        _require_positive("value_clip_epsilon", value_clip_epsilon)
-    _require_non_negative("value_coefficient", value_coefficient)
-    _require_non_negative("entropy_coefficient", entropy_coefficient)
-    _require_floating("old_log_prob", old_log_prob)
-    _require_floating("advantages", advantages)
-    _require_floating("values", values)
-    _require_floating("value_targets", value_targets)
-    if old_values is not None:
-        _require_floating("old_values", old_values)
     log_probabilities = _policy_log_probabilities(policy_logits, actions, action_mask)
     expected_shape = policy_logits.shape[:-1]
-    for name, value in (
-        ("old_log_prob", old_log_prob),
-        ("advantages", advantages),
-        ("values", values),
-        ("value_targets", value_targets),
-    ):
-        if value.shape != expected_shape:
-            raise ValueError(f"{name} must match the policy batch shape")
-        if value.device != policy_logits.device:
-            raise ValueError(f"{name} and policy_logits must be on the same device")
-    if old_values is not None:
-        if old_values.shape != expected_shape:
-            raise ValueError("old_values must match the policy batch shape")
-        if old_values.device != policy_logits.device:
-            raise ValueError("old_values and policy_logits must be on the same device")
-    prepared_advantages = advantages.detach()
-    if normalize_advantage and prepared_advantages.numel() > 1:
-        prepared_advantages = (prepared_advantages - prepared_advantages.mean()) / (
-            prepared_advantages.std(unbiased=False) + 1e-8
-        )
     new_log_prob = log_probabilities.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
-    maximum_log_ratio = min(20.0, math.log(torch.finfo(new_log_prob.dtype).max) - 2.0)
-    log_ratio = (new_log_prob - old_log_prob.detach()).clamp(
-        min=-maximum_log_ratio, max=maximum_log_ratio
-    )
-    ratio = log_ratio.exp()
-    unclipped = ratio * prepared_advantages
-    clipped = ratio.clamp(1.0 - clip_epsilon, 1.0 + clip_epsilon) * prepared_advantages
-    policy_loss = -torch.minimum(unclipped, clipped).mean()
-    value_error = torch.square(value_targets.detach() - values)
-    if old_values is not None and value_clip_epsilon is not None:
-        clipped_values = old_values.detach() + (values - old_values.detach()).clamp(
-            min=-value_clip_epsilon, max=value_clip_epsilon
-        )
-        clipped_value_error = torch.square(value_targets.detach() - clipped_values)
-        value_error = torch.maximum(value_error, clipped_value_error)
-    value_loss = 0.5 * value_error.mean()
-    entropy = _mean_entropy(log_probabilities)
-    loss = policy_loss + value_coefficient * value_loss - entropy_coefficient * entropy
-    approximate_kl = ((ratio - 1.0) - log_ratio).mean().detach()
-    clip_fraction = ((ratio - 1.0).abs() > clip_epsilon).to(policy_logits.dtype).mean().detach()
     if action_mask is None:
         valid_action_counts = torch.full(
             expected_shape,
@@ -361,17 +417,21 @@ def ppo_loss(
         )
     else:
         valid_action_counts = action_mask.sum(dim=-1).to(policy_logits.dtype)
-    forced_action_ratio = (valid_action_counts < 2).to(policy_logits.dtype).mean().detach()
-    mean_valid_actions = valid_action_counts.mean().detach()
-    return PPOLoss(
-        loss=loss,
-        policy_loss=policy_loss,
-        value_loss=value_loss,
-        entropy=entropy,
-        approximate_kl=approximate_kl,
-        clip_fraction=clip_fraction,
-        forced_action_ratio=forced_action_ratio,
-        mean_valid_actions=mean_valid_actions,
+    per_sample_entropy = -(log_probabilities.exp() * log_probabilities).sum(dim=-1)
+    return ppo_loss_from_log_prob(
+        new_log_prob=new_log_prob,
+        old_log_prob=old_log_prob,
+        entropy=per_sample_entropy,
+        advantages=advantages,
+        values=values,
+        value_targets=value_targets,
+        old_values=old_values,
+        valid_action_counts=valid_action_counts,
+        clip_epsilon=clip_epsilon,
+        value_clip_epsilon=value_clip_epsilon,
+        value_coefficient=value_coefficient,
+        entropy_coefficient=entropy_coefficient,
+        normalize_advantage=normalize_advantage,
     )
 
 
@@ -504,5 +564,6 @@ __all__ = [
     "impala_loss",
     "masked_logits",
     "ppo_loss",
+    "ppo_loss_from_log_prob",
     "vtrace_targets",
 ]

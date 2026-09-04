@@ -24,9 +24,12 @@ boundary. They accept explicit tensors, perform no collection or optimization,
 and return typed loss components or detached targets.
 
 The shared layer covers discrete masked logits, behavior cloning, GAE, clipped
-PPO, V-trace, and the compositional IMPALA loss. It distinguishes `terminated`
-from `truncated`: termination disables bootstrapping, while truncation retains
-the next-state value but stops cross-episode recursion.
+PPO, V-trace, and the compositional IMPALA loss. PPO callers may either pass a
+single discrete policy or precomputed joint log-probability and entropy tensors
+from continuous, multi-head, or hybrid distributions. Distribution construction
+and action encoding remain project-owned. The objectives distinguish
+`terminated` from `truncated`: termination disables bootstrapping, while
+truncation retains the next-state value but stops cross-episode recursion.
 
 Keep models, optimizers, replay selection, batching, reward functions, encoder
 semantics, and distributed actor orchestration in consuming projects. Keep
@@ -50,7 +53,8 @@ data-plane bottlenecks.
 - The integration must track supported PyTorch behavior and packaging size.
 - Callers remain responsible for batching, devices, mixed precision, and
   distributed execution.
-- Only discrete categorical policies are covered initially.
+- Callers with composite policies must combine per-head statistics correctly
+  and define any masked-action diagnostics explicitly.
 
 ### Neutral
 
