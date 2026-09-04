@@ -171,6 +171,20 @@ the configured bad-content fraction is exceeded; an optional capture remains usa
 
 Use `--no-capture` only when review/supervised evidence is intentionally unnecessary.
 
+## Close the visual loop numerically
+
+`game_learning_runtime.visual_acceptance` provides a host-neutral visual-acceptance contract for
+agents that cannot inspect pixels directly. `write_capture_atomically` writes through a temporary
+file, flushes and fsyncs it, then atomically replaces the destination and returns the echoed
+`request_id`, dimensions, byte count, and SHA-256. `CaptureJobRegistry` provides bounded
+`pending`/`completed`/`failed` polling with strict request correlation.
+
+`compute_visual_metrics` and `evaluate_visual_acceptance` return JSON-safe measurements for
+coverage, bounding box/aspect, distinct colours, chroma, luminance, and optional silhouette IoU.
+Use `require_visual_acceptance` for a required gate; optional checks can retain the report and its
+failure reasons for later review. No host screenshot side channel or image retention is implied by
+this contract.
+
 ## Pursue a bounded goal
 
 Create a strict `glr.agent-goal.v1` file:
