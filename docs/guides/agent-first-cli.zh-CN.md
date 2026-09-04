@@ -132,7 +132,13 @@ provenance 门禁。只有明确不需要 review/监督数据时才使用 `--no-
   "startup_timeout_seconds": 5,
   "heartbeat_timeout_seconds": 5,
   "minimum_frames": 1,
-  "minimum_steps": 1
+  "minimum_steps": 1,
+  "content_liveness": {
+    "enabled": false,
+    "required": false,
+    "sample_every": 4,
+    "max_bad_fraction": 0.5
+  }
 }
 ```
 
@@ -143,6 +149,13 @@ CLI 会写入带 `session_id` 的启动回执，并通过 `GLR_CAPTURE_STATUS` �
 `glr.capture.v1` manifest 有效时才算成功。optional capture 不阻塞训练，但其生命周期会
 以结构化的 `capture.lifecycle` 事件写入 run store，并出现在 `--json` 输出中。回执和状态
 文件始终保留为 run artifact；视频、索引和 manifest 只有通过全部门禁后才登记。
+
+启用后，content liveness 会稀疏采样连续帧对，并输出归一化的数值
+`inter_frame_diff_mean`、`inter_frame_diff_max`、`luminance_mean` 和 `luminance_std`。
+manifest 与 `--json` 会包含有界采样窗口、heartbeat、`content_static` /
+`content_blank` 状态及原因。当坏内容比例超过配置阈值时，required capture 会在 artifact
+登记前失败；optional capture 仍可完成，但会标记为 `degraded`。该功能默认关闭，且不会保留
+帧内容。
 
 ## 让 Agent 按目标闭环
 

@@ -142,7 +142,13 @@ For recorders that opt into `glr.capture-session.v1`, add a session block:
   "startup_timeout_seconds": 5,
   "heartbeat_timeout_seconds": 5,
   "minimum_frames": 1,
-  "minimum_steps": 1
+  "minimum_steps": 1,
+  "content_liveness": {
+    "enabled": false,
+    "required": false,
+    "sample_every": 4,
+    "max_bad_fraction": 0.5
+  }
 }
 ```
 
@@ -155,6 +161,13 @@ a fresh heartbeat, a `completed` terminal record, the configured minimums, and a
 a structured `capture.lifecycle` run event and included in `--json` output. The receipt and status
 file are retained as run artifacts; video/index/manifest artifacts are registered only after all
 gates pass.
+
+When enabled, content liveness samples sparse consecutive frame pairs and emits normalized numeric
+`inter_frame_diff_mean`, `inter_frame_diff_max`, `luminance_mean`, and `luminance_std` values. The
+manifest and `--json` output include the bounded sample window, heartbeat, `content_static` /
+`content_blank` state, and reason. A required capture is rejected before artifact registration when
+the configured bad-content fraction is exceeded; an optional capture remains usable but is marked
+`degraded`. The feature is disabled by default and does not retain frames.
 
 Use `--no-capture` only when review/supervised evidence is intentionally unnecessary.
 
