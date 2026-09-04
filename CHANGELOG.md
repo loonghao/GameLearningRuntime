@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.12.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.11.0...v0.12.0) (2026-09-04)
+
+
+### Features
+
+* add capture content liveness telemetry ([54f422b](https://github.com/loonghao/GameLearningRuntime/commit/54f422b08fbd084820335df500d2ebf8e86dcd65)), closes [#86](https://github.com/loonghao/GameLearningRuntime/issues/86)
+* add environment readiness gates ([ed008cb](https://github.com/loonghao/GameLearningRuntime/commit/ed008cb0c8b4ab459c516812366d12a0ee480596))
+* add numeric visual acceptance capability ([ccb04a1](https://github.com/loonghao/GameLearningRuntime/commit/ccb04a17643abb137d059b0f4221121d0b1e269a)), closes [#81](https://github.com/loonghao/GameLearningRuntime/issues/81)
+* model non-gameplay environment phases ([556f252](https://github.com/loonghao/GameLearningRuntime/commit/556f252993693ddd0f33583783fa3e4432a50f8b))
+* separate observation liveness from progress ([ab67c61](https://github.com/loonghao/GameLearningRuntime/commit/ab67c61c6eb5fa894935f9bcad23f14592df1341))
+* supervise external target processes ([a007cc9](https://github.com/loonghao/GameLearningRuntime/commit/a007cc908777a7e67f834e8040fb0362d710a7f4))
+
 ## [0.11.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.10.0...v0.11.0) (2026-09-03)
 
 
