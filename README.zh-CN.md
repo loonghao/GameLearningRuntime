@@ -129,7 +129,8 @@ runtime/trainer/player/researcher/planner/evaluator/recorder 角色。GLR 负责
 `glr update --check` 只读检查最新稳定版本。用户明确要求更新后，
 `glr update --yes` 会校验准确平台的压缩包与 `SHA256SUMS`，随后更新 `glr`、同目录的
 `glr-hostd` 和项目 Skills；它不会修改游戏代码、Trainer 依赖、模型、数据集或项目配置。
-仅维护二进制时使用 `--no-skills`，指定 Skill 目录时使用 `--skills-dir`。
+检查使用 GitHub 的公开 latest-release 资源链接，不消耗匿名 REST API 配额。仅维护二进制时
+使用 `--no-skills`，指定 Skill 目录时使用 `--skills-dir`。
 
 ### 作为库接入
 

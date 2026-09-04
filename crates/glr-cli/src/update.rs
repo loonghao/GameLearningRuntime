@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use reqwest::StatusCode;
 use reqwest::blocking::{Client, Response};
-use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,28 +17,12 @@ use crate::error::{Error, Result};
 const OWNER: &str = "loonghao";
 const REPOSITORY: &str = "GameLearningRuntime";
 const UPDATE_SCHEMA_VERSION: &str = "glr.release-bundle.v1";
-const MAX_RELEASE_JSON_BYTES: usize = 1024 * 1024;
 const MAX_CHECKSUM_BYTES: usize = 1024 * 1024;
 const MAX_ARCHIVE_BYTES: usize = 256 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 4096;
 const MAX_EXTRACTED_BYTES: u64 = 512 * 1024 * 1024;
 
 pub const BUILD_TARGET: &str = env!("GLR_BUILD_TARGET");
-
-#[derive(Debug, Clone, Deserialize)]
-struct ReleaseAsset {
-    name: String,
-    browser_download_url: String,
-    size: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    draft: bool,
-    prerelease: bool,
-    assets: Vec<ReleaseAsset>,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdatePlan {
@@ -85,23 +69,15 @@ struct SkillEntry {
 
 pub struct Updater {
     client: Client,
-    api_url: String,
+    latest_checksums_url: String,
+    releases_url: String,
 }
 
 impl Updater {
     pub fn github() -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static("glr-self-update"));
-        headers.insert(
-            ACCEPT,
-            HeaderValue::from_static("application/vnd.github+json"),
-        );
-        if let Ok(token) = std::env::var("GLR_GITHUB_TOKEN") {
-            let value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
-                Error::Invalid("GLR_GITHUB_TOKEN is not a valid header value".into())
-            })?;
-            headers.insert(AUTHORIZATION, value);
-        }
+        headers.insert(ACCEPT, HeaderValue::from_static("application/octet-stream"));
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
@@ -116,14 +92,16 @@ impl Updater {
             }))
             .default_headers(headers)
             .build()?;
+        let releases_url = format!("https://github.com/{OWNER}/{REPOSITORY}/releases");
         Ok(Self {
             client,
-            api_url: format!("https://api.github.com/repos/{OWNER}/{REPOSITORY}/releases/latest"),
+            latest_checksums_url: format!("{releases_url}/latest/download/SHA256SUMS"),
+            releases_url,
         })
     }
 
     #[cfg(test)]
-    fn with_api_url(api_url: String) -> Result<Self> {
+    fn with_release_urls(latest_checksums_url: String, releases_url: String) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static("glr-self-update-test"));
         let client = Client::builder()
@@ -131,45 +109,24 @@ impl Updater {
             .redirect(reqwest::redirect::Policy::none())
             .default_headers(headers)
             .build()?;
-        Ok(Self { client, api_url })
+        Ok(Self {
+            client,
+            latest_checksums_url,
+            releases_url,
+        })
     }
 
     pub fn check(&self) -> Result<UpdatePlan> {
-        let release_bytes = self.get_limited(&self.api_url, MAX_RELEASE_JSON_BYTES)?;
-        let release: GitHubRelease = serde_json::from_slice(&release_bytes)?;
-        if release.draft || release.prerelease {
-            return Err(Error::Contract(
-                "latest release must be a stable published release".into(),
-            ));
-        }
-        let latest_version = release
-            .tag_name
-            .strip_prefix('v')
-            .ok_or_else(|| Error::Contract("release tag must start with v".into()))?;
-        let latest = Version::parse(latest_version)?;
-        let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
-        let asset_name = format!("glr-{latest_version}-{BUILD_TARGET}.zip");
-        let archive = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| Error::Contract(format!("release is missing {asset_name}")))?;
-        if archive.size == 0 || archive.size > MAX_ARCHIVE_BYTES as u64 {
-            return Err(Error::Contract(format!(
-                "release asset has an invalid size: {}",
-                archive.size
-            )));
-        }
-        let checksum_asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == "SHA256SUMS")
-            .ok_or_else(|| Error::Contract("release is missing SHA256SUMS".into()))?;
-        let checksums =
-            self.get_limited(&checksum_asset.browser_download_url, MAX_CHECKSUM_BYTES)?;
+        let checksums = self.get_limited(&self.latest_checksums_url, MAX_CHECKSUM_BYTES)?;
         let checksums = String::from_utf8(checksums)
             .map_err(|_| Error::Contract("SHA256SUMS is not UTF-8".into()))?;
-        let checksum = checksum_for(&checksums, &asset_name)?;
+        let (latest, asset_name, checksum) = release_asset_for_target(&checksums, BUILD_TARGET)?;
+        let current = Version::parse(env!("CARGO_PKG_VERSION"))?;
+        let latest_version = latest.to_string();
+        let archive_url = format!(
+            "{}/download/v{latest_version}/{asset_name}",
+            self.releases_url
+        );
         Ok(UpdatePlan {
             owner: OWNER,
             repository: REPOSITORY,
@@ -181,7 +138,7 @@ impl Updater {
             sha256: checksum,
             managed_components: vec!["cli", "runtime-host", "skills"],
             integrity: "same-release-sha256",
-            archive_url: archive.browser_download_url.clone(),
+            archive_url,
         })
     }
 
@@ -317,12 +274,8 @@ pub fn checksum_for(checksums: &str, asset: &str) -> Result<String> {
         let Some(name) = fields.next() else {
             continue;
         };
-        if name.trim_start_matches('*') == asset {
-            if checksum.len() == 64
-                && checksum
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            {
+        if normalize_checksum_name(name) == asset {
+            if valid_checksum(checksum) {
                 return Ok(checksum.into());
             }
             return Err(Error::Contract(format!(
@@ -333,6 +286,61 @@ pub fn checksum_for(checksums: &str, asset: &str) -> Result<String> {
     Err(Error::Contract(format!(
         "SHA256SUMS does not contain {asset}"
     )))
+}
+
+fn release_asset_for_target(checksums: &str, target: &str) -> Result<(Version, String, String)> {
+    let suffix = format!("-{target}.zip");
+    let mut selected = None;
+    for line in checksums.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(checksum) = fields.next() else {
+            continue;
+        };
+        let Some(name) = fields.next() else {
+            continue;
+        };
+        let name = normalize_checksum_name(name);
+        let Some(version) = name
+            .strip_prefix("glr-")
+            .and_then(|value| value.strip_suffix(&suffix))
+        else {
+            continue;
+        };
+        let version = Version::parse(version)?;
+        if !version.pre.is_empty() {
+            return Err(Error::Contract(
+                "latest release must be a stable published release".into(),
+            ));
+        }
+        if !valid_checksum(checksum) {
+            return Err(Error::Contract(format!(
+                "SHA256SUMS has an invalid digest for {name}"
+            )));
+        }
+        if selected.is_some() {
+            return Err(Error::Contract(format!(
+                "SHA256SUMS contains multiple GLR archives for target {target}"
+            )));
+        }
+        selected = Some((version, name.to_owned(), checksum.to_owned()));
+    }
+    selected.ok_or_else(|| {
+        Error::Contract(format!(
+            "SHA256SUMS does not contain a GLR archive for target {target}"
+        ))
+    })
+}
+
+fn normalize_checksum_name(name: &str) -> &str {
+    let name = name.trim_start_matches('*');
+    name.strip_prefix("./").unwrap_or(name)
+}
+
+fn valid_checksum(checksum: &str) -> bool {
+    checksum.len() == 64
+        && checksum
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn extract_archive(archive_path: &Path, destination: &Path) -> Result<()> {
@@ -535,12 +543,14 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BUILD_TARGET, UpdatePlan, Updater, checksum_for};
+    use semver::Version;
+
+    use super::{BUILD_TARGET, UpdatePlan, Updater, checksum_for, release_asset_for_target};
 
     #[test]
     fn checksum_parser_requires_the_exact_asset() {
         let digest = "a".repeat(64);
-        let values = format!("{digest}  glr-1.2.3-x86_64-pc-windows-msvc.zip\n");
+        let values = format!("{digest}  ./glr-1.2.3-x86_64-pc-windows-msvc.zip\n");
         assert_eq!(
             checksum_for(&values, "glr-1.2.3-x86_64-pc-windows-msvc.zip").unwrap(),
             digest
@@ -550,12 +560,32 @@ mod tests {
 
     #[test]
     fn test_constructor_keeps_network_override_private_to_tests() {
-        assert!(Updater::with_api_url("http://127.0.0.1:9/latest".into()).is_ok());
+        assert!(
+            Updater::with_release_urls(
+                "http://127.0.0.1:9/latest/SHA256SUMS".into(),
+                "http://127.0.0.1:9/releases".into(),
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn github_constructor_uses_the_public_release_asset_endpoint() {
+        let updater = Updater::github().unwrap();
+        assert_eq!(
+            updater.latest_checksums_url,
+            "https://github.com/loonghao/GameLearningRuntime/releases/latest/download/SHA256SUMS"
+        );
+        assert!(!updater.latest_checksums_url.contains("api.github.com"));
     }
 
     #[test]
     fn downloads_reject_non_https_urls_before_network_access() {
-        let updater = Updater::with_api_url("http://127.0.0.1:9/latest".into()).unwrap();
+        let updater = Updater::with_release_urls(
+            "http://127.0.0.1:9/latest/SHA256SUMS".into(),
+            "http://127.0.0.1:9/releases".into(),
+        )
+        .unwrap();
         let error = updater
             .get_limited("http://127.0.0.1:9/archive", 1024)
             .unwrap_err();
@@ -564,7 +594,11 @@ mod tests {
 
     #[test]
     fn applying_an_up_to_date_plan_never_downloads_or_mutates() {
-        let updater = Updater::with_api_url("http://127.0.0.1:9/latest".into()).unwrap();
+        let updater = Updater::with_release_urls(
+            "http://127.0.0.1:9/latest/SHA256SUMS".into(),
+            "http://127.0.0.1:9/releases".into(),
+        )
+        .unwrap();
         let result = updater
             .apply(
                 UpdatePlan {
@@ -586,5 +620,31 @@ mod tests {
         assert!(!result.applied);
         assert!(!result.host_updated);
         assert!(!result.skills_updated);
+    }
+
+    #[test]
+    fn release_asset_is_discovered_from_the_published_checksum_manifest() {
+        let digest = "b".repeat(64);
+        let checksums = format!(
+            "{}  ./game_learning_runtime-1.2.3-py3-none-any.whl\n{digest}  ./glr-1.2.3-x86_64-pc-windows-msvc.zip\n",
+            "a".repeat(64)
+        );
+        let (version, asset, checksum) =
+            release_asset_for_target(&checksums, "x86_64-pc-windows-msvc").unwrap();
+        assert_eq!(version, Version::parse("1.2.3").unwrap());
+        assert_eq!(asset, "glr-1.2.3-x86_64-pc-windows-msvc.zip");
+        assert_eq!(checksum, digest);
+    }
+
+    #[test]
+    fn release_asset_rejects_ambiguous_target_entries() {
+        let digest = "c".repeat(64);
+        let checksums = format!(
+            "{digest}  glr-1.2.3-x86_64-pc-windows-msvc.zip\n{digest}  glr-1.2.4-x86_64-pc-windows-msvc.zip\n"
+        );
+        let error = release_asset_for_target(&checksums, "x86_64-pc-windows-msvc")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("multiple GLR archives"));
     }
 }

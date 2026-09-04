@@ -43,9 +43,9 @@ It never runs an installer script or modifies game code, role dependencies,
 virtual environments, models, datasets, or `glr-project.json`. SHA-256 verifies
 same-release integrity; it is not publisher signature verification. Re-run
 `--version`, `doctor`, and `update --check` after applying an update.
-Checks are anonymous by default. If GitHub rate-limits the request, provide an
-existing token only through the process-scoped `GLR_GITHUB_TOKEN`; never print
-or persist it in the project.
+Checks use GitHub's public latest-release asset link and do not consume the
+anonymous REST API quota. The selected version and exact target archive are
+derived from the published `SHA256SUMS` before any update is applied.
 
 ## Configure the project
 

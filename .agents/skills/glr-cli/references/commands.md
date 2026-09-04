@@ -36,9 +36,9 @@ The updater requires HTTPS, a matching target manifest, and the published
 `SHA256SUMS`; it never runs an installer script or changes project/trainer data.
 Re-run `--version`, `doctor`, and `update --check` after an update.
 
-The public release check is anonymous by default. On a GitHub API rate-limit
-response, provide an existing token only as the process-scoped
-`GLR_GITHUB_TOKEN`. Never echo it or store it in `glr-project.json`.
+The public release check uses GitHub's latest-release asset link instead of the
+REST API, so it does not consume anonymous API quota. The updater derives the
+version, exact target archive, and digest from the published `SHA256SUMS`.
 
 ## Project configuration
 
