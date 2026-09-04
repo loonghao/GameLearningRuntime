@@ -97,6 +97,38 @@ loss, entropy, approximate KL, and clip fraction. Projects that use value
 clipping can pass both `old_values` and `value_clip_epsilon`; omitting both keeps
 the ordinary value-regression objective.
 
+For continuous, multi-head, or hybrid policies, construct the distributions in
+the project and pass their joint statistics to the distribution-independent
+objective:
+
+```python
+from game_learning_runtime.integrations.torch_objectives import (
+    ppo_loss_from_log_prob,
+)
+
+new_log_prob = (
+    movement.log_prob(movement_action)
+    + skill.log_prob(skill_action)
+    + utility.log_prob(utility_action)
+)
+entropy = movement_entropy + skill.entropy() + utility.entropy()
+terms = ppo_loss_from_log_prob(
+    new_log_prob=new_log_prob,
+    old_log_prob=old_log_prob,
+    entropy=entropy,
+    advantages=targets.advantages,
+    values=values,
+    value_targets=targets.value_targets,
+    valid_action_counts=minimum_valid_choices,
+)
+```
+
+When several categorical heads are masked, `valid_action_counts` should be the
+minimum number of valid choices across those heads for each sample. This keeps
+`forced_action_ratio` meaningful. Omit it when the policy has no masked
+categorical head. The helper does not own distributions, models, action masks,
+optimizers, or rollout collection.
+
 ## IMPALA and V-trace
 
 ```python
@@ -132,7 +164,7 @@ mathematics after the model has produced logits and values:
 | Mask invalid action logits | `masked_logits` | Action vocabulary and mask construction |
 | Expert-action cross-entropy | `behavior_cloning_loss` | Demonstration loading and filtering |
 | Advantage recursion | `generalized_advantage_estimate` | Rollout assembly and reward definition |
-| PPO minibatch loss | `ppo_loss` | Epochs, optimizer, early stopping, checkpoints |
+| PPO minibatch loss | `ppo_loss` / `ppo_loss_from_log_prob` | Distributions, epochs, optimizer, early stopping, checkpoints |
 | Off-policy correction | `vtrace_targets` / `impala_loss` | Actor queue, policy-version fencing, backpressure |
 
 When an older batch exposes only `done`, split its source signal before calling

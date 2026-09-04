@@ -465,6 +465,11 @@ terms = ppo_loss(
 terms.loss.backward()
 ```
 
+Hybrid and multi-head learners can instead call `ppo_loss_from_log_prob` with
+their summed per-head log-probability and entropy tensors. GLR shares the PPO
+mathematics without owning the project's distributions, policy network, action
+encoding, or optimizer.
+
 ## Reuse the CI workflow
 
 Any uv-managed Python repository can call GLR's public reusable workflow:
