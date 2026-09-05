@@ -628,3 +628,7 @@ __all__ = [
     "write_capture_atomically",
     "write_checkpoint_manifest",
 ]
+
+from game_learning_runtime.qa import QACheck, QAResult, run_qa
+
+__all__ += ["QACheck", "QAResult", "run_qa"]

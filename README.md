@@ -524,3 +524,27 @@ runbook](docs/runbooks/release.md).
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development contract and
 [SECURITY.md](SECURITY.md) for private vulnerability reporting. GLR is licensed
 under the [MIT License](LICENSE).
+
+## Goal-driven QA
+
+Run bounded checks against a human-readable objective and get a self-contained report grouped by local date:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m game_learning_runtime.qa "inspect the whole game for bugs" `
+  --project . `
+  --check smoke python -c "print('adapter smoke ok')"
+```
+
+Each run is written to `.glr-qa/YYYY-MM-DD/<UTC-time>/` with `result.json` and `index.html`. Checks are intentionally command based so an adapter can attach its own deterministic training, replay, or live-host probe while GLR keeps the goal, evidence, timeout, and report contract stable.
+
+## Goal-driven QA
+
+Run bounded checks against a human-readable objective and get a self-contained report grouped by local date:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m game_learning_runtime.qa "inspect the whole game for bugs" --project . --check smoke python -c "print('adapter smoke ok')"
+```
+
+Each run is written to `.glr-qa/YYYY-MM-DD/<UTC-time>/` with `result.json` and `index.html`. Checks are command based so an adapter can attach deterministic training, replay, or live-host probes while GLR keeps the goal, evidence, timeout, and report contract stable.
