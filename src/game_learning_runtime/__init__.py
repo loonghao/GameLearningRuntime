@@ -631,5 +631,4 @@ __all__ = [
 
 from game_learning_runtime.qa import QACheck, QAResult, run_qa
 
-__all__ += ['QACheck', 'QAResult', 'run_qa']
-
+__all__ += ["QACheck", "QAResult", "run_qa"]
