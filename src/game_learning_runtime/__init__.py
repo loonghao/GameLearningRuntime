@@ -629,7 +629,7 @@ __all__ = [
     "write_checkpoint_manifest",
 ]
 
-from game_learning_runtime.qa import QAResult, QACheck, run_qa
+from game_learning_runtime.qa import QACheck, QAResult, run_qa
 
-__all__ += ['QAResult', 'QACheck', 'run_qa']
+__all__ += ['QACheck', 'QAResult', 'run_qa']
 
