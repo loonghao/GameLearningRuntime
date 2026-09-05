@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.13.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.12.1...v0.13.0) (2026-09-05)
+
+
+### Features
+
+* add goal-driven GLR QA skill ([#98](https://github.com/loonghao/GameLearningRuntime/issues/98)) ([5e526f4](https://github.com/loonghao/GameLearningRuntime/commit/5e526f4cde631afdd5fcc7239a217bad1e0165af))
+* support hybrid PPO policy statistics ([c60d07b](https://github.com/loonghao/GameLearningRuntime/commit/c60d07b3a7c0fec1eb4b02876dec97a43a6cb8e1))
+
 ## [0.12.1](https://github.com/loonghao/GameLearningRuntime/compare/v0.12.0...v0.12.1) (2026-09-04)
 
 
