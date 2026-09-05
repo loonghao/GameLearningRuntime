@@ -1,0 +1,8 @@
+{
+  "schema_version": "glr.knowledge-combat-route-evidence.v1",
+  "authority": "runtime_observation_and_recording",
+  "required_fields": ["run_id", "route_id", "route_index", "position", "action", "producer_state_seq", "outcome", "recording"],
+  "outcomes": ["reached", "skipped", "blocked", "combat_gated", "death", "recovered"],
+  "recording": {"required_fields": ["video_path", "recording_started_before_actions", "binding", "outcome"], "must_start_before_combat": true},
+  "promotion": {"route_edges_require_repeated_live_success": true, "replay_is_advisory_until_fresh_observation": true, "unknown_moves_remain_high_risk": true}
+}

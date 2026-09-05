@@ -248,3 +248,6 @@ Rust only after a reproducible benchmark shows that boundary dominates the
 target workload. The standalone Rust CLI is a distribution/control-plane
 decision, not permission to move game semantics or learner algorithms into
 Rust. Preserve Python reference behavior and cross-language fixtures.
+
+## Evidence and recording
+Before any boss or elite combat action, start and verify the configured recording provider. Persist route transitions and combat outcomes using docs/knowledge/combat-route-evidence.v1.json; retain recording provenance and exact producer binding. Never publish local paths, PIDs, HWNDs, credentials, or private traces.
