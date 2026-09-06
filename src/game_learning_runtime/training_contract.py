@@ -24,10 +24,12 @@ def validate_timestep(timestep: TimeStep) -> TimeStep:
         raise TypeError("training input must be a GLR TimeStep")
     if np.any(np.logical_and(timestep.terminated, timestep.truncated)):
         raise TrainingContractError("terminated and truncated cannot both be true")
-    if timestep.done and timestep.info.get("strategy_outcome") in {"failed", "error"}:
-        # A provider failure is a truncation boundary, never a terminal loss.
-        if not np.any(timestep.truncated):
-            raise TrainingContractError("failed infrastructure outcome must be truncated")
+    if (
+        timestep.done
+        and timestep.info.get("strategy_outcome") in {"failed", "error"}
+        and not np.any(timestep.truncated)
+    ):
+        raise TrainingContractError("failed infrastructure outcome must be truncated")
     return timestep
 
 
@@ -69,4 +71,9 @@ def assert_transition_provenance(transition: Transition) -> Transition:
     return transition
 
 
-__all__ = ["TrainingContractError", "assert_transition_provenance", "transition_provenance", "validate_timestep"]
+__all__ = [
+    "TrainingContractError",
+    "assert_transition_provenance",
+    "transition_provenance",
+    "validate_timestep",
+]
