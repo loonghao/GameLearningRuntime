@@ -47,6 +47,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Publish verified skills
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
@@ -54,4 +57,5 @@ jobs:
           set -euo pipefail
           # The publisher reads the token from the environment; shell tracing is disabled.
           test -n "${CLAWHUB_TOKEN:-}"
-          clawhub skills publish .agents/skills --non-interactive
+          npx --yes clawhub@0.23.1 scan .agents/skills --non-interactive
+          npx --yes clawhub@0.23.1 publish .agents/skills --non-interactive

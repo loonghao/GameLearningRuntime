@@ -239,10 +239,11 @@ impl Updater {
             }
             thread::sleep(Duration::from_millis(250 * (1 << attempt)));
         }
-        Err(Error::Contract(format!(
-            "update endpoint returned HTTP {}",
-            last_status.map_or(0, |status| status.as_u16())
-        )))
+        let status = last_status.map_or(0, |status| status.as_u16());
+        if status == StatusCode::NOT_FOUND.as_u16() {
+            return Err(Error::Contract("no_release_available".into()));
+        }
+        Err(Error::Contract(format!("update endpoint returned HTTP {status}")))
     }
 }
 
