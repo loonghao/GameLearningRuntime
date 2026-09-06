@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.13.2](https://github.com/loonghao/GameLearningRuntime/compare/v0.13.1...v0.13.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* **ci:** publish each skill with supported clawhub flags ([9573df1](https://github.com/loonghao/GameLearningRuntime/commit/9573df188eb1e62820f95313e91315d7d44fb779))
+
 ## [0.13.1](https://github.com/loonghao/GameLearningRuntime/compare/v0.13.0...v0.13.1) (2026-09-06)
 
 
