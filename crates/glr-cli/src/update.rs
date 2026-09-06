@@ -243,7 +243,9 @@ impl Updater {
         if status == StatusCode::NOT_FOUND.as_u16() {
             return Err(Error::Contract("no_release_available".into()));
         }
-        Err(Error::Contract(format!("update endpoint returned HTTP {status}")))
+        Err(Error::Contract(format!(
+            "update endpoint returned HTTP {status}"
+        )))
     }
 }
 
