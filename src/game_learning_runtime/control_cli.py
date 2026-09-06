@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from typing import Final
 
 
-class ControlCommand(StrEnum):
+class ControlCommand(str, Enum):
     TRAIN = "train"
     STATUS = "status"
     FEEDBACK = "feedback"

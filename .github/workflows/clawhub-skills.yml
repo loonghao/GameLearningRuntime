@@ -1,0 +1,56 @@
+name: Publish GLR skills
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish after scan (main or release tag only)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    outputs:
+      eligible: ${{ steps.guard.outputs.eligible }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF_TYPE" == tag || "$ref" == main ]]; then
+            echo 'eligible=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'eligible=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Scan skills (dry run)
+        run: |
+          test -d .agents/skills
+          ! grep -RInE '(^|[^A-Za-z])(sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9]+|CLAWHUB_TOKEN)' .agents/skills || exit 1
+          find .agents/skills -name SKILL.md -print -exec test -s {} \;
+
+  publish:
+    needs: scan
+    if: needs.scan.outputs.eligible == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && secrets.CLAWHUB_TOKEN != ''
+    runs-on: ubuntu-latest
+    environment: clawhub
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish verified skills
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The publisher reads the token from the environment; shell tracing is disabled.
+          clawhub skills publish .agents/skills --non-interactive
