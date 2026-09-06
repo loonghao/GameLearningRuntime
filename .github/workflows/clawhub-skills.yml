@@ -33,10 +33,20 @@ jobs:
             echo 'eligible=false' >> "$GITHUB_OUTPUT"
           fi
       - name: Scan skills (dry run)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate skill packages
         run: |
+          set -euo pipefail
           test -d .agents/skills
           ! grep -RInE '(^|[^A-Za-z])(sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9]+|CLAWHUB_TOKEN)' .agents/skills || exit 1
-          find .agents/skills -name SKILL.md -print -exec test -s {} \;
+          while IFS= read -r -d '' skill_md; do
+            test -s "$skill_md"
+            skill_dir="$(dirname "$skill_md")"
+            echo "Validating ${skill_dir}"
+            npx --yes clawhub@0.23.1 publish "$skill_dir" --dry-run --json >/dev/null
+          done < <(find .agents/skills -name SKILL.md -type f -print0)
 
   publish:
     needs: scan
@@ -57,5 +67,8 @@ jobs:
           set -euo pipefail
           # The publisher reads the token from the environment; shell tracing is disabled.
           test -n "${CLAWHUB_TOKEN:-}"
-          npx --yes clawhub@0.23.1 scan .agents/skills --non-interactive
-          npx --yes clawhub@0.23.1 publish .agents/skills --non-interactive
+          while IFS= read -r -d '' skill_md; do
+            skill_dir="$(dirname "$skill_md")"
+            echo "Publishing ${skill_dir}"
+            npx --yes clawhub@0.23.1 publish "$skill_dir" --json
+          done < <(find .agents/skills -name SKILL.md -type f -print0)
