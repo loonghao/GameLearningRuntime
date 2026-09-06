@@ -378,6 +378,44 @@ The generated lane includes the environment skeleton, `training.json`,
 `reward-safety.json`, `demonstration-policy.json`, `runtime-integration.json`, a
 provenance-aware research manifest, tests, Agent instructions, a model-bundle
 smoke trainer, `vx.toml`, and a `justfile`.
+
+### Distribute the skills as an Agent Plugin
+
+For plugin-capable agents, this repository also ships the self-contained
+[`game-learning-runtime-skills` plugin](plugins/game-learning-runtime-skills).
+Its `.codex-plugin/plugin.json` follows the Agent Plugin manifest contract and
+its `skills/` payload contains the same `glr-adapter-builder` skill as the
+repository source. Copy or archive the plugin directory without changing its
+internal layout; a compatible host should resolve each skill relative to the
+plugin's `skills/` directory. Pin the repository to a release tag or commit
+SHA when sharing it with a team.
+
+The repo-local `.agents/plugins/marketplace.json` exposes the plugin as
+`game-learning-runtime-skills` for hosts that support Agent Plugin
+marketplaces. Point that host at the repository marketplace, then install the
+plugin by that name; other Agent Skills-compatible hosts can consume the same
+plugin directory directly.
+
+For Codex CLI, the equivalent commands are:
+
+```powershell
+codex plugin marketplace add loonghao/GameLearningRuntime
+codex plugin add game-learning-runtime-skills@game-learning-runtime
+```
+
+Before publishing a change, verify that the distributable payload has not
+drifted from the repository-owned skills:
+
+```powershell
+vx uv run python scripts/package_agent_plugin.py --check
+```
+
+Maintainers can intentionally refresh the payload after editing a source skill
+with `--sync`, then rerun the check and the normal `vx run check` gates. The
+skill's bundled scripts and references are resolved from the installed skill
+root, so user-level plugin installs do not depend on a `.agents/skills` path in
+the consuming project.
+
 Loader lanes also include bounded host source and a deployment manifest. From
 that generated directory, run:
 
@@ -509,6 +547,8 @@ runbook](docs/runbooks/release.md).
 - [Connect Unity and Unreal runtimes](docs/guides/engine-runtime-integration.md)
 - [Use the Runtime Host and C#/C++ provider SDKs](docs/guides/runtime-host-and-provider-sdks.md)
 - [Connect authorized BepInEx and UE4SS loaders](docs/guides/loader-plugin-integration.md)
+- [Start configured game instances before training](docs/guides/game-launch.md)
+- [Standard agent-first CLI and query tables](docs/guides/agent-first-cli.md)
 - [Reproduce trained models](docs/guides/reproducible-model-bundles.md)
 - [Build offline interactive run reports](docs/guides/run-reports.md)
 - [Configure knowledge sources and rewards](docs/guides/knowledge-and-rewards.md)

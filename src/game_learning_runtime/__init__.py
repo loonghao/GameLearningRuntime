@@ -119,6 +119,22 @@ from game_learning_runtime.errors import (
     HostRemoteError,
     OptionalDependencyError,
 )
+from game_learning_runtime.game_launcher import (
+    GAME_INSTANCES_SCHEMA_VERSION,
+    GAME_LAUNCH_SCHEMA_VERSION,
+    LAUNCH_OUTPUT_SCHEMA_VERSION,
+    GameLaunchConfig,
+    GameLauncher,
+    GameLaunchError,
+    LaunchCommand,
+    ReadinessConfig,
+    RunningGameInstance,
+    RunningGameSet,
+    TrainingLauncher,
+    TrainingLaunchResult,
+    load_game_launch_config,
+    load_project_game_launch,
+)
 from game_learning_runtime.harness import (
     HARNESS_SCHEMA_VERSION,
     DeepSeekHarnessProvider,
@@ -646,3 +662,19 @@ __all__ = [
 from game_learning_runtime.qa import QACheck, QAResult, run_qa
 
 __all__ += ["QACheck", "QAResult", "run_qa"]
+__all__ += [
+    "GAME_INSTANCES_SCHEMA_VERSION",
+    "GAME_LAUNCH_SCHEMA_VERSION",
+    "LAUNCH_OUTPUT_SCHEMA_VERSION",
+    "GameLaunchConfig",
+    "GameLaunchError",
+    "GameLauncher",
+    "LaunchCommand",
+    "ReadinessConfig",
+    "RunningGameInstance",
+    "RunningGameSet",
+    "TrainingLaunchResult",
+    "TrainingLauncher",
+    "load_game_launch_config",
+    "load_project_game_launch",
+]
