@@ -30,8 +30,16 @@ class GLRCommand:
     def __post_init__(self) -> None:
         if self.command not in SAFE_COMMANDS:
             raise ValueError("unsupported GLR lifecycle command")
-        if self.command in {ControlCommand.STATUS, ControlCommand.FEEDBACK,
-                            ControlCommand.REFLECT, ControlCommand.STOP} and not self.run_id:
+        if (
+            self.command
+            in {
+                ControlCommand.STATUS,
+                ControlCommand.FEEDBACK,
+                ControlCommand.REFLECT,
+                ControlCommand.STOP,
+            }
+            and not self.run_id
+        ):
             raise ValueError(f"{self.command.value} requires run_id")
         if self.contract != "glr-timestep-v1":
             raise ValueError("unsupported GLR training contract")
@@ -50,4 +58,4 @@ def command(command: str, *, run_id: str | None = None) -> GLRCommand:
     return GLRCommand(parsed, run_id=run_id)
 
 
-__all__ = ["ControlCommand", "GLRCommand", "SAFE_COMMANDS", "command"]
+__all__ = ["SAFE_COMMANDS", "ControlCommand", "GLRCommand", "command"]
