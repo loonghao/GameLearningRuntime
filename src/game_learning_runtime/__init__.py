@@ -318,6 +318,12 @@ from game_learning_runtime.training_safety import (
     load_demonstration_policy_config,
     load_reward_safety_config,
 )
+from game_learning_runtime.training_contract import (
+    TrainingContractError,
+    assert_transition_provenance,
+    transition_provenance,
+    validate_timestep,
+)
 from game_learning_runtime.visual_acceptance import (
     VISUAL_ACCEPTANCE_SCHEMA_VERSION,
     CaptureArtifact,
@@ -436,6 +442,10 @@ __all__ = [
     "DemonstrationOutcome",
     "DemonstrationPolicyConfig",
     "DemonstrationProvenance",
+    "TrainingContractError",
+    "assert_transition_provenance",
+    "transition_provenance",
+    "validate_timestep",
     "EngineFamily",
     "EnvironmentBridgeDriver",
     "EnvironmentConfigSnapshot",
