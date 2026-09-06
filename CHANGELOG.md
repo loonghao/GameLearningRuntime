@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.13.1](https://github.com/loonghao/GameLearningRuntime/compare/v0.13.0...v0.13.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* harden skill publishing and update absence ([5191755](https://github.com/loonghao/GameLearningRuntime/commit/5191755384b7b5bc46a2fdc683fb3eb99be554af))
+
 ## [0.13.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.12.1...v0.13.0) (2026-09-06)
 
 
