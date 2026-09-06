@@ -324,6 +324,7 @@ from game_learning_runtime.training_contract import (
     transition_provenance,
     validate_timestep,
 )
+from game_learning_runtime.control_cli import ControlCommand, GLRCommand, command
 from game_learning_runtime.visual_acceptance import (
     VISUAL_ACCEPTANCE_SCHEMA_VERSION,
     CaptureArtifact,
@@ -446,6 +447,9 @@ __all__ = [
     "assert_transition_provenance",
     "transition_provenance",
     "validate_timestep",
+    "ControlCommand",
+    "GLRCommand",
+    "command",
     "EngineFamily",
     "EnvironmentBridgeDriver",
     "EnvironmentConfigSnapshot",
