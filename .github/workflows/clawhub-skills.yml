@@ -1,6 +1,10 @@
 name: Publish GLR skills
 
 on:
+  pull_request:
+    paths:
+      - '.agents/skills/**'
+      - '.github/workflows/clawhub-skills.yml'
   push:
     branches: [main]
     tags: ['v*.*.*']
