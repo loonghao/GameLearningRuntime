@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.13.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.12.1...v0.13.0) (2026-09-06)
+
+
+### Features
+
+* add GLR lifecycle command contract ([70e06a7](https://github.com/loonghao/GameLearningRuntime/commit/70e06a776b52860ad0c9fa318413e4383aaea38d))
+* add goal-driven GLR QA skill ([#98](https://github.com/loonghao/GameLearningRuntime/issues/98)) ([5e526f4](https://github.com/loonghao/GameLearningRuntime/commit/5e526f4cde631afdd5fcc7239a217bad1e0165af))
+* enforce GLR timestep training boundaries ([cf5fc35](https://github.com/loonghao/GameLearningRuntime/commit/cf5fc358cf8c2b07b85aad3c259cd156df2c19e5))
+* support hybrid PPO policy statistics ([c60d07b](https://github.com/loonghao/GameLearningRuntime/commit/c60d07b3a7c0fec1eb4b02876dec97a43a6cb8e1))
+
+
+### Bug Fixes
+
+* satisfy core lint checks ([058a276](https://github.com/loonghao/GameLearningRuntime/commit/058a2769df01145cdf4d0d6b6223692bc8f9a48b))
+* support Python 3.10 enum typing ([8daa5cc](https://github.com/loonghao/GameLearningRuntime/commit/8daa5ccb6a098cd940025957e90e421ff292b53f))
+* validate ClawHub token inside publish step ([c55ad4f](https://github.com/loonghao/GameLearningRuntime/commit/c55ad4f3e855f69329bdafc13b16cc262815bb89))
+
 ## [0.12.1](https://github.com/loonghao/GameLearningRuntime/compare/v0.12.0...v0.12.1) (2026-09-04)
 
 
