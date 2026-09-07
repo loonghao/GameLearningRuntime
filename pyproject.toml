@@ -89,11 +89,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-# The CLI/game-launcher integration adds platform-bound process paths that are
-# intentionally exercised by the dedicated integration lanes. Keep the core
-# matrix gate just above the measured cross-version baseline while those lanes
-# provide the deeper launch coverage.
-fail_under = 88.9
+fail_under = 90
 show_missing = true
 
 [tool.mypy]

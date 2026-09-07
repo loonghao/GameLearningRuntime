@@ -122,7 +122,7 @@ class LaunchCommand:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any], *, path: str) -> LaunchCommand:
-        _reject_unknown(value, allowed=frozenset({"argv"}), path=path)
+        _reject_unknown(value, allowed=frozenset({"argv"}), required=frozenset({"argv"}), path=path)
         raw = value["argv"]
         if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
             raise TypeError(f"{path}.argv must be an array")
@@ -665,8 +665,13 @@ class TrainingLauncher:
                 except subprocess.TimeoutExpired as error:
                     with suppress(ProcessLookupError):
                         process.terminate()
-                    with suppress(subprocess.TimeoutExpired):
+                    try:
                         process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        with suppress(ProcessLookupError):
+                            process.kill()
+                        with suppress(subprocess.TimeoutExpired):
+                            process.wait(timeout=1)
                     raise GameLaunchError("trainer exceeded its configured timeout") from error
             return TrainingLaunchResult(
                 return_code=return_code,
