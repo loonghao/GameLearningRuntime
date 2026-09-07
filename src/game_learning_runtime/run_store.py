@@ -37,6 +37,8 @@ RUN_STORE_SCHEMA_VERSION = 2
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _MAX_JSON_BYTES = 1024 * 1024
 _MAX_RUN_STATE_BYTES = 64 * 1024
+_MAX_ROLLOUT_METADATA_BYTES = 64 * 1024
+_ROLLOUT_FINALIZE_BATCH_SIZE = 100
 
 
 class RunStatus(str, Enum):
@@ -46,6 +48,15 @@ class RunStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+
+
+class RolloutStatus(str, Enum):
+    """Execution status of a collection attempt, independent of learner success."""
+
+    QUEUING = "queuing"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
 
 
 def _identifier(value: object, *, path: str) -> str:
@@ -155,6 +166,49 @@ class RunEvent:
     episode_id: str | None
     step_id: int | None
     payload: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutAttempt:
+    """Latest projection of one immutable retry lineage and its lifecycle events.
+
+    ``SUCCEEDED`` means collection completed; it does not attest game success,
+    reward authority, or eligibility for any learner.
+    """
+
+    run_id: str
+    rollout_id: str
+    attempt_id: str
+    attempt_index: int
+    parent_attempt_id: str | None
+    status: RolloutStatus
+    queued_at_ns: int
+    started_at_ns: int | None
+    finished_at_ns: int | None
+    retry_reason: str | None
+    failure_reason: str | None
+    sequence_id: int
+    metadata: Mapping[str, Any]
+
+    def to_mapping(self) -> dict[str, Any]:
+        """Return a JSON sidecar bound to the corresponding run event sequence."""
+
+        return {
+            "schema_version": "glr.rollout.v1",
+            "run_id": self.run_id,
+            "rollout_id": self.rollout_id,
+            "attempt_id": self.attempt_id,
+            "attempt_index": self.attempt_index,
+            "parent_attempt_id": self.parent_attempt_id,
+            "status": self.status.value,
+            "queued_at_ns": self.queued_at_ns,
+            "started_at_ns": self.started_at_ns,
+            "finished_at_ns": self.finished_at_ns,
+            "retry_reason": self.retry_reason,
+            "failure_reason": self.failure_reason,
+            "sequence_id": self.sequence_id,
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,6 +535,25 @@ class TrainingStore:
                 );
                 CREATE INDEX IF NOT EXISTS metrics_run_name_step
                     ON metrics(run_id, name, step_id);
+                CREATE TABLE IF NOT EXISTS rollout_attempts (
+                    attempt_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+                    rollout_id TEXT NOT NULL,
+                    attempt_index INTEGER NOT NULL CHECK(attempt_index > 0),
+                    parent_attempt_id TEXT REFERENCES rollout_attempts(attempt_id),
+                    status TEXT NOT NULL
+                        CHECK(status IN ('queuing', 'running', 'succeeded', 'failed')),
+                    queued_at_ns INTEGER NOT NULL,
+                    started_at_ns INTEGER,
+                    finished_at_ns INTEGER,
+                    retry_reason TEXT,
+                    failure_reason TEXT,
+                    sequence_id INTEGER NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    UNIQUE(rollout_id, attempt_index)
+                );
+                CREATE INDEX IF NOT EXISTS rollout_attempts_run_status
+                    ON rollout_attempts(run_id, status, queued_at_ns);
                 CREATE TABLE IF NOT EXISTS artifacts (
                     run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
                     path TEXT NOT NULL,
@@ -642,6 +715,12 @@ class TrainingStore:
         exit_code: int | None,
         finished_at_ns: int | None = None,
     ) -> RunRecord:
+        """Finish atomically, reading pending attempts in bounded batches.
+
+        Completion cannot precede the run start or any attempt's latest lifecycle
+        timestamp, including attempts that already reached a terminal status.
+        """
+
         resolved_status = RunStatus(status)
         if resolved_status is RunStatus.RUNNING:
             raise ValueError("finish_run requires a terminal status")
@@ -652,6 +731,21 @@ class TrainingStore:
         finished = time_ns() if finished_at_ns is None else finished_at_ns
         _non_negative_integer(finished, path="finished_at_ns")
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = connection.execute(
+                "SELECT status, started_at_ns FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if run is None or run["status"] != RunStatus.RUNNING.value:
+                raise ContractViolation("run is missing or already terminal")
+            if finished < run["started_at_ns"]:
+                raise ValueError("finished_at_ns precedes the parent run start")
+            latest_attempt_timestamp = connection.execute(
+                "SELECT MAX(COALESCE(finished_at_ns, started_at_ns, queued_at_ns)) "
+                "FROM rollout_attempts WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+            if latest_attempt_timestamp is not None and finished < latest_attempt_timestamp:
+                raise ValueError("finished_at_ns precedes the latest rollout attempt transition")
             cursor = connection.execute(
                 """
                 UPDATE runs
@@ -668,8 +762,287 @@ class TrainingStore:
             )
             if cursor.rowcount != 1:
                 raise ContractViolation("run is missing or already terminal")
+            while True:
+                pending = connection.execute(
+                    "SELECT * FROM rollout_attempts WHERE run_id = ? AND status IN (?, ?) "
+                    "ORDER BY queued_at_ns, attempt_id LIMIT ?",
+                    (
+                        run_id,
+                        RolloutStatus.QUEUING.value,
+                        RolloutStatus.RUNNING.value,
+                        _ROLLOUT_FINALIZE_BATCH_SIZE,
+                    ),
+                ).fetchall()
+                if not pending:
+                    break
+                for row in pending:
+                    self._update_rollout_attempt(
+                        connection,
+                        row,
+                        status=RolloutStatus.FAILED,
+                        timestamp_ns=finished,
+                        reason=f"parent run {resolved_status.value}",
+                    )
             connection.execute("DELETE FROM run_state WHERE run_id = ?", (run_id,))
         return self.get_run(run_id)
+
+    def create_rollout(
+        self,
+        run_id: str,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        queued_at_ns: int | None = None,
+    ) -> RolloutAttempt:
+        """Queue a new logical rollout, assigning UUID-based global identities."""
+
+        encoded, _ = _json_mapping({} if metadata is None else metadata, path="rollout metadata")
+        if len(encoded.encode("utf-8")) > _MAX_ROLLOUT_METADATA_BYTES:
+            raise ValueError("rollout metadata exceeds the 64 KiB limit")
+        queued = time_ns() if queued_at_ns is None else queued_at_ns
+        _non_negative_integer(queued, path="queued_at_ns")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = self._require_rollout_run(connection, run_id)
+            if queued < run["started_at_ns"]:
+                raise ValueError("queued_at_ns precedes the parent run start")
+            return self._insert_rollout_attempt(
+                connection,
+                run_id=run_id,
+                rollout_id=f"rollout-{uuid4().hex}",
+                attempt_index=1,
+                parent_attempt_id=None,
+                retry_reason=None,
+                queued_at_ns=queued,
+                metadata_json=encoded,
+            )
+
+    def retry_rollout(
+        self,
+        attempt_id: str,
+        *,
+        reason: str,
+        queued_at_ns: int | None = None,
+    ) -> RolloutAttempt:
+        """Append one successor to the latest failed attempt, retaining its metadata."""
+
+        resolved_reason = _bounded_label(reason, path="retry reason")
+        queued = time_ns() if queued_at_ns is None else queued_at_ns
+        _non_negative_integer(queued, path="queued_at_ns")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._rollout_row(connection, attempt_id)
+            self._require_rollout_run(connection, row["run_id"])
+            if row["status"] != RolloutStatus.FAILED.value:
+                raise ContractViolation("only a failed rollout attempt can be retried")
+            latest = connection.execute(
+                "SELECT MAX(attempt_index) FROM rollout_attempts WHERE rollout_id = ?",
+                (row["rollout_id"],),
+            ).fetchone()[0]
+            if row["attempt_index"] != latest:
+                raise ContractViolation("rollout attempt already has a retry")
+            if queued < row["finished_at_ns"]:
+                raise ValueError("queued_at_ns precedes the parent attempt completion")
+            return self._insert_rollout_attempt(
+                connection,
+                run_id=row["run_id"],
+                rollout_id=row["rollout_id"],
+                attempt_index=row["attempt_index"] + 1,
+                parent_attempt_id=attempt_id,
+                retry_reason=resolved_reason,
+                queued_at_ns=queued,
+                metadata_json=row["metadata_json"],
+            )
+
+    def update_rollout_attempt(
+        self,
+        attempt_id: str,
+        *,
+        status: RolloutStatus,
+        expected_status: RolloutStatus,
+        timestamp_ns: int | None = None,
+        reason: str | None = None,
+    ) -> RolloutAttempt:
+        """Atomically fence a state transition and append its run event.
+
+        Queued attempts may start or fail; running attempts may succeed or fail.
+        Terminal attempts cannot change. A retry receives a new attempt identity.
+        """
+
+        resolved_status = RolloutStatus(status)
+        expected = RolloutStatus(expected_status)
+        timestamp = time_ns() if timestamp_ns is None else timestamp_ns
+        _non_negative_integer(timestamp, path="timestamp_ns")
+        resolved_reason = _bounded_label(reason, path="failure reason", optional=True)
+        if resolved_status is RolloutStatus.FAILED and resolved_reason is None:
+            raise ValueError("a failed rollout attempt requires a failure reason")
+        if resolved_status is not RolloutStatus.FAILED and resolved_reason is not None:
+            raise ValueError("failure reason is only valid for a failed rollout attempt")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._rollout_row(connection, attempt_id)
+            self._require_rollout_run(connection, row["run_id"])
+            if row["status"] != expected.value:
+                raise ContractViolation("rollout attempt does not match expected_status")
+            allowed = {
+                RolloutStatus.QUEUING: {RolloutStatus.RUNNING, RolloutStatus.FAILED},
+                RolloutStatus.RUNNING: {RolloutStatus.SUCCEEDED, RolloutStatus.FAILED},
+            }
+            if resolved_status not in allowed.get(expected, set()):
+                raise ContractViolation("invalid rollout attempt status transition")
+            if timestamp < (row["started_at_ns"] or row["queued_at_ns"]):
+                raise ValueError("timestamp_ns precedes the latest attempt transition")
+            return self._update_rollout_attempt(
+                connection,
+                row,
+                status=resolved_status,
+                timestamp_ns=timestamp,
+                reason=resolved_reason,
+            )
+
+    def get_rollout_attempt(self, attempt_id: str) -> RolloutAttempt:
+        with self._connect() as connection:
+            return self._rollout_from_row(self._rollout_row(connection, attempt_id))
+
+    def list_rollout_attempts(
+        self,
+        *,
+        run_id: str | None = None,
+        rollout_id: str | None = None,
+        status: RolloutStatus | None = None,
+        limit: int = 100,
+    ) -> tuple[RolloutAttempt, ...]:
+        """Query attempts in creation order; each retry remains independently visible."""
+
+        _limit(limit)
+        clauses: list[str] = []
+        parameters: list[object] = []
+        for name, value in (("run_id", run_id), ("rollout_id", rollout_id)):
+            if value is not None:
+                _identifier(value, path=name)
+                clauses.append(f"{name} = ?")
+                parameters.append(value)
+        if status is not None:
+            clauses.append("status = ?")
+            parameters.append(RolloutStatus(status).value)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM rollout_attempts{where} "
+                "ORDER BY queued_at_ns, rollout_id, attempt_index LIMIT ?",
+                parameters,
+            ).fetchall()
+        return tuple(self._rollout_from_row(row) for row in rows)
+
+    @staticmethod
+    def _require_rollout_run(connection: sqlite3.Connection, run_id: str) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT status, started_at_ns FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown run_id: {run_id}")
+        if row["status"] != RunStatus.RUNNING.value:
+            raise ContractViolation("cannot write rollout attempts for a terminal run")
+        return row  # type: ignore[no-any-return]
+
+    @staticmethod
+    def _rollout_row(connection: sqlite3.Connection, attempt_id: str) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM rollout_attempts WHERE attempt_id = ?", (attempt_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown attempt_id: {attempt_id}")
+        return row  # type: ignore[no-any-return]
+
+    def _insert_rollout_attempt(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        run_id: str,
+        rollout_id: str,
+        attempt_index: int,
+        parent_attempt_id: str | None,
+        retry_reason: str | None,
+        queued_at_ns: int,
+        metadata_json: str,
+    ) -> RolloutAttempt:
+        attempt_id = f"attempt-{uuid4().hex}"
+        connection.execute(
+            "INSERT INTO rollout_attempts(attempt_id, run_id, rollout_id, attempt_index, "
+            "parent_attempt_id, status, queued_at_ns, retry_reason, sequence_id, metadata_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            (
+                attempt_id,
+                run_id,
+                rollout_id,
+                attempt_index,
+                parent_attempt_id,
+                RolloutStatus.QUEUING.value,
+                queued_at_ns,
+                retry_reason,
+                metadata_json,
+            ),
+        )
+        return self._append_rollout_event(connection, attempt_id, queued_at_ns)
+
+    def _update_rollout_attempt(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        status: RolloutStatus,
+        timestamp_ns: int,
+        reason: str | None,
+    ) -> RolloutAttempt:
+        started = timestamp_ns if status is RolloutStatus.RUNNING else row["started_at_ns"]
+        finished = None if status is RolloutStatus.RUNNING else timestamp_ns
+        connection.execute(
+            "UPDATE rollout_attempts SET status = ?, started_at_ns = ?, "
+            "finished_at_ns = ?, failure_reason = ? WHERE attempt_id = ?",
+            (status.value, started, finished, reason, row["attempt_id"]),
+        )
+        return self._append_rollout_event(connection, row["attempt_id"], timestamp_ns)
+
+    def _append_rollout_event(
+        self, connection: sqlite3.Connection, attempt_id: str, timestamp_ns: int
+    ) -> RolloutAttempt:
+        row = self._rollout_row(connection, attempt_id)
+        sequence = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(sequence_id), 0) + 1 FROM events WHERE run_id = ?",
+                (row["run_id"],),
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "UPDATE rollout_attempts SET sequence_id = ? WHERE attempt_id = ?",
+            (sequence, attempt_id),
+        )
+        attempt = self._rollout_from_row(self._rollout_row(connection, attempt_id))
+        payload, _ = _json_mapping(attempt.to_mapping(), path="rollout event")
+        connection.execute(
+            "INSERT INTO events(run_id, sequence_id, timestamp_ns, kind, payload_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (attempt.run_id, sequence, timestamp_ns, f"rollout.{attempt.status.value}", payload),
+        )
+        return attempt
+
+    @staticmethod
+    def _rollout_from_row(row: sqlite3.Row) -> RolloutAttempt:
+        return RolloutAttempt(
+            run_id=row["run_id"],
+            rollout_id=row["rollout_id"],
+            attempt_id=row["attempt_id"],
+            attempt_index=row["attempt_index"],
+            parent_attempt_id=row["parent_attempt_id"],
+            status=RolloutStatus(row["status"]),
+            queued_at_ns=row["queued_at_ns"],
+            started_at_ns=row["started_at_ns"],
+            finished_at_ns=row["finished_at_ns"],
+            retry_reason=row["retry_reason"],
+            failure_reason=row["failure_reason"],
+            sequence_id=row["sequence_id"],
+            metadata=MappingProxyType(json.loads(row["metadata_json"])),
+        )
 
     def run_state(
         self,
@@ -1544,6 +1917,8 @@ __all__ = [
     "RUN_STORE_SCHEMA_VERSION",
     "ArtifactRecord",
     "MetricRecord",
+    "RolloutAttempt",
+    "RolloutStatus",
     "RouteWaypoint",
     "RunEvent",
     "RunRecord",

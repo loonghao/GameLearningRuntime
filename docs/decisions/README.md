@@ -19,6 +19,7 @@
 - [ADR-0017: Keep runtime evidence and artifact lineage learner-neutral](0017-runtime-evidence-and-artifact-lineage.md)
 - [ADR-0018: Add offline interactive run reports](0018-add-offline-run-reports.md)
 - [ADR-0019: Add an optional DeepSeek Harness provider boundary](0019-add-optional-deepseek-harness-provider.md)
+- [ADR-0020: Add rollout attempts and local queue barriers](0020-rollout-attempts-and-queue-barriers.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

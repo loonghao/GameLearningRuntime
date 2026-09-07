@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections import deque
@@ -43,6 +44,10 @@ class ActorQueueFull(RuntimeError):
     """Raised by the fail policy or a timed-out blocking enqueue."""
 
 
+class ActorQueueStaleUnroll(RuntimeError):
+    """Raised when an unroll exceeds the configured learner policy lag."""
+
+
 class ActorQueueCommitError(RuntimeError):
     """Raised when an unroll is acknowledged more than once or is unknown."""
 
@@ -76,6 +81,14 @@ class ActorQueueMetrics:
     actor_lag: dict[str, int]
     enqueue_latency_ns_total: int
     dequeue_latency_ns_total: int
+    carry_over_unrolls: int = 0
+    in_flight_unrolls: int = 0
+    paused: bool = False
+    drain_count: int = 0
+    drain_latency_ns_total: int = 0
+    stale_dropped_unrolls: int = 0
+    rejected_stale_unrolls: int = 0
+    oldest_pending_age_ns: int = 0
 
     def as_dict(self) -> dict[str, object]:
         """Return a JSON-safe aggregate without observations or game metadata."""
@@ -97,6 +110,14 @@ class ActorQueueMetrics:
             "actor_lag": dict(self.actor_lag),
             "enqueue_latency_ns_total": self.enqueue_latency_ns_total,
             "dequeue_latency_ns_total": self.dequeue_latency_ns_total,
+            "carry_over_unrolls": self.carry_over_unrolls,
+            "in_flight_unrolls": self.in_flight_unrolls,
+            "paused": self.paused,
+            "drain_count": self.drain_count,
+            "drain_latency_ns_total": self.drain_latency_ns_total,
+            "stale_dropped_unrolls": self.stale_dropped_unrolls,
+            "rejected_stale_unrolls": self.rejected_stale_unrolls,
+            "oldest_pending_age_ns": self.oldest_pending_age_ns,
         }
 
 
@@ -115,16 +136,23 @@ class BoundedActorQueue:
         *,
         overflow_policy: QueueOverflowPolicy = "block",
         learner_policy_version: int = 0,
+        max_policy_version_lag: int | None = None,
     ) -> None:
         if capacity <= 0:
             raise ValueError("capacity must be positive")
         if overflow_policy not in {"block", "drop-oldest", "fail"}:
             raise ValueError("overflow_policy must be 'block', 'drop-oldest', or 'fail'")
-        if learner_policy_version < 0:
-            raise ValueError("learner_policy_version cannot be negative")
+        _validate_policy_version(learner_policy_version)
+        if max_policy_version_lag is not None and (
+            isinstance(max_policy_version_lag, bool)
+            or not isinstance(max_policy_version_lag, int)
+            or max_policy_version_lag < 0
+        ):
+            raise ValueError("max_policy_version_lag must be a non-negative integer")
         self._capacity = capacity
         self._overflow_policy = overflow_policy
         self._learner_policy_version = learner_policy_version
+        self._max_policy_version_lag = max_policy_version_lag
         self._items: deque[QueuedUnroll] = deque()
         self._in_flight: dict[int, QueuedUnroll] = {}
         self._last_sequence: dict[str, int] = {}
@@ -140,6 +168,12 @@ class BoundedActorQueue:
         self._max_policy_lag = 0
         self._enqueue_latency_ns_total = 0
         self._dequeue_latency_ns_total = 0
+        self._paused = False
+        self._draining = False
+        self._drain_count = 0
+        self._drain_latency_ns_total = 0
+        self._stale_dropped = 0
+        self._rejected_stale = 0
         self._closed = False
         self._condition = threading.Condition()
 
@@ -152,17 +186,89 @@ class BoundedActorQueue:
         with self._condition:
             return self._closed
 
-    def set_learner_policy_version(self, policy_version: int) -> None:
-        """Update the learner version used for subsequent lag telemetry."""
+    @property
+    def paused(self) -> bool:
+        """Whether new learner leases are paused; producers remain bounded."""
 
-        if policy_version < 0:
-            raise ValueError("policy_version cannot be negative")
+        with self._condition:
+            return self._paused
+
+    def pause(self) -> None:
+        """Pause new learner leases while existing leases can commit or abort.
+
+        This is a queue barrier, not a pause of game time or actor inference.
+        Producers may still enqueue up to the normal capacity limit.
+        """
+
+        with self._condition:
+            if self._closed:
+                raise ActorQueueClosed("actor queue is closed")
+            self._paused = True
+            self._condition.notify_all()
+
+    def resume(self) -> None:
+        """Release the lease barrier after publishing the learner policy."""
+
+        with self._condition:
+            if self._draining:
+                raise ActorQueueCommitError("cannot resume while drain is waiting")
+            self._paused = False
+            self._condition.notify_all()
+
+    def drain(
+        self,
+        *,
+        timeout: float | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> ActorQueueMetrics:
+        """Pause new leases and wait for in-flight leases to commit or abort.
+
+        Queued work remains as carry-over. A timeout or cancellation leaves the
+        queue paused, so the caller cannot mistake failure for a safe update.
+        Call :meth:`resume` after publishing the learner policy. This does not
+        synchronize policy objects used by actors; their owner must do that.
+        """
+
+        _validate_timeout(timeout)
+        started = time.monotonic_ns()
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._condition:
+            if self._closed:
+                raise ActorQueueClosed("actor queue is closed")
+            if self._draining:
+                raise ActorQueueCommitError("another drain is already waiting")
+            self._paused = True
+            self._draining = True
+            self._condition.notify_all()
+            try:
+                while True:
+                    self._raise_if_cancelled_locked(cancel_event)
+                    if self._closed:
+                        raise ActorQueueClosed("actor queue closed during drain")
+                    if not self._in_flight:
+                        self._drain_count += 1
+                        break
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
+                        raise ActorQueueFull("timed out waiting for actor queue drain")
+                    self._condition.wait(timeout=_wait_interval(remaining, cancel_event))
+            finally:
+                self._drain_latency_ns_total += max(0, time.monotonic_ns() - started)
+                self._draining = False
+                self._condition.notify_all()
+            return self.metrics()
+
+    def set_learner_policy_version(self, policy_version: int) -> None:
+        """Update lag telemetry/cutoffs and wake producers that may be stale."""
+
+        _validate_policy_version(policy_version)
         with self._condition:
             self._learner_policy_version = policy_version
             self._max_policy_lag = max(
                 self._max_policy_lag,
                 self._current_policy_lag_locked(),
             )
+            self._condition.notify_all()
 
     def put(
         self,
@@ -180,18 +286,26 @@ class BoundedActorQueue:
 
         if not isinstance(unroll, Unroll):
             raise TypeError("unroll must be an Unroll")
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout cannot be negative")
+        _validate_policy_version(unroll.policy_version)
+        _validate_timeout(timeout)
         started = time.monotonic_ns()
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._condition:
             self._raise_if_cancelled_locked(cancel_event)
-            previous = self._last_sequence.get(unroll.actor_id)
-            if previous is not None and unroll.sequence_id <= previous:
-                raise ValueError(f"unroll sequence_id must increase for actor {unroll.actor_id!r}")
-            while len(self._items) >= self._capacity:
+            while True:
+                self._raise_if_cancelled_locked(cancel_event)
                 if self._closed:
                     raise ActorQueueClosed("actor queue is closed")
+                previous = self._last_sequence.get(unroll.actor_id)
+                if previous is not None and unroll.sequence_id <= previous:
+                    raise ValueError(
+                        f"unroll sequence_id must increase for actor {unroll.actor_id!r}"
+                    )
+                if self._is_stale_locked(unroll):
+                    self._rejected_stale += 1
+                    raise ActorQueueStaleUnroll("unroll exceeds maximum learner policy lag")
+                if len(self._items) < self._capacity:
+                    break
                 if self._overflow_policy == "drop-oldest":
                     self._items.popleft()
                     self._dropped += 1
@@ -203,9 +317,6 @@ class BoundedActorQueue:
                 if remaining is not None and remaining <= 0:
                     raise ActorQueueFull("timed out waiting for actor queue capacity")
                 self._condition.wait(timeout=_wait_interval(remaining, cancel_event))
-                self._raise_if_cancelled_locked(cancel_event)
-            if self._closed:
-                raise ActorQueueClosed("actor queue is closed")
             token = self._next_token
             self._next_token += 1
             item = QueuedUnroll(unroll, token, time.monotonic_ns())
@@ -231,19 +342,25 @@ class BoundedActorQueue:
     ) -> QueuedUnroll:
         """Lease the oldest unroll; call ``commit`` or ``abort`` exactly once."""
 
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout cannot be negative")
+        _validate_timeout(timeout)
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._condition:
-            while not self._items:
+            while True:
                 self._raise_if_cancelled_locked(cancel_event)
+                if not self._paused and self._items:
+                    item = self._items.popleft()
+                    if self._is_stale_locked(item.unroll):
+                        self._stale_dropped += 1
+                        self._dropped += 1
+                        self._condition.notify_all()
+                        continue
+                    break
                 if self._closed:
                     raise ActorQueueClosed("actor queue is closed")
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
                     raise ActorQueueFull("timed out waiting for an actor unroll")
                 self._condition.wait(timeout=_wait_interval(remaining, cancel_event))
-            item = self._items.popleft()
             self._in_flight[item.token] = item
             self._dequeued += 1
             self._dequeue_latency_ns_total += max(0, time.monotonic_ns() - item.enqueued_at_ns)
@@ -257,9 +374,16 @@ class BoundedActorQueue:
         return self.get(timeout=0)
 
     def commit(self, item: QueuedUnroll) -> None:
-        """Mark a leased unroll as a successful learner update."""
+        """Mark a leased unroll as a successful learner update.
+
+        A stale rejection retains the lease: the caller must explicitly abort it.
+        This acknowledgement does not roll back any learner-side weight changes.
+        """
 
         with self._condition:
+            self._validate_in_flight_locked(item)
+            if self._is_stale_locked(item.unroll):
+                raise ActorQueueStaleUnroll("leased unroll exceeds maximum learner policy lag")
             self._take_in_flight_locked(item)
             self._committed += 1
             self._condition.notify_all()
@@ -277,6 +401,7 @@ class BoundedActorQueue:
 
         with self._condition:
             self._closed = True
+            self._paused = False
             self._condition.notify_all()
 
     shutdown = close
@@ -306,6 +431,17 @@ class BoundedActorQueue:
                 actor_lag=actor_lag,
                 enqueue_latency_ns_total=self._enqueue_latency_ns_total,
                 dequeue_latency_ns_total=self._dequeue_latency_ns_total,
+                carry_over_unrolls=sum(self._policy_lag(item.unroll) > 0 for item in pending),
+                in_flight_unrolls=len(self._in_flight),
+                paused=self._paused,
+                drain_count=self._drain_count,
+                drain_latency_ns_total=self._drain_latency_ns_total,
+                stale_dropped_unrolls=self._stale_dropped,
+                rejected_stale_unrolls=self._rejected_stale,
+                oldest_pending_age_ns=max(
+                    (max(0, time.monotonic_ns() - item.enqueued_at_ns) for item in pending),
+                    default=0,
+                ),
             )
 
     def run_summary(self) -> dict[str, object]:
@@ -313,11 +449,14 @@ class BoundedActorQueue:
 
         return {"actor_queue": self.metrics().as_dict()}
 
-    def _take_in_flight_locked(self, item: QueuedUnroll) -> QueuedUnroll:
-        current = self._in_flight.pop(item.token, None)
+    def _validate_in_flight_locked(self, item: QueuedUnroll) -> None:
+        current = self._in_flight.get(item.token)
         if current is None or current is not item:
             raise ActorQueueCommitError("unknown or already finalized actor unroll")
-        return current
+
+    def _take_in_flight_locked(self, item: QueuedUnroll) -> QueuedUnroll:
+        self._validate_in_flight_locked(item)
+        return self._in_flight.pop(item.token)
 
     def _policy_lag(self, unroll: Unroll) -> int:
         return max(0, self._learner_policy_version - unroll.policy_version)
@@ -326,10 +465,30 @@ class BoundedActorQueue:
         pending = (*self._items, *self._in_flight.values())
         return max((self._policy_lag(item.unroll) for item in pending), default=0)
 
+    def _is_stale_locked(self, unroll: Unroll) -> bool:
+        return (
+            self._max_policy_version_lag is not None
+            and self._policy_lag(unroll) > self._max_policy_version_lag
+        )
+
     def _raise_if_cancelled_locked(self, cancel_event: threading.Event | None) -> None:
         if cancel_event is not None and cancel_event.is_set():
             self._cancelled += 1
             raise ActorQueueCancelled("actor queue operation was cancelled")
+
+
+def _validate_timeout(timeout: float | None) -> None:
+    if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
+        raise ValueError("timeout must be finite and non-negative")
+
+
+def _validate_policy_version(policy_version: int) -> None:
+    if (
+        isinstance(policy_version, bool)
+        or not isinstance(policy_version, int)
+        or policy_version < 0
+    ):
+        raise ValueError("policy_version must be a non-negative integer")
 
 
 def _wait_interval(

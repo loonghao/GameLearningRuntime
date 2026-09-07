@@ -12,7 +12,12 @@ This document describes future work, not current capability.
 - Extend the implemented bounded stdio Runtime Host with authenticated,
   target-bound named-pipe/Unix-socket provider and learner connections,
   deadlines, health, and reconnect reconciliation.
-- Add bounded asynchronous actor queues and IMPALA backpressure metrics.
+- Extend the implemented bounded local thread queue, learner-lease pause/drain
+  barrier, optional policy-lag cutoff, and queue metrics with multi-process
+  actor ownership, recovery, and policy publication coordination. The local
+  Python rollout-attempt projection records explicit retries; remote scheduling
+  and automatic execution recovery remain future work. See
+  [ADR-0020](../decisions/0020-rollout-attempts-and-queue-barriers.md).
 - Add a columnar/checksummed dataset container and deterministic replay.
 - Define partial reset and multi-agent identity semantics.
 - Add structured Gymnasium action-mask conformance fixtures.
