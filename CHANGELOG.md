@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.14.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.13.2...v0.14.0) (2026-09-07)
+
+
+### Features
+
+* add rollout attempts and learner queue barriers ([705681d](https://github.com/loonghao/GameLearningRuntime/commit/705681dad4807491c2232898f5f8149cb198219d))
+* standardize GLR CLI integration ([b2ec15d](https://github.com/loonghao/GameLearningRuntime/commit/b2ec15d2ab9faeebc388b10825c5044651bdd88e))
+
+
+### Bug Fixes
+
+* harden launcher cleanup and restore coverage gate ([cd16df3](https://github.com/loonghao/GameLearningRuntime/commit/cd16df3823da4bd15317a598f3f951e54b457326))
+
 ## [0.13.2](https://github.com/loonghao/GameLearningRuntime/compare/v0.13.1...v0.13.2) (2026-09-06)
 
 
