@@ -323,6 +323,37 @@ Skills 标准的 Agent，也可以把同一个 `glr-adapter-builder` 目录放�
 模型包冒烟训练器、测试、`vx.toml` 和 `justfile`。Loader 路径还会生成有界宿主源码
 与部署清单。进入生成目录后运行：
 
+### 按 Agent Plugin 规范分发
+
+面向支持插件规范的 Agent，仓库还提供自包含的
+[`game-learning-runtime-skills` 插件](plugins/game-learning-runtime-skills)。
+其中 `.codex-plugin/plugin.json` 遵循 Agent Plugin manifest 契约，`skills/`
+里包含与仓库源目录一致的 `glr-adapter-builder`。复制或归档整个插件目录，
+不要改变内部布局；兼容的宿主应以插件内的 `skills/` 为根发现各个
+`SKILL.md`。团队分发时请将仓库 URL 固定到 release tag 或 commit SHA。
+
+仓库内的 `.agents/plugins/marketplace.json` 以
+`game-learning-runtime-skills` 暴露该插件，支持 Agent Plugin marketplace
+的宿主可指向此仓库后按名称安装；其他兼容 Agent Skills 标准的宿主则可
+直接消费同一个插件目录。
+
+Codex CLI 对应命令为：
+
+```powershell
+codex plugin marketplace add loonghao/GameLearningRuntime
+codex plugin add game-learning-runtime-skills@game-learning-runtime
+```
+
+发布前可检查分发副本是否与仓库 Skill 漂移：
+
+```powershell
+vx uv run python scripts/package_agent_plugin.py --check
+```
+
+维护者在修改源 Skill 后可明确执行 `--sync` 刷新副本，再运行上述检查和
+`vx run check`。Skill 中的脚本和参考资料均从安装后的 Skill 根目录解析，
+因此用户级插件安装不依赖消费项目里的 `.agents/skills` 路径。
+
 ```powershell
 vx setup
 vx run check
@@ -434,6 +465,8 @@ Runtime Host、安装清单和两套 GLR Skills；Release 还包含 C# Provider 
 - [接入 Unity 与 Unreal 游戏运行时](docs/guides/engine-runtime-integration.zh-CN.md)
 - [使用 Runtime Host 与 C#/C++ Provider SDK](docs/guides/runtime-host-and-provider-sdks.zh-CN.md)
 - [接入获授权的 BepInEx 与 UE4SS Loader](docs/guides/loader-plugin-integration.zh-CN.md)
+- [按配置启动游戏实例并开始训练](docs/guides/game-launch.md)
+- [标准 CLI、表格化输出与查询](docs/guides/agent-first-cli.zh-CN.md)
 - [复现训练模型](docs/guides/reproducible-model-bundles.zh-CN.md)
 - [构建离线交互式运行回顾报告](docs/guides/run-reports.zh-CN.md)
 - [配置知识源和奖励](docs/guides/knowledge-and-rewards.md)

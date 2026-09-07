@@ -64,6 +64,23 @@ provider-sdk-check: csharp-check cpp-check
 agent-plugin-check:
     vx uv run python scripts/package_agent_plugin.py --check
 
+# Standard project control-plane entry points. Human output is a table; add
+# `--format json` when a script or CI job needs the stable JSON envelope.
+glr-doctor project=".":
+    vx uv run --no-sync python -m game_learning_runtime.cli --project "{{project}}" doctor
+
+glr-train project=".":
+    vx uv run --no-sync python -m game_learning_runtime.cli --project "{{project}}" train
+
+glr-runs limit="20" project=".":
+    vx uv run --no-sync python -m game_learning_runtime.cli --project "{{project}}" runs list --limit {{limit}}
+
+glr-query world="default" project=".":
+    vx uv run --no-sync python -m game_learning_runtime.cli --project "{{project}}" query entities --world {{world}}
+
+# Full local integration suite for the project, runtime host, providers and package.
+integration-suite: check build
+
 check: setup lock-check workflow-check core-check rust-check provider-sdk-check agent-plugin-check
 
 build:

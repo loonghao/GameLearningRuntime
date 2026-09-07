@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 from game_learning_runtime.capture_liveness import ContentLivenessConfig
+from game_learning_runtime.game_launcher import GameLaunchConfig
 
 PROJECT_SCHEMA_VERSION = "glr.project.v1"
 PROJECT_FILE_NAME = "glr-project.json"
@@ -314,6 +315,7 @@ class GLRProject:
     planner: ProjectCommand | None
     evaluator: ProjectCommand | None
     capture: CaptureConfig | None
+    game: GameLaunchConfig | None
     schema_version: str = PROJECT_SCHEMA_VERSION
 
 
@@ -365,9 +367,27 @@ def load_project(path: str | Path = ".") -> GLRProject:
                 "planner",
                 "evaluator",
                 "capture",
+                "game",
             }
         ),
         path="project",
+        required=frozenset(
+            {
+                "schema_version",
+                "environment_id",
+                "environment_family",
+                "protocol_version",
+                "data_dir",
+                "bridge_path",
+                "runtime",
+                "trainer",
+                "player",
+                "researcher",
+                "planner",
+                "evaluator",
+                "capture",
+            }
+        ),
     )
     if value["schema_version"] != PROJECT_SCHEMA_VERSION:
         raise ValueError(f"project.schema_version must be {PROJECT_SCHEMA_VERSION!r}")
@@ -428,6 +448,11 @@ def load_project(path: str | Path = ".") -> GLRProject:
             None
             if value["capture"] is None
             else CaptureConfig.from_mapping(_mapping(value["capture"], path="project.capture"))
+        ),
+        game=(
+            None
+            if value.get("game") is None
+            else GameLaunchConfig.from_mapping(_mapping(value["game"], path="project.game"))
         ),
     )
 
