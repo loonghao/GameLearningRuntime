@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_cli_standardization import _project
 
 from game_learning_runtime.cli import (
     _cell,
@@ -14,8 +15,6 @@ from game_learning_runtime.cli import (
     main,
 )
 from game_learning_runtime.run_store import RunStatus, TrainingStore
-
-from test_cli_standardization import _project
 
 
 def test_cli_rendering_helpers_cover_scalar_mapping_and_empty_rows() -> None:
@@ -71,8 +70,34 @@ def test_cli_query_and_run_views_return_stable_json(tmp_path: Path, capsys: obje
 def test_cli_knowledge_export_and_import_empty_bundle(tmp_path: Path, capsys: object) -> None:
     _project(tmp_path, trainer=[sys.executable, "-c", "print('train')"])
     exported = tmp_path / "knowledge.json"
-    assert main(["--project", str(tmp_path), "--json", "knowledge", "export", "--output", str(exported)]) == 0
+    assert (
+        main(
+            [
+                "--project",
+                str(tmp_path),
+                "--json",
+                "knowledge",
+                "export",
+                "--output",
+                str(exported),
+            ]
+        )
+        == 0
+    )
     assert exported.is_file()
     assert json.loads(capsys.readouterr().out)["data"]["entities"] == 0
-    assert main(["--project", str(tmp_path), "--json", "knowledge", "import", "--input", str(exported)]) == 0
+    assert (
+        main(
+            [
+                "--project",
+                str(tmp_path),
+                "--json",
+                "knowledge",
+                "import",
+                "--input",
+                str(exported),
+            ]
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["data"]["entities"] == 0
