@@ -110,6 +110,81 @@ fn stdout(output: &Output) -> Value {
 }
 
 #[test]
+fn doctor_emits_hash_bound_lifecycle_manifest() {
+    let project = create_project();
+    let config = project.path().join("training.json");
+    fs::write(
+        &config,
+        serde_json::to_vec_pretty(&json!({"schema_version": "glr.training.v1"})).unwrap(),
+    )
+    .unwrap();
+    let project_path = project.path().join("glr-project.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&project_path).unwrap()).unwrap();
+    value["runtime"]["argv"] = json!([binary(), "--help"]);
+    value["trainer"]["argv"] = json!([binary(), "--version"]);
+    value["player"]["argv"] = json!([binary()]);
+    value["lifecycle"] = json!({
+        "schema_version": "glr.lifecycle.v1",
+        "configs": [{
+            "owner": "training",
+            "path": "training.json",
+            "schema_version": "glr.training.v1"
+        }],
+        "modes": ["train", "frozen-playback"]
+    });
+    fs::write(&project_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+    let doctor = stdout(&run(project.path(), &["doctor"]));
+    assert_eq!(
+        doctor["data"]["lifecycle"]["schema_version"],
+        "glr.lifecycle.v1"
+    );
+    assert_eq!(
+        doctor["data"]["lifecycle"]["configs"][0]["owner"],
+        "training"
+    );
+    assert_eq!(
+        doctor["data"]["lifecycle"]["configs"][0]["sha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    let training = stdout(&run(project.path(), &["train"]));
+    assert_eq!(
+        training["data"]["metadata"]["lifecycle"]["configs"][0]["sha256"],
+        doctor["data"]["lifecycle"]["configs"][0]["sha256"]
+    );
+}
+
+#[test]
+fn lifecycle_rejects_configuration_forks_before_execution() {
+    let project = create_project();
+    fs::write(
+        project.path().join("training.json"),
+        r#"{"schema_version":"glr.training.v1"}"#,
+    )
+    .unwrap();
+    let project_path = project.path().join("glr-project.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&project_path).unwrap()).unwrap();
+    value["lifecycle"] = json!({
+        "schema_version": "glr.lifecycle.v1",
+        "configs": [
+            {"owner":"training", "path":"training.json", "schema_version":"glr.training.v1"},
+            {"owner":"reward", "path":"training.json", "schema_version":"glr.training.v1"}
+        ],
+        "modes": ["train"]
+    });
+    fs::write(&project_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    let result = run(project.path(), &["doctor"]);
+    assert!(!result.status.success());
+    assert!(
+        String::from_utf8_lossy(&result.stderr)
+            .contains("lifecycle config path has multiple owners")
+    );
+}
+
+#[test]
 fn standalone_cli_is_the_project_entrypoint_and_persists_runs() {
     let project = create_project();
     let doctor = stdout(&run(project.path(), &["doctor"]));

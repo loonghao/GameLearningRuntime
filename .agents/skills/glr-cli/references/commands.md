@@ -70,9 +70,24 @@ stay inside the project.
     "frame_rate": 12,
     "width": 640,
     "height": 360
+  },
+  "lifecycle": {
+    "schema_version": "glr.lifecycle.v1",
+    "configs": [
+      {"owner": "training", "path": "training.json", "schema_version": "glr.training.v1"},
+      {"owner": "reward", "path": "reward-safety.json", "schema_version": "glr.reward-safety.v1"}
+    ],
+    "modes": ["train", "goal-evaluate", "frozen-playback"]
   }
 }
 ```
+
+`lifecycle.configs` gives each project input exactly one owner. `doctor` rejects
+missing files, schema drift, duplicate owners, shared paths with conflicting
+owners, unsupported modes, and duplicate required role entrypoints. Its JSON
+output includes a SHA-256 manifest of the files it actually loaded. Existing
+`glr.project.v1` files without `lifecycle` remain compatible, but generated
+projects always include it.
 
 The example recorder argv is illustrative. A real recorder must target the reviewed game window
 and write the paths provided by `GLR_CAPTURE_VIDEO` and `GLR_CAPTURE_INDEX`. Do not insert window
