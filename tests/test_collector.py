@@ -92,6 +92,27 @@ class _ConfigCounterEnvironment(GameEnvironment):
         return {"difficulty": self.difficulty}
 
 
+class _ObservedResetEnvironment(GameEnvironment):
+    """Records the (seed, options) each reset forwards, mirroring an expensive reset adapter."""
+
+    def __init__(self, *, target: int = 1) -> None:
+        self._delegate = CounterEnvironment(target=target)
+        self.reset_calls: list[tuple[int | None, Mapping[str, Any] | None]] = []
+
+    @property
+    def spec(self) -> EnvironmentSpec:
+        return self._delegate.spec
+
+    def reset(
+        self, *, seed: int | None = None, options: Mapping[str, Any] | None = None
+    ) -> TimeStep:
+        self.reset_calls.append((seed, options))
+        return self._delegate.reset(seed=seed, options=options)
+
+    def step(self, action: TensorTree) -> TimeStep:
+        return self._delegate.step(action)
+
+
 def test_collector_builds_fixed_length_unroll_across_episodes() -> None:
     collector = SyncCollector(
         ContractEnvironment(CounterEnvironment(target=2)), actor_id="worker-7"
@@ -161,6 +182,20 @@ def test_collector_rejects_invalid_arguments() -> None:
         collector.collect(always_increment, steps=0)
     with pytest.raises(ValueError, match="negative"):
         collector.collect(always_increment, steps=1, policy_version=-1)
+
+
+def test_collector_forwards_reset_options_and_seed_on_first_reset_and_auto_restart() -> None:
+    # An episode completes in a single step, so a multi-step collect forces the
+    # collector to auto-restart mid-rollout. Both the initial reset and every
+    # done-triggered restart must forward the configured options along with seed.
+    options = {"mode": "attract-skip", "stage": "round-1"}
+    environment = _ObservedResetEnvironment(target=1)
+    collector = SyncCollector(environment, reset_options=options)
+
+    unroll = collector.collect(always_increment, steps=3, seed=42)
+
+    assert len(unroll.transitions) == 3
+    assert environment.reset_calls == [(42, options), (42, options), (42, options)]
 
 
 def test_collector_explicitly_attaches_to_a_continuing_runtime() -> None:

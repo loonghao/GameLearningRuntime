@@ -6,8 +6,9 @@ import math
 import threading
 import time
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
@@ -510,6 +511,7 @@ class SyncCollector:
         *,
         actor_id: str = "actor-0",
         start_mode: Literal["reset", "attach"] = "reset",
+        reset_options: Mapping[str, Any] | None = None,
     ) -> None:
         if not actor_id:
             raise ValueError("actor_id cannot be empty")
@@ -522,6 +524,7 @@ class SyncCollector:
         )
         self._actor_id = actor_id
         self._start_mode = start_mode
+        self._reset_options = reset_options
         self._current: TimeStep | None = None
         self._sequence_id = 0
         self._environment_config_snapshot: EnvironmentConfigSnapshot | None = None
@@ -530,9 +533,9 @@ class SyncCollector:
         if self._start_mode == "attach":
             if seed is not None:
                 raise ValueError("seed is not supported when start_mode='attach'")
-            timestep = self._environment.attach()
+            timestep = self._environment.attach(options=self._reset_options)
         else:
-            timestep = self._environment.reset(seed=seed)
+            timestep = self._environment.reset(seed=seed, options=self._reset_options)
         self._environment_config_snapshot = self._environment.config_snapshot()
         return timestep
 
@@ -613,7 +616,7 @@ class SyncCollector:
                 if stop_on_done:
                     break
                 if len(transitions) < steps:
-                    self._current = self._start()
+                    self._current = self._start(seed=seed)
 
         unroll = Unroll(
             transitions=tuple(transitions),
