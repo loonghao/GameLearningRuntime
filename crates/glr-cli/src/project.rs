@@ -2,12 +2,15 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 
 pub const PROJECT_FILE_NAME: &str = "glr-project.json";
 pub const PROJECT_SCHEMA_VERSION: &str = "glr.project.v1";
+pub const LIFECYCLE_SCHEMA_VERSION: &str = "glr.lifecycle.v1";
 
 const PLACEHOLDERS: &[&str] = &[
     "bridge_path",
@@ -35,6 +38,118 @@ const PLACEHOLDERS: &[&str] = &[
 #[serde(deny_unknown_fields)]
 pub struct ProjectCommand {
     pub argv: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigReference {
+    pub owner: String,
+    pub path: String,
+    pub schema_version: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LifecycleConfig {
+    pub schema_version: String,
+    pub configs: Vec<ConfigReference>,
+    pub modes: Vec<String>,
+}
+
+impl LifecycleConfig {
+    fn validate(&self, root: &Path, evaluator_configured: bool) -> Result<()> {
+        if self.schema_version != LIFECYCLE_SCHEMA_VERSION {
+            return Err(Error::Invalid(format!(
+                "project.lifecycle.schema_version must be {LIFECYCLE_SCHEMA_VERSION:?}"
+            )));
+        }
+        if self.configs.is_empty() {
+            return Err(Error::Invalid(
+                "project.lifecycle.configs cannot be empty".into(),
+            ));
+        }
+        let mut owners = HashSet::new();
+        let mut paths = HashSet::new();
+        for reference in &self.configs {
+            validate_identifier(&reference.owner, "project.lifecycle.configs[].owner")?;
+            validate_text(
+                &reference.schema_version,
+                "project.lifecycle.configs[].schema_version",
+            )?;
+            if !owners.insert(reference.owner.as_str()) {
+                return Err(Error::Invalid(format!(
+                    "duplicate lifecycle config owner: {}",
+                    reference.owner
+                )));
+            }
+            if !paths.insert(reference.path.as_str()) {
+                return Err(Error::Invalid(format!(
+                    "lifecycle config path has multiple owners: {}",
+                    reference.path
+                )));
+            }
+            let path = inside_project(root, &reference.path, "project.lifecycle.configs[].path")?;
+            let bytes = fs::read(&path).map_err(|_| Error::Missing(path.clone()))?;
+            let value: Value = serde_json::from_slice(&bytes)?;
+            if value.get("schema_version").and_then(Value::as_str)
+                != Some(reference.schema_version.as_str())
+            {
+                return Err(Error::Invalid(format!(
+                    "lifecycle config {} schema_version must be {:?}",
+                    reference.path, reference.schema_version
+                )));
+            }
+        }
+        let allowed = [
+            "train",
+            "goal-evaluate",
+            "frozen-playback",
+            "transaction-resume",
+        ];
+        let mut modes = HashSet::new();
+        for mode in &self.modes {
+            if !allowed.contains(&mode.as_str()) {
+                return Err(Error::Invalid(format!(
+                    "unsupported lifecycle mode: {mode}"
+                )));
+            }
+            if !modes.insert(mode.as_str()) {
+                return Err(Error::Invalid(format!("duplicate lifecycle mode: {mode}")));
+            }
+        }
+        if !modes.contains("train") || !owners.contains("training") {
+            return Err(Error::Invalid(
+                "project.lifecycle must declare train mode and training config owner".into(),
+            ));
+        }
+        if modes.contains("goal-evaluate") && !evaluator_configured {
+            return Err(Error::Invalid(
+                "goal-evaluate mode requires project.evaluator".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn manifest(&self, root: &Path) -> Result<Value> {
+        let mut configs = Vec::new();
+        for reference in &self.configs {
+            let path = inside_project(root, &reference.path, "project.lifecycle.configs[].path")?;
+            let bytes = fs::read(&path)?;
+            configs.push(json!({
+                "owner": reference.owner,
+                "path": reference.path,
+                "schema_version": reference.schema_version,
+                "sha256": format!("{:x}", Sha256::digest(&bytes)),
+            }));
+        }
+        Ok(json!({
+            "schema_version": self.schema_version,
+            "project_schema_version": PROJECT_SCHEMA_VERSION,
+            "configs": configs,
+            "modes": self.modes,
+            "canonical_entrypoint": "glr --project <root> <command>",
+        }))
+    }
 }
 
 impl ProjectCommand {
@@ -260,6 +375,8 @@ struct ProjectFile {
     evaluator: Option<ProjectCommand>,
     capture: Option<CaptureConfig>,
     progress: Option<ProgressConfig>,
+    #[serde(default)]
+    lifecycle: Option<LifecycleConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -278,6 +395,7 @@ pub struct Project {
     pub evaluator: Option<ProjectCommand>,
     pub capture: Option<CaptureConfig>,
     pub progress: Option<ProgressConfig>,
+    pub lifecycle: Option<LifecycleConfig>,
 }
 
 pub fn find_project(start: &Path) -> Result<PathBuf> {
@@ -352,6 +470,23 @@ pub fn load_project(requested: &Path) -> Result<Project> {
     if let Some(progress) = &value.progress {
         progress.validate()?;
     }
+    if let Some(lifecycle) = &value.lifecycle {
+        lifecycle.validate(&root, value.evaluator.is_some())?;
+        let roles = [
+            ("runtime", &value.runtime),
+            ("trainer", &value.trainer),
+            ("player", &value.player),
+        ];
+        for (index, (left_name, left)) in roles.iter().enumerate() {
+            for (right_name, right) in roles.iter().skip(index + 1) {
+                if left.argv == right.argv {
+                    return Err(Error::Invalid(format!(
+                        "lifecycle roles {left_name} and {right_name} have duplicate entrypoints"
+                    )));
+                }
+            }
+        }
+    }
     let data_dir = inside_project(&root, &value.data_dir, "project.data_dir")?;
     let bridge_path = inside_project(&root, &value.bridge_path, "project.bridge_path")?;
     if !bridge_path.exists() {
@@ -372,6 +507,7 @@ pub fn load_project(requested: &Path) -> Result<Project> {
         evaluator: value.evaluator,
         capture: value.capture,
         progress: value.progress,
+        lifecycle: value.lifecycle,
     })
 }
 

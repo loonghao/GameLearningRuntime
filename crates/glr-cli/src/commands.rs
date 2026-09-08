@@ -357,6 +357,9 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
             "bridge_exists": project.bridge_path.exists(),
             "store_path": project.data_dir.join("runs.sqlite3"),
             "roles": reports,
+            "lifecycle": project.lifecycle.as_ref()
+                .map(|value| value.manifest(&project.root))
+                .transpose()?,
         }),
         as_json,
     )?;
@@ -427,11 +430,19 @@ fn run_transaction(store: &Store, command: TransactionCommand, as_json: bool) ->
 }
 
 fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) -> Result<i32> {
+    let lifecycle = project
+        .lifecycle
+        .as_ref()
+        .map(|value| value.manifest(&project.root))
+        .transpose()?;
     let run = store.create_run(
         &project.environment_id,
         &project.protocol_version,
         "training",
-        json!({"environment_family": project.environment_family}),
+        json!({
+            "environment_family": project.environment_family,
+            "lifecycle": lifecycle,
+        }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
     fs::create_dir_all(&run_dir)?;
@@ -525,6 +536,15 @@ fn run_project_role(
         "environment_family".into(),
         Value::String(project.environment_family.clone()),
     );
+    combined_metadata.insert(
+        "lifecycle".into(),
+        project
+            .lifecycle
+            .as_ref()
+            .map(|value| value.manifest(&project.root))
+            .transpose()?
+            .unwrap_or(Value::Null),
+    );
     let run = store.create_run(
         &project.environment_id,
         &project.protocol_version,
@@ -600,6 +620,11 @@ fn run_goal(
             "goal environment_family does not match the current GLR project".into(),
         ));
     }
+    let lifecycle = project
+        .lifecycle
+        .as_ref()
+        .map(|value| value.manifest(&project.root))
+        .transpose()?;
     let run = store.create_run(
         &project.environment_id,
         &project.protocol_version,
@@ -608,6 +633,7 @@ fn run_goal(
             "environment_family": project.environment_family,
             "goal_id": goal.goal_id,
             "objective": goal.objective,
+            "lifecycle": lifecycle,
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);

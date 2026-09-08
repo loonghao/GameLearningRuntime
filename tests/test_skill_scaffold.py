@@ -64,6 +64,18 @@ def test_skill_scaffold_creates_a_trainable_privacy_safe_seam(
     assert config.knowledge_by_id["guide-research"].authority.value == "advisory"
     assert reward_safety.outcome_signal == "outcome"
     assert demonstration_gate is not None
+    project = json.loads((output / "glr-project.json").read_text(encoding="utf-8"))
+    assert project["schema_version"] == "glr.project.v1"
+    assert project["lifecycle"]["schema_version"] == "glr.lifecycle.v1"
+    assert project["lifecycle"]["modes"] == ["train", "frozen-playback"]
+    assert {item["owner"] for item in project["lifecycle"]["configs"]} == {
+        "training",
+        "reward",
+        "demonstration",
+    }
+    role_entrypoints = {tuple(project[role]["argv"]) for role in ("runtime", "trainer", "player")}
+    assert len(role_entrypoints) == 3
+    assert (output / "scripts/glr_role.py").is_file()
 
     manifest_path = output / "knowledge/research-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

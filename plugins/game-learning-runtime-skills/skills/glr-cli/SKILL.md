@@ -36,16 +36,20 @@ running a goal, transferring knowledge, or claiming reproduction.
    `glr --project . --json doctor`; do not guess a bridge path or game target.
 2. Inspect the strict project roles and exact `environment_id`, `environment_family`, and
    `protocol_version` before execution.
-3. Use `glr runtime start` only for the configured fixed-argv runtime command. Its process exit
+3. When `doctor.data.lifecycle` is present, treat it as the loaded-input manifest:
+   verify every config owner, path, schema version, and SHA-256, then use only the
+   listed lifecycle modes. A missing mode is a shared GLR capability gap; do not
+   create a project-local `run_*.py` lifecycle wrapper to bypass it.
+4. Use `glr runtime start` only for the configured fixed-argv runtime command. Its process exit
    proves command completion, not a live bridge handshake or gameplay success.
-4. Express the user objective as `glr.agent-goal.v1` with machine-readable success criteria and
+5. Express the user objective as `glr.agent-goal.v1` with machine-readable success criteria and
    hard trial, step, time, and research-source budgets.
-5. Run `glr goal run`. Let the project researcher gather only allowed sources; let the planner
+6. Run `glr goal run`. Let the project researcher gather only allowed sources; let the planner
    emit declarative reward terms; require the trainer/runtime to persist metrics; accept success
    only when evaluator evidence matches those persisted authoritative metrics.
-6. Inspect `glr runs show` and query entities, routes, or research before deciding the next action.
+7. Inspect `glr runs show` and query entities, routes, or research before deciding the next action.
    Route and guide results are hints; re-observe and verify postconditions in the live runtime.
-7. Use a verified model bundle for playback. A valid hash proves artifact integrity and config
+8. Use a verified model bundle for playback. A valid hash proves artifact integrity and config
    identity, not policy quality, hardware determinism, or successful live gameplay.
 
 ## Keep the managed runtime current

@@ -385,11 +385,17 @@ reward authority comes from verified runtime signals in `training.json`.
 ```powershell
 vx setup
 vx run check
-vx run train
-vx run reproduce
+glr --project . --json doctor
+glr --project . --json train
+glr --project . --json play --bundle .glr-runs/model-bundle
 ```
 
-`train` runs a deterministic synthetic behavior-cloning smoke test and writes a
+`glr-project.json` is the one official lifecycle entry. Its strict
+`glr.lifecycle.v1` section owns every configuration reference and the modes
+that this generated lane actually supports. `doctor` prints the resolved
+schema and SHA-256 for each input before any role runs.
+
+The trainer runs a deterministic synthetic behavior-cloning smoke test and writes a
 checksummed model bundle under `.glr-runs/`. It proves the training and
 reproduction plumbing only; it is not live runtime acceptance.
 """
@@ -786,6 +792,91 @@ if __name__ == "__main__":
 """
 
 
+def _glr_role_script() -> str:
+    return '''"""Single generated process entrypoint for GLR-owned lifecycle roles."""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("role", choices=("runtime", "trainer", "player"))
+    parser.add_argument("value", nargs="?")
+    args = parser.parse_args()
+    if args.role == "runtime":
+        # Synthetic scaffold: real adapters replace this with their reviewed bridge.
+        print("synthetic runtime boundary ready")
+        return 0
+    if args.role == "trainer":
+        return subprocess.call(
+            [sys.executable, str(ROOT / "scripts/train_reference.py"),
+             "--output", str(ROOT / ".glr-runs/model-bundle")]
+        )
+    if not args.value:
+        parser.error("player requires the verified model bundle path from GLR")
+    from game_learning_runtime import verify_model_bundle
+    verify_model_bundle(args.value)
+    print(f"verified playback bundle {args.value}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
+def _glr_project(package: str, environment_id: str, *, has_runtime: bool) -> dict[str, Any]:
+    configs = [
+        {"owner": "training", "path": "training.json", "schema_version": "glr.training.v1"},
+        {
+            "owner": "reward",
+            "path": "reward-safety.json",
+            "schema_version": "glr.reward-safety.v1",
+        },
+        {
+            "owner": "demonstration",
+            "path": "demonstration-policy.json",
+            "schema_version": "glr.demonstration-policy.v1",
+        },
+    ]
+    if has_runtime:
+        configs.append(
+            {
+                "owner": "runtime",
+                "path": "runtime-integration.json",
+                "schema_version": "glr.runtime-integration.v1",
+            }
+        )
+    return {
+        "schema_version": "glr.project.v1",
+        "environment_id": environment_id,
+        "environment_family": "synthetic-adapter",
+        "protocol_version": "1.0",
+        "data_dir": ".glr-runs",
+        "bridge_path": f"src/{package}",
+        "runtime": {"argv": ["python", "scripts/glr_role.py", "runtime"]},
+        "trainer": {"argv": ["python", "scripts/glr_role.py", "trainer"]},
+        "player": {"argv": ["python", "scripts/glr_role.py", "player", "{bundle}"]},
+        "researcher": None,
+        "planner": None,
+        "evaluator": None,
+        "capture": None,
+        "progress": None,
+        "lifecycle": {
+            "schema_version": "glr.lifecycle.v1",
+            "configs": configs,
+            "modes": ["train", "frozen-playback"],
+        },
+    }
+
+
 def _package_runtime_script() -> str:
     return """from __future__ import annotations
 
@@ -1020,6 +1111,19 @@ def main() -> int:
         _reference_training_script(args.package, args.environment_id),
     )
     _write(output / "scripts/verify_bundle.py", _verify_bundle_script())
+    _write(output / "scripts/glr_role.py", _glr_role_script())
+    _write(
+        output / "glr-project.json",
+        json.dumps(
+            _glr_project(
+                args.package,
+                args.environment_id,
+                has_runtime=args.access is not None,
+            ),
+            indent=2,
+        )
+        + "\n",
+    )
     _write(output / "scripts/package_runtime.py", _package_runtime_script())
     _write(
         output / "README.md",
