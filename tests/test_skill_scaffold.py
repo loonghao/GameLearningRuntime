@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
