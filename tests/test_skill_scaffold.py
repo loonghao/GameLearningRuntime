@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import tomllib
 
 from game_learning_runtime import (
     DemonstrationGate,
@@ -109,6 +110,33 @@ def test_skill_scaffold_refuses_to_overwrite_nonempty_directory(tmp_path: Path) 
     assert result.returncode != 0
     assert "non-empty" in result.stderr
     assert (output / "owned.txt").read_text(encoding="utf-8") == "preserve"
+
+
+def test_skill_scaffold_pins_the_current_python_api_release_series(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "adapter"
+    subprocess.run(
+        [
+            sys.executable,
+            str(_SCAFFOLD),
+            "--output",
+            str(output),
+            "--package",
+            "example_dependency",
+            "--environment-id",
+            "example.dependency-v1",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    generated = tomllib.loads((output / "pyproject.toml").read_text(encoding="utf-8"))
+    repository = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    version = repository["project"]["version"].split(".")
+    expected = f"game-learning-runtime~={version[0]}.{version[1]}.0"
+    assert generated["project"]["dependencies"] == [expected]
 
 
 @pytest.mark.parametrize(

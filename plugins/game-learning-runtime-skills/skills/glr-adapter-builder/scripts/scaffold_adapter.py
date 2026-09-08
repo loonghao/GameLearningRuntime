@@ -15,6 +15,10 @@ _ASSETS = _SKILL_ROOT / "assets"
 _PACKAGE = re.compile(r"^[a-z][a-z0-9_]*$")
 _ENVIRONMENT_ID = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _UPSTREAM_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+# The generated adapter imports the current public Python contract surface.
+# Keep one compatible-release series here and verify it against a real clean
+# install in tests; do not copy the standalone CLI version into each template.
+PYTHON_API_COMPATIBLE_RELEASE = "0.14"
 
 
 def _load_asset(name: str) -> dict[str, Any]:
@@ -175,6 +179,7 @@ def test_failed_episode_cannot_become_positive_from_dense_shaping() -> None:
 
 def _pyproject(package: str) -> str:
     project = package.replace("_", "-")
+    runtime_dependency = f"game-learning-runtime~={PYTHON_API_COMPATIBLE_RELEASE}.0"
     return f'''[build-system]
 requires = ["editables>=0.5", "hatchling>=1.27"]
 build-backend = "hatchling.build"
@@ -184,7 +189,7 @@ name = "{project}"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-  "game-learning-runtime>=0.3,<0.4",
+  "{runtime_dependency}",
 ]
 
 [dependency-groups]
