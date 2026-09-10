@@ -35,6 +35,10 @@ anti-cheat bypasses, credential capture, or unrestricted process discovery.
 
 ## Scaffold the adapter lane
 
+Read [multi-engine.md](references/multi-engine.md) for Unity Mono/IL2CPP,
+Unreal, Godot and reusable external input/capture boundaries. An engine label
+selects a development lane; it is never proof of a working runtime provider.
+
 Run the deterministic scaffold once. Choose a generic public environment ID and
 Python package name; do not put a game account, host, PID, HWND, local path, or
 secret in either value.

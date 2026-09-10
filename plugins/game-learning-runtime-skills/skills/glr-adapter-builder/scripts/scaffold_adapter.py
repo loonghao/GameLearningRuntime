@@ -425,7 +425,7 @@ def _agents_md(package: str, *, loader: str | None) -> str:
             "or modify a game installation; require an explicit operator-selected target."
         )
     return _load_text_asset(
-        "templates/AGENTS.md.template", package=package, loader_note=loader_note
+        "templates/AGENTS.template.md", package=package, loader_note=loader_note
     )
 
 
@@ -988,7 +988,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="new or empty output directory")
     parser.add_argument("--package", required=True, help="lowercase Python package name")
     parser.add_argument("--environment-id", required=True, help="generic public ID")
-    parser.add_argument("--engine", choices=("unity", "unreal", "other"), default="other")
+    parser.add_argument("--engine", choices=("unity", "unreal", "godot", "other"), default="other")
+    parser.add_argument("--unity-runtime", choices=("mono", "il2cpp"))
     parser.add_argument(
         "--access",
         choices=("source", "loader", "external"),
@@ -998,6 +999,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--loader-version", help="exact compatible upstream release tag")
     parser.add_argument("--start-mode", choices=("reset", "attach"))
     args = parser.parse_args()
+    if args.unity_runtime is not None and args.engine != "unity":
+        parser.error("--unity-runtime requires --engine unity")
+    if args.access == "loader" and args.unity_runtime == "il2cpp":
+        parser.error("IL2CPP loader bootstrap is not implemented; use source or external access")
     if _PACKAGE.fullmatch(args.package) is None:
         parser.error("--package must match ^[a-z][a-z0-9_]*$")
     if _ENVIRONMENT_ID.fullmatch(args.environment_id) is None:
@@ -1039,6 +1044,19 @@ def main() -> int:
     demonstration_policy = _load_asset("demonstration-policy.json")
     training["lifecycle"]["start_mode"] = args.start_mode
     if args.access is not None:
+        _write(
+            output / "runtime-selection.json",
+            json.dumps(
+                {
+                    "engine_family": args.engine,
+                    "runtime_variant": args.unity_runtime,
+                    "implementation_status": "synthetic-seam",
+                    "live_verified": False,
+                },
+                indent=2,
+            )
+            + "\n",
+        )
         training["bridge"]["required_capabilities"] = _required_capabilities(args.access)
     elif args.start_mode == "attach":
         training["bridge"]["required_capabilities"] = [

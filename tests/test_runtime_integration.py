@@ -65,7 +65,7 @@ def _action() -> Mapping[str, np.ndarray[Any, Any]]:
     return {"choice": np.array([1], dtype=np.int64)}
 
 
-@pytest.mark.parametrize("engine", [EngineFamily.UNITY, EngineFamily.UNREAL])
+@pytest.mark.parametrize("engine", [EngineFamily.UNITY, EngineFamily.UNREAL, EngineFamily.GODOT])
 def test_source_profile_declares_a_fast_engine_native_contract(engine: EngineFamily) -> None:
     profile = RuntimeIntegrationProfile.for_source(engine)
 
@@ -89,7 +89,7 @@ def test_source_profile_declares_a_fast_engine_native_contract(engine: EngineFam
     } <= profile.required_capabilities
 
 
-@pytest.mark.parametrize("engine", [EngineFamily.UNITY, EngineFamily.UNREAL])
+@pytest.mark.parametrize("engine", [EngineFamily.UNITY, EngineFamily.UNREAL, EngineFamily.GODOT])
 def test_binary_only_profile_is_truthful_live_attach(engine: EngineFamily) -> None:
     profile = RuntimeIntegrationProfile.for_external(engine)
 

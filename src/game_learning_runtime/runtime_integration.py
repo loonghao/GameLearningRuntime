@@ -23,6 +23,7 @@ class EngineFamily(str, Enum):
 
     UNITY = "unity"
     UNREAL = "unreal"
+    GODOT = "godot"
     OTHER = "other"
 
 
