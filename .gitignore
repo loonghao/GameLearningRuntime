@@ -12,6 +12,7 @@ build/
 dist/
 htmlcov/
 target/
+sdk/godot/.godot/
 **/bin/
 **/obj/
 .idea/
