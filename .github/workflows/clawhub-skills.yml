@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - '.agents/skills/**'
+      - 'plugins/**'
+      - 'scripts/*skills*'
+      - 'scripts/package_agent_plugin.py'
+      - 'tests/test_publish_skills.py'
+      - 'pyproject.toml'
       - '.github/workflows/clawhub-skills.yml'
   push:
     branches: [main]
@@ -11,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish after scan (main or release tag only)
+        description: Publish the project version (main or matching release tag only)
         required: false
         default: false
         type: boolean
@@ -19,60 +24,57 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: clawhub-skills
+  cancel-in-progress: false
+
 jobs:
   scan:
     runs-on: ubuntu-latest
-    outputs:
-      eligible: ${{ steps.guard.outputs.eligible }}
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - id: guard
-        shell: bash
-        run: |
-          set -euo pipefail
-          ref="${GITHUB_REF_NAME}"
-          if [[ "$GITHUB_REF_TYPE" == tag || "$ref" == main ]]; then
-            echo 'eligible=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'eligible=false' >> "$GITHUB_OUTPUT"
-          fi
-      - name: Scan skills (dry run)
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
-      - name: Validate skill packages
-        run: |
-          set -euo pipefail
-          test -d .agents/skills
-          ! grep -RInE '(^|[^A-Za-z])(sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9]+|CLAWHUB_TOKEN)' .agents/skills || exit 1
-          while IFS= read -r -d '' skill_md; do
-            test -s "$skill_md"
-            skill_dir="$(dirname "$skill_md")"
-            echo "Validating ${skill_dir}"
-            npx --yes clawhub@0.23.1 publish "$skill_dir" --dry-run --json >/dev/null
-          done < <(find .agents/skills -name SKILL.md -type f -print0)
-
-  publish:
-    needs: scan
-    if: needs.scan.outputs.eligible == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: ubuntu-latest
-    environment: clawhub
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Publish verified skills
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/package_agent_plugin.py --check
+      - run: python scripts/publish_skills.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clawhub-preview
+          path: dist/clawhub-receipts.json
+
+  publish:
+    needs: scan
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: clawhub
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Publish checksummed versioned skills
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          # The publisher reads the token from the environment; shell tracing is disabled.
-          test -n "${CLAWHUB_TOKEN:-}"
-          while IFS= read -r -d '' skill_md; do
-            skill_dir="$(dirname "$skill_md")"
-            echo "Publishing ${skill_dir}"
-            npx --yes clawhub@0.23.1 publish "$skill_dir" --json
-          done < <(find .agents/skills -name SKILL.md -type f -print0)
+        run: python scripts/publish_skills.py --publish
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clawhub-publication-receipts
+          path: dist/clawhub-receipts.json
+          if-no-files-found: ignore
