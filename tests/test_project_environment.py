@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 try:
@@ -53,10 +54,12 @@ def test_vx_and_just_pin_the_local_and_ci_toolchain() -> None:
 def test_internal_github_actions_execute_the_same_just_recipes() -> None:
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    action = "loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914"
-
-    assert action in ci
-    assert action in release
+    pattern = r"uses:\s+loonghao/vx@([^\s#]+)"
+    ci_refs = re.findall(pattern, ci)
+    release_refs = re.findall(pattern, release)
+    assert ci_refs and release_refs
+    assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in ci_refs + release_refs)
+    assert set(ci_refs) == set(release_refs)
     assert "loonghao/vx@main" not in ci + release
     assert "name: core / Python ${{ matrix.python-version }}" in ci
     for recipe in (

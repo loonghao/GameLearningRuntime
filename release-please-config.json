@@ -34,6 +34,14 @@
         {
           "type": "generic",
           "path": "Cargo.lock"
+        },
+        {
+          "type": "generic",
+          "path": ".agents/skills/glr-adapter-builder/scripts/scaffold_adapter.py"
+        },
+        {
+          "type": "generic",
+          "path": "plugins/game-learning-runtime-skills/skills/glr-adapter-builder/scripts/scaffold_adapter.py"
         }
       ]
     }

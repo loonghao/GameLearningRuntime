@@ -9,6 +9,8 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,25 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI_VERSION = "0.23.1"
+
+
+@contextmanager
+def registry_environment(publish: bool):
+    """Give the pinned CLI an isolated credential file, never a token argument."""
+    env = os.environ.copy()
+    token = env.pop("CLAWHUB_TOKEN", None)
+    if not publish:
+        yield env
+        return
+    if not token:
+        raise ValueError("configure CLAWHUB_TOKEN in the clawhub GitHub environment")
+    with tempfile.TemporaryDirectory(prefix="glr-clawhub-") as directory:
+        path = Path(directory) / "config.json"
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump({"registry": "https://clawhub.ai", "token": token}, stream)
+        env["CLAWHUB_CONFIG_PATH"] = str(path)
+        yield env
 
 
 def validate_receipt(value: dict[str, Any], *, slug: str, version: str, dry_run: bool) -> None:
@@ -102,7 +123,10 @@ def main() -> None:
 
         def invoke(*, dry_run: bool, base: list[str] = base, skill: Path = skill) -> dict[str, Any]:
             command = base + (["--dry-run"] if dry_run else [])
-            completed = subprocess.run(command, capture_output=True, text=True, timeout=120)
+            with registry_environment(args.publish) as environment:
+                completed = subprocess.run(
+                    command, capture_output=True, text=True, timeout=120, env=environment
+                )
             if completed.returncode:
                 raise RuntimeError(f"ClawHub failed for {skill.name} (exit {completed.returncode})")
             value = json.loads(completed.stdout)
