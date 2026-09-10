@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
+      - uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
@@ -56,7 +56,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned vx toolchain
-        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
+        uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
@@ -73,7 +73,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned vx toolchain
-        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
+        uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
@@ -90,7 +90,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned vx toolchain
-        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
+        uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
@@ -107,7 +107,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned vx toolchain
-        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
+        uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
@@ -129,7 +129,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned vx toolchain
-        uses: loonghao/vx@61a604b0dc206c691c33db8e8f9c420ca47c3914 # vx-v0.9.30
+        uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
