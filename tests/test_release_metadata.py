@@ -52,6 +52,11 @@ def test_release_please_owns_all_version_surfaces() -> None:
     assert ("generic", "README.zh-CN.md") in extra_files
     assert ("generic", "uv.lock") in extra_files
     assert ("generic", "Cargo.lock") in extra_files
+    for prefix in (".agents", "plugins/game-learning-runtime-skills"):
+        assert (
+            "generic",
+            prefix + "/skills/glr-adapter-builder/scripts/scaffold_adapter.py",
+        ) in extra_files
 
 
 def test_uv_lock_version_matches_manifest_and_has_release_marker() -> None:
