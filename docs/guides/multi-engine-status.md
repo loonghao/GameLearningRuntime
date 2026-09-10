@@ -7,21 +7,25 @@ selecting an engine never adds a live capability.
 
 | Target | Implemented and locally testable | Still requires runtime integration |
 | --- | --- | --- |
-| Unity Mono | Installation hints, source/external scaffolds, existing BepInEx bootstrap | Concrete semantic provider and authenticated target-bound bridge |
-| Unity IL2CPP | Installation hints, explicit source/external selection, rejection of Mono loader substitution | IL2CPP bootstrap/provider and live trace |
-| Unreal | Project hints, source/external scaffolds, existing UE4SS bootstrap and C++ SDK | Concrete game provider and live trace |
-| Godot | Project/PCK hints, source/external profiles and synthetic scaffold | Godot node/extension provider and live trace |
-| External input/capture | Tested command allowlist, bounded hold, sequence fencing, fresh readback, cleanup and failure closure | Concrete input/capture backend with target binding, deadlines and watchdog |
+| Unity Mono | Real Transform provider using the C# SDK; Unity 2022.3 Editor and standalone Mono Player reset/step/stale-request checks passed | Game-specific semantics and authenticated runtime transport |
+| Unity IL2CPP | Same source provider built and executed in a standalone IL2CPP Player after installing the matching official module | Binary-only IL2CPP loader integration and game-specific semantics |
+| Unreal | Unreal 5.8.1 Editor commandlet passed Actor, SceneComponent and allowlisted level transition/readback checks | Packaged-game runtime module and game-specific semantics |
+| Godot | Godot 4.6.3 Node3D source sample passed reset/step/stale-request checks through the existing Python HostBridgeDriver | Authenticated IPC and game-specific semantics |
+| External input/capture | Concrete DccCuaBackend uses persistent exact-window sessions, fenced bounded clicks and PNG/RGB capture; live capture and game counter change observed | Repeatable end-to-end acceptance is currently blocked by Windows input-desktop access denial and D3D11 capture failure |
 
-The reusable `InputCaptureSession` implements coordination, not OS input.
+The reusable `InputCaptureSession` implements coordination; `DccCuaBackend`
+provides OS input/capture through the project-owned DCC-CUA runtime.
 The engine adapter projects its captured RGB frames into observations and
 owns any game-specific reward/terminal extraction. A successful capture does
 not prove a game action achieved its intended result. Neither this session nor
 an external profile exposes physical reset or exact frame stepping.
 
-There is no four-engine live support claim. No game target was selected or
-modified for these tests. The synthetic scaffold explicitly records
+There is no universal game support claim. All engine tests used new isolated
+source samples, not existing user games. The synthetic scaffold still records
 `implementation_status=synthetic-seam` and `live_verified=false`.
+
+See [native sample validation](native-provider-validation.md) for reproducible
+commands, engine versions and the limits of these observations.
 
 See the [adapter Skill reference](../../.agents/skills/glr-adapter-builder/references/multi-engine.md)
 for the commands and contract boundaries, and [skills publication](skills-publication.md)

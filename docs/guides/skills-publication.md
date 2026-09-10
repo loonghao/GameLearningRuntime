@@ -14,8 +14,8 @@ with npx and Python 3.11+ are required (Python 3.10 additionally needs tomli).
 The GitHub workflow validates PRs and main pushes. A matching release tag
 automatically publishes that version. A manual run publishes only when
 `publish=true` and the ref is main or a matching release tag. Concurrent
-publication runs are serialized. Configure `CLAWHUB_TOKEN` in the GitHub
-environment named `clawhub`, with publishing rights for owner `loonghao`.
+publication runs are serialized. The workflow reads `CLAWHUB_TOKEN` from
+repository secrets or the `clawhub` environment, with publishing rights for owner `loonghao`.
 Do not put tokens into skill files, workflow inputs or command-line arguments.
 
 Publication performs a fresh preview, verifies the file set and receipt

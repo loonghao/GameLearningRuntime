@@ -36,6 +36,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cua = [
+  "Pillow>=11,<13",
+]
 torch = [
   "torch>=2.8",
 ]
@@ -100,6 +103,8 @@ exclude = ["src/game_learning_runtime/integrations/(gymnasium|torch_objectives|t
 
 [[tool.mypy.overrides]]
 module = [
+  "PIL",
+  "PIL.*",
   "grpc_tools.*",
   "gymnasium",
   "gymnasium.*",
