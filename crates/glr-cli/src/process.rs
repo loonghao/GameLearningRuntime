@@ -144,6 +144,9 @@ fn configure_command(
     bundle: Option<&Path>,
     extra: &HashMap<String, PathBuf>,
 ) -> Result<Command> {
+    if let Some(context) = &project.run_context {
+        context.verify(&project.root)?;
+    }
     let context = command_context(project, run_id, run_dir, bundle, extra);
     let argv = command.expand(&context)?;
     let (program, arguments) = argv
@@ -165,6 +168,15 @@ fn configure_command(
         .env("GLR_CAPTURE_VIDEO", &context["capture_video"])
         .env("GLR_CAPTURE_INDEX", &context["capture_index"])
         .env("GLR_CAPTURE_STATUS", &context["capture_status"]);
+    if let Some(context) = &project.run_context {
+        process
+            .env("GLR_RUN_CONTEXT", context.json()?)
+            .env("GLR_RUN_CONTEXT_SHA256", context.digest());
+    } else {
+        process
+            .env_remove("GLR_RUN_CONTEXT")
+            .env_remove("GLR_RUN_CONTEXT_SHA256");
+    }
     if let Some(progress) = &project.progress {
         process
             .env("GLR_PROGRESS_SIGNAL", &progress.signal)

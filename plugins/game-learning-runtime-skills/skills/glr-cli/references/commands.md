@@ -168,6 +168,8 @@ Use `--json` for compact `glr.cli-output.v1` output.
 ```powershell
 glr --project . --json doctor
 glr --project . --json runtime start
+glr --project . --context config/contexts/ranked.toml --json doctor
+glr --project . --context config/contexts/ranked.toml --json train
 glr --project . --json task list
 glr --project . --json task show season
 glr --project . --json task run season --set profile=example/default
@@ -192,6 +194,13 @@ VX resolves the locked toolchain and environment. GLR rejects shell strings,
 partial placeholders, dependency cycles, unknown parameters, unsafe paths, and
 unbounded timeouts. Task receipts under `.glr/tasks/` record process outcomes;
 they are not authoritative gameplay or learning evidence.
+
+Invocation-scoped `glr.run-context.v1` files bind generic labels and owned
+JSON/TOML inputs to `doctor`, `runtime start`, `train`, `goal run`, or `play`.
+GLR freezes and re-verifies source/input hashes, exports `GLR_RUN_CONTEXT` plus
+`GLR_RUN_CONTEXT_SHA256`, and persists `run-context.json` with the run. Use
+`load_inherited_run_context(project)` in Python roles. Keep product-specific
+setup and status policy in VX tasks rather than adding core subcommands.
 
 `train` and `goal run` record lifecycle, events, metrics, logs, capture artifacts, and hashes under
 the configured data directory. Training tensors and transitions remain checksummed artifacts or

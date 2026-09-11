@@ -229,6 +229,14 @@ from game_learning_runtime.realtime import (
     RealtimeTimingContract,
 )
 from game_learning_runtime.refusals import RefusalFunnel, RefusalHandler, RefusalPolicy
+from game_learning_runtime.run_context import (
+    RUN_CONTEXT_SCHEMA_VERSION,
+    RunContext,
+    RunContextFile,
+    RunContextSource,
+    load_inherited_run_context,
+    load_run_context,
+)
 from game_learning_runtime.run_store import (
     RUN_STORE_SCHEMA_VERSION,
     ArtifactRecord,
@@ -683,4 +691,12 @@ __all__ += [
     "TrainingLauncher",
     "load_game_launch_config",
     "load_project_game_launch",
+]
+__all__ += [
+    "RUN_CONTEXT_SCHEMA_VERSION",
+    "RunContext",
+    "RunContextFile",
+    "RunContextSource",
+    "load_inherited_run_context",
+    "load_run_context",
 ]

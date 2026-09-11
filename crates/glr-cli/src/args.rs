@@ -11,6 +11,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 pub struct Cli {
     #[arg(long, global = true, default_value = ".")]
     pub project: PathBuf,
+    /// Project-relative glr.run-context.v1 file to freeze for role execution.
+    #[arg(long, global = true)]
+    pub context: Option<PathBuf>,
     #[arg(long, global = true)]
     pub json: bool,
     #[command(subcommand)]

@@ -41,16 +41,20 @@ running a goal, transferring knowledge, or claiming reproduction.
    verify every config owner, path, schema version, and SHA-256, then use only the
    listed lifecycle modes. A missing mode is a shared GLR capability gap; do not
    create a project-local `run_*.py` lifecycle wrapper to bypass it.
-4. Use `glr runtime start` only for the configured fixed-argv runtime command. Its process exit
+4. When one invocation selects a configuration set, pass a reviewed
+   `--context config/contexts/NAME.toml`. Treat `doctor.data.run_context` as the
+   frozen `glr.run-context.v1` receipt. Python roles must call
+   `load_inherited_run_context(project)` before consuming selected inputs.
+5. Use `glr runtime start` only for the configured fixed-argv runtime command. Its process exit
    proves command completion, not a live bridge handshake or gameplay success.
-5. Express the user objective as `glr.agent-goal.v1` with machine-readable success criteria and
+6. Express the user objective as `glr.agent-goal.v1` with machine-readable success criteria and
    hard trial, step, time, and research-source budgets.
-6. Run `glr goal run`. Let the project researcher gather only allowed sources; let the planner
+7. Run `glr goal run`. Let the project researcher gather only allowed sources; let the planner
    emit declarative reward terms; require the trainer/runtime to persist metrics; accept success
    only when evaluator evidence matches those persisted authoritative metrics.
-7. Inspect `glr runs show` and query entities, routes, or research before deciding the next action.
+8. Inspect `glr runs show` and query entities, routes, or research before deciding the next action.
    Route and guide results are hints; re-observe and verify postconditions in the live runtime.
-8. Use a verified model bundle for playback. A valid hash proves artifact integrity and config
+9. Use a verified model bundle for playback. A valid hash proves artifact integrity and config
    identity, not policy quality, hardware determinism, or successful live gameplay.
 
 ## Run project-local tasks through VX
@@ -65,6 +69,9 @@ running a goal, transferring knowledge, or claiming reproduction.
 - A project task is not a core GLR command. Successful `glr task run season`
   proves process completion only; require authoritative run/evaluator evidence
   before claiming the season or gameplay objective succeeded.
+- Keep season, ruleset, league, experiment, and campaign concepts in task
+  parameters or context labels. Do not invent top-level product-specific CLI
+  commands for them.
 - Never rewrite a fixed argv task as a shell string or execute a remote task
   catalog. Treat `glr.toml` as trusted repository configuration.
 
