@@ -18,7 +18,7 @@ _UPSTREAM_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 # The generated adapter imports the current public Python contract surface.
 # Keep one compatible-release series here and verify it against a real clean
 # install in tests; do not copy the standalone CLI version into each template.
-PYTHON_API_VERSION = "0.14.0"  # x-release-please-version
+PYTHON_API_VERSION = "0.15.0"  # x-release-please-version
 PYTHON_API_COMPATIBLE_RELEASE = ".".join(PYTHON_API_VERSION.split(".")[:2])
 
 
