@@ -71,8 +71,28 @@ pub enum Command {
         #[command(subcommand)]
         command: TransactionCommand,
     },
+    /// List, inspect, or run project-local declarative tasks from glr.toml.
+    Task {
+        #[command(subcommand)]
+        command: TaskCommand,
+    },
     /// Check or apply a checksum-verified GLR distribution update.
     Update(UpdateArgs),
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum TaskCommand {
+    /// List configured project tasks without executing them.
+    List,
+    /// Show one validated task definition.
+    Show { name: String },
+    /// Run one task and its declared dependencies.
+    Run {
+        name: String,
+        /// Set a declared task parameter as NAME=VALUE.
+        #[arg(long = "set", value_name = "NAME=VALUE")]
+        parameters: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]

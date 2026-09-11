@@ -124,6 +124,8 @@ workflow:
 glr --project . --json doctor
 glr --project . --json runtime start
 glr --project . --json train
+glr --project . --json task list
+glr --project . --json task run season --set profile=example/default
 glr --project . --json goal run --goal goals/reach-destination.json
 glr --project . --json query entities --world forest --kind shrine
 glr --project . --json query routes --world forest --to-entity shrine.forest-1
@@ -136,6 +138,12 @@ The project manifest owns exact executable paths, environment identity, data
 locations, and runtime/trainer/player/researcher/planner/evaluator/recorder
 roles. GLR validates and orchestrates those roles; it does not embed a
 game-specific launcher, scraper, or learning algorithm.
+
+Projects can add strict, fixed-argv workflows in `glr.toml`. Use
+`runner = "vx"` for Python training tasks so VX owns runtime and virtual
+environment resolution while GLR owns validation, dependency ordering, timeout,
+logs, and execution receipts. See [Extend GLR with declarative VX
+tasks](docs/guides/declarative-tasks.md).
 
 `glr update --check` only inspects the latest stable release. After an explicit
 update request, `glr update --yes` verifies the exact target archive and
@@ -548,6 +556,7 @@ runbook](docs/runbooks/release.md).
 - [Use the Runtime Host and C#/C++ provider SDKs](docs/guides/runtime-host-and-provider-sdks.md)
 - [Connect authorized BepInEx and UE4SS loaders](docs/guides/loader-plugin-integration.md)
 - [Start configured game instances before training](docs/guides/game-launch.md)
+- [Extend GLR with declarative VX tasks](docs/guides/declarative-tasks.md)
 - [Standard agent-first CLI and query tables](docs/guides/agent-first-cli.md)
 - [Reproduce trained models](docs/guides/reproducible-model-bundles.md)
 - [Build offline interactive run reports](docs/guides/run-reports.md)

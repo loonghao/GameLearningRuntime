@@ -111,8 +111,14 @@ GLR 不调用 shell。
 ```powershell
 glr --project . --json doctor
 glr --project . --json runtime start
+glr --project . --json task list
 glr --project . --json train
 ```
+
+项目特有的数据准备与训练流程可以写入严格的 `glr.toml`，再通过 `glr task run` 执行。
+Python 流程优先使用 VX task，以复用锁定的工具版本和项目虚拟环境。详见
+[使用声明式 VX 任务扩展 GLR](declarative-tasks.zh-CN.md)。任务退出只是编排证据，不是
+真实游戏或训练验收。
 
 `train` 会先启动录制 sidecar，再启动训练器，结束后停止录制器。完整录制包含：
 

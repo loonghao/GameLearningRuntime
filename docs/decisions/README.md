@@ -21,6 +21,7 @@
 - [ADR-0019: Add an optional DeepSeek Harness provider boundary](0019-add-optional-deepseek-harness-provider.md)
 - [ADR-0020: Add rollout attempts and local queue barriers](0020-rollout-attempts-and-queue-barriers.md)
 - [ADR-0021: Resolve portable projects from one manifest](0021-portable-project-manifests.md)
+- [ADR-0023: Add a project-local VX task runner](0023-add-project-local-vx-task-runner.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.
