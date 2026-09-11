@@ -18,7 +18,7 @@ from game_learning_runtime.project import GLRProject
 if sys.version_info >= (3, 11):
     import tomllib
 else:
-    import tomli as tomllib  # type: ignore[import-not-found]
+    import tomli as tomllib  # type: ignore[import-not-found,unused-ignore]
 
 RUN_CONTEXT_SCHEMA_VERSION = "glr.run-context.v1"
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
