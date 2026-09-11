@@ -660,6 +660,7 @@ version = "0.14.0" # x-release-please-version
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -687,7 +688,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "tomli" },
     { name = "twine" },
 ]
 
@@ -696,6 +697,7 @@ requires-dist = [
     { name = "gymnasium", marker = "extra == 'gymnasium'", specifier = ">=1.2,<2" },
     { name = "numpy", specifier = ">=1.26,<2.3" },
     { name = "pillow", marker = "extra == 'cua'", specifier = ">=11,<13" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.8" },
     { name = "torch", marker = "extra == 'torchrl'", specifier = ">=2.8" },
     { name = "torchrl", marker = "extra == 'torchrl'", specifier = ">=0.13,<0.14" },
@@ -712,7 +714,7 @@ dev = [
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.11" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
+    { name = "tomli", specifier = ">=2.0" },
     { name = "twine", specifier = ">=6.1" },
 ]
 

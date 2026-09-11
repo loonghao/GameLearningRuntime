@@ -42,9 +42,16 @@ version, exact target archive, and digest from the published `SHA256SUMS`.
 
 ## Project configuration
 
-`glr-project.json` is strict `glr.project.v1`. Every command is a fixed argv array executed with
-`shell=False`; placeholders must occupy a whole argv element. Paths are project-relative and must
-stay inside the project.
+New projects use `glr-project.toml`, with the same strict `glr.project.v1` schema
+as legacy `glr-project.json`. Discovery searches upward from any project
+subdirectory and stops at the nearest manifest. Two manifests in one directory,
+symlinked manifests, and unknown fields are rejected. In TOML, omit optional
+roles or capture tables instead of writing JSON `null`.
+
+Every command is a fixed argv array executed without a shell; placeholders
+occupy a whole argv element. Paths are manifest-relative and remain inside the
+project. The following JSON example is retained for existing configurations;
+new projects should use the equivalent TOML layout below.
 
 ```json
 {
@@ -95,6 +102,64 @@ discovery, arbitrary scripts, secrets, or shell expressions into the config.
 
 Project roles receive `GLR_PROJECT_ROOT`, `GLR_BRIDGE_PATH`, `GLR_RUN_ID`, `GLR_RUN_DIR`,
 `GLR_STORE_PATH`, environment identity variables, and role-specific `GLR_*_PATH` variables.
+They also receive `GLR_PROJECT_MANIFEST`, with the selected absolute manifest
+path, and may use the whole-argument `{project_manifest}` placeholder. These
+machine-local paths are process context, not publishable training evidence.
+On Windows, canonical paths can use extended-length or UNC syntax. Compare
+filesystem identity with `Path.samefile()` when files exist, not raw strings.
+If a reviewed legacy launcher requires another spelling, adapt it only at that
+launcher boundary. A path-format or identity-check failure is not evidence that
+the game is absent and must never cause an automatic second launch.
+
+### Portable layout, extensions, and local paths
+
+```toml
+schema_version = "glr.project.v1"
+environment_id = "example.environment-v1"
+environment_family = "example-family"
+protocol_version = "1.0"
+data_dir = ".glr"
+bridge_path = "src/example_adapter"
+
+[runtime]
+argv = ["uv", "run", "--frozen", "python", "-m", "example_runtime"]
+[trainer]
+argv = ["uv", "run", "--frozen", "python", "-m", "example_training"]
+[player]
+argv = ["uv", "run", "--frozen", "python", "-m", "example_playback", "{bundle}"]
+
+[extensions.example]
+config = "config/runtime.toml"
+```
+
+Each extension has exactly one `config` field: an existing, portable relative,
+non-symlink file inside the project. GLR checks the mount; the named extension
+owns the file's strict schema and actions. Python exposes the resolved file as
+`load_project(path).extensions["example"]`. No arbitrary plugin import or script
+execution is loaded from an extension reference.
+
+Keep a default game directory such as `game` in the extension config. If a
+different installation is required, let that extension accept only an explicit
+`[game] directory` override in `config/runtime.local.toml`, ignored by version
+control. Do not recursively merge arbitrary local fields, commands, credentials,
+policy, or reward settings. GLR does not automatically load local overrides.
+`resolve_game_directory(project.root, configured_directory)` accepts an existing
+project-owned relative directory or an explicitly configured absolute directory;
+relative escapes are rejected. It never installs, discovers, or launches games.
+
+Commit the root manifest, package metadata, dependency locks, generic default
+config, tests, and project-owned setup instructions. Do not copy a virtualenv:
+recreate it from the lock after clone. Keep adapters as importable semantic
+packages, not owners of hidden shared environments. Before removing an old
+environment, verify the new interpreter/module origins and run synthetic tests,
+`doctor`, bounded training, and artifact verification from a different checkout
+path and a nested working directory. Game payloads, local paths, credentials,
+private traces, and licensed assets are not implied to be redistributable.
+
+Fresh-clone acceptance has separate gates: dependency setup; config/doctor;
+synthetic training/reproduction; authorized live runtime binding; whole-match
+evidence. Report which gate ran. TOML source support must be built/released and
+adopted by the consumer before claiming its installed GLR is compatible.
 
 ## Commands
 

@@ -352,6 +352,8 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
             "version": env!("CARGO_PKG_VERSION"),
             "target": crate::update::BUILD_TARGET,
             "project_root": project.root,
+            "project_manifest": project.manifest_path,
+            "extensions": project.extensions,
             "environment_id": project.environment_id,
             "bridge_path": project.bridge_path,
             "bridge_exists": project.bridge_path.exists(),

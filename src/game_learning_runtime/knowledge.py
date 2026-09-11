@@ -278,16 +278,23 @@ class KnowledgeInjector:
             )
 
         minimum_confidence = max(policy.min_confidence, query.min_confidence)
-        selected = [
-            item
-            for snapshot in snapshots
-            for item in snapshot.items
-            if item.intent in query.intents
-            and item.confidence >= minimum_confidence
-            and item.min_stage <= query.stage
-            and (item.max_stage is None or query.stage <= item.max_stage)
-            and (not query.tags or bool(query.tags.intersection(item.tags)))
-        ]
+        selected: list[KnowledgeItem] = []
+        rejected = dict.fromkeys(("intent", "confidence", "stage", "tags"), 0)
+        for snapshot in snapshots:
+            for item in snapshot.items:
+                # First-rejection attribution keeps the counters disjoint and replayable.
+                if item.intent not in query.intents:
+                    rejected["intent"] += 1
+                elif item.confidence < minimum_confidence:
+                    rejected["confidence"] += 1
+                elif item.min_stage > query.stage or (
+                    item.max_stage is not None and query.stage > item.max_stage
+                ):
+                    rejected["stage"] += 1
+                elif query.tags and not query.tags.intersection(item.tags):
+                    rejected["tags"] += 1
+                else:
+                    selected.append(item)
         selected.sort(
             key=lambda item: (
                 -item.priority,
@@ -326,6 +333,12 @@ class KnowledgeInjector:
             metadata={
                 "schema_version": KNOWLEDGE_SNAPSHOT_SCHEMA_VERSION,
                 "stage": query.stage,
+                "triggered": True,
+                "hit": bool(selected),
+                "candidate_count": sum(len(snapshot.items) for snapshot in snapshots),
+                "matched_count": len(selected),
+                "dropped_by_limit": max(0, len(selected) - limit),
+                **{f"rejected_by_{reason}": count for reason, count in rejected.items()},
                 "selected_count": min(len(selected), limit),
                 "query_sha256": query_digest,
                 "observed_at": now.isoformat().replace("+00:00", "Z"),

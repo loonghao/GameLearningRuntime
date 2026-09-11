@@ -8,7 +8,8 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 
-pub const PROJECT_FILE_NAME: &str = "glr-project.json";
+pub const PROJECT_FILE_NAME: &str = "glr-project.toml";
+const PROJECT_FILE_NAMES: &[&str] = &[PROJECT_FILE_NAME, "glr-project.json"];
 pub const PROJECT_SCHEMA_VERSION: &str = "glr.project.v1";
 pub const LIFECYCLE_SCHEMA_VERSION: &str = "glr.lifecycle.v1";
 
@@ -23,6 +24,7 @@ const PLACEHOLDERS: &[&str] = &[
     "previous_evaluation_path",
     "previous_research_path",
     "project_root",
+    "project_manifest",
     "research_path",
     "run_dir",
     "run_id",
@@ -377,11 +379,21 @@ struct ProjectFile {
     progress: Option<ProgressConfig>,
     #[serde(default)]
     lifecycle: Option<LifecycleConfig>,
+    #[serde(default)]
+    extensions: HashMap<String, ExtensionConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtensionConfig {
+    config: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct Project {
     pub root: PathBuf,
+    pub manifest_path: PathBuf,
+    pub extensions: HashMap<String, PathBuf>,
     pub environment_id: String,
     pub environment_family: String,
     pub protocol_version: String,
@@ -399,7 +411,11 @@ pub struct Project {
 }
 
 pub fn find_project(start: &Path) -> Result<PathBuf> {
-    let mut current = if start.is_file() {
+    let mut current = if start.is_file()
+        || start
+            .file_name()
+            .is_some_and(|name| PROJECT_FILE_NAMES.iter().any(|item| name == *item))
+    {
         start.parent().unwrap_or(start).to_path_buf()
     } else {
         start.to_path_buf()
@@ -408,8 +424,22 @@ pub fn find_project(start: &Path) -> Result<PathBuf> {
         current = std::env::current_dir()?.join(current);
     }
     loop {
-        let candidate = current.join(PROJECT_FILE_NAME);
-        if candidate.is_file() && !candidate.is_symlink() {
+        let candidates: Vec<_> = PROJECT_FILE_NAMES
+            .iter()
+            .map(|name| current.join(name))
+            .filter(|path| path.exists() || path.is_symlink())
+            .collect();
+        if candidates.len() > 1 {
+            return Err(Error::Invalid(
+                "multiple project manifests in the same directory".into(),
+            ));
+        }
+        if let Some(candidate) = candidates.into_iter().next() {
+            if candidate.is_symlink() || !candidate.is_file() {
+                return Err(Error::Invalid(
+                    "project config must be a regular non-symlink file".into(),
+                ));
+            }
             return Ok(candidate);
         }
         if !current.pop() {
@@ -419,16 +449,14 @@ pub fn find_project(start: &Path) -> Result<PathBuf> {
 }
 
 pub fn load_project(requested: &Path) -> Result<Project> {
-    let config_path = if requested.is_dir() {
-        requested.join(PROJECT_FILE_NAME)
-    } else if requested
+    if requested
         .file_name()
-        .is_some_and(|name| name == PROJECT_FILE_NAME)
+        .is_some_and(|name| PROJECT_FILE_NAMES.iter().any(|item| name == *item))
+        && !requested.is_file()
     {
-        requested.to_path_buf()
-    } else {
-        find_project(requested)?
-    };
+        return Err(Error::Missing(requested.to_path_buf()));
+    }
+    let config_path = find_project(requested)?;
     if config_path.is_symlink() || !config_path.is_file() {
         return Err(Error::Missing(config_path));
     }
@@ -443,7 +471,17 @@ pub fn load_project(requested: &Path) -> Result<Project> {
             "project config exceeds the 8 MiB limit".into(),
         ));
     }
-    let value: ProjectFile = serde_json::from_slice(&bytes)?;
+    let value: ProjectFile = if config_path
+        .extension()
+        .is_some_and(|suffix| suffix == "toml")
+    {
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| Error::Invalid("project config must be UTF-8".into()))?;
+        toml::from_str(text)
+            .map_err(|error| Error::Invalid(format!("invalid project TOML: {error}")))?
+    } else {
+        serde_json::from_slice(&bytes)?
+    };
     if value.schema_version != PROJECT_SCHEMA_VERSION {
         return Err(Error::Invalid(format!(
             "project.schema_version must be {PROJECT_SCHEMA_VERSION:?}"
@@ -492,8 +530,34 @@ pub fn load_project(requested: &Path) -> Result<Project> {
     if !bridge_path.exists() {
         return Err(Error::Missing(bridge_path));
     }
+    let mut extensions = HashMap::new();
+    for (namespace, reference) in value.extensions {
+        validate_identifier(&namespace, "project.extensions namespace")?;
+        let relative = portable_relative(&reference.config, "project.extensions config")?;
+        let mut candidate = root.clone();
+        for part in relative.components() {
+            candidate.push(part);
+            if candidate.is_symlink() {
+                return Err(Error::Invalid(
+                    "extension config must be a regular non-symlink file".into(),
+                ));
+            }
+        }
+        if !candidate.is_file() {
+            return Err(Error::Missing(candidate));
+        }
+        let resolved = fs::canonicalize(candidate)?;
+        if !resolved.starts_with(&root) {
+            return Err(Error::Invalid(
+                "extension config must stay inside the project root".into(),
+            ));
+        }
+        extensions.insert(namespace, resolved);
+    }
     Ok(Project {
         root,
+        manifest_path: fs::canonicalize(config_path)?,
+        extensions,
         environment_id: value.environment_id,
         environment_family: value.environment_family,
         protocol_version: value.protocol_version,

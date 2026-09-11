@@ -285,6 +285,8 @@ def _doctor(project: GLRProject, *, as_json: bool) -> int:
     result = {
         "ready": required_ready,
         "project_root": str(project.root),
+        "project_manifest": str(project.manifest_path) if project.manifest_path else None,
+        "extensions": {key: str(path) for key, path in project.extensions.items()},
         "environment_id": project.environment_id,
         "environment_family": project.environment_family,
         "roles": roles,
@@ -303,6 +305,7 @@ def _command_context(
 ) -> dict[str, str | Path]:
     return {
         "project_root": project.root,
+        **({"project_manifest": project.manifest_path} if project.manifest_path else {}),
         "bridge_path": project.bridge_path,
         "run_id": run_id,
         "run_dir": run_dir,
@@ -324,6 +327,9 @@ def _process_environment(
     extra: dict[str, str | Path] | None = None,
 ) -> dict[str, str]:
     environment = os.environ.copy()
+    environment.pop("GLR_PROJECT_MANIFEST", None)
+    if project.manifest_path is not None:
+        environment["GLR_PROJECT_MANIFEST"] = str(project.manifest_path)
     environment.update(
         {
             "GLR_PROJECT_ROOT": str(project.root),
