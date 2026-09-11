@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.15.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.14.0...v0.15.0) (2026-09-11)
+
+
+### Features
+
+* add multi-engine lanes and verified skill publishing ([3fe957a](https://github.com/loonghao/GameLearningRuntime/commit/3fe957a280742459a242c569aafe44b51e59cf19))
+* add portable project manifests and knowledge diagnostics ([cd8dd9c](https://github.com/loonghao/GameLearningRuntime/commit/cd8dd9cb8b8c26fd5650c05191f6ae64e1b241c6))
+* add VX-backed declarative tasks ([e59c92a](https://github.com/loonghao/GameLearningRuntime/commit/e59c92aaba39d572a1720ffbd8e1d0fae66002cb))
+* bind invocation-scoped run contexts ([8fc8cde](https://github.com/loonghao/GameLearningRuntime/commit/8fc8cdeab71cd09ba80d4890567cd6877308db9a))
+* forward reset options and seed through SyncCollector restarts ([c27237c](https://github.com/loonghao/GameLearningRuntime/commit/c27237c59fa85131e1205071b9bb59bfc7815fce))
+* standardize route and recording evidence ([f2056a6](https://github.com/loonghao/GameLearningRuntime/commit/f2056a63d785894945af096e84ae40ef8ab66908))
+* validate canonical project lifecycle ([#110](https://github.com/loonghao/GameLearningRuntime/issues/110)) ([9570c88](https://github.com/loonghao/GameLearningRuntime/commit/9570c880265fee826b80d90f1459f8ee713e6e57))
+* validate native engine providers and add dcc-cua backend ([5602ebc](https://github.com/loonghao/GameLearningRuntime/commit/5602ebc3aa3530bc0d5aea6eae5f3d39207d71a0))
+
+
+### Bug Fixes
+
+* align scaffold runtime dependency ([0683d5e](https://github.com/loonghao/GameLearningRuntime/commit/0683d5e961a8246f685cb943128e156af668dbbb))
+* repair release metadata and registry authentication ([7117645](https://github.com/loonghao/GameLearningRuntime/commit/7117645e5aec9cbe49bd082a84dd7b20ef0e8b70))
+* support typed tomli fallbacks ([d8b060a](https://github.com/loonghao/GameLearningRuntime/commit/d8b060aa55e478ef140acc58c212884bef46ef33))
+* synchronize packaged route evidence guidance ([58d7185](https://github.com/loonghao/GameLearningRuntime/commit/58d71855ac699081467c81c0a7dabd7d16896935))
+* use provisioned environment for Godot CI ([4c745ac](https://github.com/loonghao/GameLearningRuntime/commit/4c745acd601695eacd74b4e616be1c90ecf8eda6))
+
 ## [0.14.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.13.2...v0.14.0) (2026-09-07)
 
 
