@@ -124,9 +124,7 @@ __all__ = ["SyntheticAttachEnvironment", "create_environment", "synthetic_policy
 
 
 def _test_module(package: str) -> str:
-    return f"""from pathlib import Path
-
-from game_learning_runtime import (
+    return f"""from game_learning_runtime import (
     EpisodeRewardGuard,
     RewardComposer,
     RewardSignal,
@@ -134,10 +132,11 @@ from game_learning_runtime import (
     load_training_config,
 )
 from game_learning_runtime.testing import run_environment_conformance
+from game_learning_runtime.project import find_project
 
 from {package}.environment import create_environment, synthetic_policy
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = find_project(__file__).parent
 
 
 def test_synthetic_contract_is_trainable() -> None:
@@ -391,7 +390,7 @@ glr --project . --json train
 glr --project . --json play --bundle .glr-runs/model-bundle
 ```
 
-`glr-project.json` is the one official lifecycle entry. Its strict
+`glr-project.toml` is the one official lifecycle entry. Its strict
 `glr.lifecycle.v1` section owns every configuration reference and the modes
 that this generated lane actually supports. `doctor` prints the resolved
 schema and SHA-256 for each input before any role runs.
@@ -665,8 +664,9 @@ from game_learning_runtime import (
     load_training_config,
 )
 from {package}.environment import create_environment, synthetic_policy
+from game_learning_runtime.project import find_project
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = find_project(__file__).parent
 
 
 def main() -> int:
@@ -799,11 +799,13 @@ def _glr_role_script() -> str:
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
+from game_learning_runtime.project import find_project
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = find_project(__file__).parent
 
 
 def main() -> int:
@@ -818,7 +820,8 @@ def main() -> int:
     if args.role == "trainer":
         return subprocess.call(
             [sys.executable, str(ROOT / "scripts/train_reference.py"),
-             "--output", str(ROOT / ".glr-runs/model-bundle")]
+             "--output", str(Path(os.environ["GLR_RUN_DIR"]) / "model-bundle")],
+            cwd=ROOT,
         )
     if not args.value:
         parser.error("player requires the verified model bundle path from GLR")
@@ -878,6 +881,37 @@ def _glr_project(package: str, environment_id: str, *, has_runtime: bool) -> dic
     }
 
 
+def _glr_project_toml(value: dict[str, Any]) -> str:
+    """Serialize only the fixed generated project shape, omitting absent roles."""
+
+    lines = [
+        f"{key} = {json.dumps(value[key])}"
+        for key in (
+            "schema_version",
+            "environment_id",
+            "environment_family",
+            "protocol_version",
+            "data_dir",
+            "bridge_path",
+        )
+    ]
+    for role in ("runtime", "trainer", "player"):
+        lines.extend(["", f"[{role}]", f"argv = {json.dumps(value[role]['argv'])}"])
+    lifecycle = value["lifecycle"]
+    lines.extend(
+        [
+            "",
+            "[lifecycle]",
+            f"schema_version = {json.dumps(lifecycle['schema_version'])}",
+            f"modes = {json.dumps(lifecycle['modes'])}",
+        ]
+    )
+    for config in lifecycle["configs"]:
+        lines.extend(["", "[[lifecycle.configs]]"])
+        lines.extend(f"{key} = {json.dumps(item)}" for key, item in config.items())
+    return "\n".join(lines) + "\n"
+
+
 def _package_runtime_script() -> str:
     return """from __future__ import annotations
 
@@ -887,8 +921,9 @@ import json
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
+from game_learning_runtime.project import find_project
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = find_project(__file__).parent
 
 
 def portable_relative(value: object) -> str:
@@ -1117,7 +1152,7 @@ def main() -> int:
     _write(output / "justfile", _justfile())
     _write(
         output / ".gitignore",
-        ".venv-glr/\n.glr-runs/\n.glr-dist/\n__pycache__/\n*.py[cod]\n",
+        ".venv-glr/\n.glr-runs/\n.glr-dist/\n__pycache__/\n*.py[cod]\nconfig/*.local.toml\n",
     )
     _write(
         output / "agent-interface.json",
@@ -1132,16 +1167,14 @@ def main() -> int:
     _write(output / "scripts/verify_bundle.py", _verify_bundle_script())
     _write(output / "scripts/glr_role.py", _glr_role_script())
     _write(
-        output / "glr-project.json",
-        json.dumps(
+        output / "glr-project.toml",
+        _glr_project_toml(
             _glr_project(
                 args.package,
                 args.environment_id,
                 has_runtime=args.access is not None,
             ),
-            indent=2,
-        )
-        + "\n",
+        ),
     )
     _write(output / "scripts/package_runtime.py", _package_runtime_script())
     _write(

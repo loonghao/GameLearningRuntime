@@ -12,6 +12,9 @@ live-host acceptance; a passing smoke command is not proof that the whole game i
 complete.
 
 1. Restate the goal and identify the authorized project/adapter and evidence scope.
+   Resolve the nearest `glr-project.toml` or legacy `glr-project.json`; do not infer
+   a root from an adapter folder name. Reject ambiguous manifests. Keep machine
+   paths and local overrides out of shared reports, even when doctor prints them.
 2. Choose finite checks (for example adapter doctor, deterministic regression,
    replay, and an explicitly bounded training probe). Never invent credentials,
    game internals, or unrestricted automation.

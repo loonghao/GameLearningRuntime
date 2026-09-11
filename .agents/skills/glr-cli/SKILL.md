@@ -32,7 +32,8 @@ running a goal, transferring knowledge, or claiming reproduction.
 
 ## Operate agent-first
 
-1. Run `glr --version`, resolve the nearest `glr-project.json`, and run
+1. Run `glr --version`, resolve the nearest `glr-project.toml` (legacy JSON is
+   also supported), and run
    `glr --project . --json doctor`; do not guess a bridge path or game target.
 2. Inspect the strict project roles and exact `environment_id`, `environment_family`, and
    `protocol_version` before execution.
@@ -63,7 +64,7 @@ running a goal, transferring knowledge, or claiming reproduction.
 - Use `--skills-dir` only for an explicitly selected project Skills directory.
   Use `--no-skills` when the user requested binary-only maintenance.
 - The updater does not modify game code, project role dependencies, Python
-  environments, models, datasets, `glr-project.json`, or trainer configuration.
+  environments, models, datasets, project manifests, or trainer configuration.
 - SHA-256 protects same-release artifact integrity; it is not publisher
   signature verification. Report the first unified-release smoke boundary when
   no matching target archive exists yet.
@@ -73,6 +74,11 @@ running a goal, transferring knowledge, or claiming reproduction.
 
 ## Preserve knowledge scope
 
+On a knowledge-enabled decision, persist the injector's query fingerprint,
+trigger/hit counts, selection counts, and rejection counters with the step.
+No invocation, a valid zero-hit lookup, and a rejected stale source are distinct
+states. Knowledge-file presence is not a trigger or a hit; a hit is not learning.
+
 - Environment-scoped positions and routes transfer only across the exact environment and protocol.
   Imports are downgraded to advisory until the new runtime observes them again.
 - Family-scoped tutorial/guide findings may inform a similar game, but never transfer coordinates,
@@ -81,6 +87,16 @@ running a goal, transferring knowledge, or claiming reproduction.
   runtime-verification status. Never store credentials or full copied guides.
 - Exclude rejected findings. Treat unverified findings as hypotheses, never authoritative reward
   or success evidence.
+
+## Portable project handoff
+
+New projects use a single `glr-project.toml`. Before migration, verify the
+installed CLI and Python SDK support TOML; unreleased source changes do not
+upgrade installed tools. Never leave JSON and TOML manifests side by side.
+Use `GLR_PROJECT_MANIFEST` or `find_project()` to locate the project; resolve
+relative config paths from its parent, not cwd or a fixed number of parents.
+Read the portable layout and clone gates in [commands.md](references/commands.md)
+when scaffolding, migrating environments, or handing a project to another user.
 
 ## Recording and training data
 

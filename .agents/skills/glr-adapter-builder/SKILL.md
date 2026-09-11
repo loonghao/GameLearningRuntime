@@ -35,6 +35,16 @@ anti-cheat bypasses, credential capture, or unrestricted process discovery.
 
 ## Scaffold the adapter lane
 
+The scaffold is a standalone project boundary and emits `glr-project.toml`.
+For a single-game repository, put that manifest at the intended repository root;
+do not hide the only Python environment inside a disposable adapter scaffold.
+Multiple reusable adapters may be packages beneath one project, but their layout
+must not determine root discovery. Generated entries use `find_project()`.
+Keep dependency manifests/locks and a setup command with the project, ignore
+virtual environments and `config/*.local.toml`, and verify a fresh synthetic
+clone/setup/doctor/train/reproduce cycle before retiring a previous environment.
+TOML support in source is not evidence that an older installed GLR supports it.
+
 Read [multi-engine.md](references/multi-engine.md) for Unity Mono/IL2CPP,
 Unreal, Godot and reusable external input/capture boundaries. An engine label
 selects a development lane; it is never proof of a working runtime provider.
@@ -120,6 +130,11 @@ Mark new claims `unverified`. Upgrade a claim to `runtime-verified` only after a
 bounded authorized trace proves it. A guide never becomes action authority.
 
 ## Define knowledge and reward configuration
+
+Record whether knowledge lookup was triggered, its query digest, hit/selected
+counts and filter/budget rejections. Preserve a valid miss separately from a
+missing source or skipped invocation. Route these diagnostics to the run record;
+they do not prove that the learner used the advice successfully.
 
 Use `glr.training.v1` in `training.json`.
 

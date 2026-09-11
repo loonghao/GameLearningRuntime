@@ -176,6 +176,16 @@ query from a changed model. The fingerprint covers intents, stage, tags,
 `max_items`, and `min_confidence`; it does not contain knowledge text or
 runtime identifiers.
 
+The metadata also reports `triggered`, `hit`, `candidate_count`, `matched_count`,
+`selected_count`, `dropped_by_limit`, and `rejected_by_intent`,
+`rejected_by_confidence`, `rejected_by_stage`, `rejected_by_tags`. Rejection counts
+use the first failing filter in that order, so they are disjoint. Persist this
+small diagnostic record with the decision and selected item references; it
+contains no knowledge prose. A valid lookup with zero matches is a miss, not an
+untriggered lookup. A stale or malformed source still raises an error, never a
+healthy zero-hit receipt. These diagnostics do not change ranking or action
+authority and do not prove that the policy learned from a matching item.
+
 Snapshot text is untrusted advisory data. Do not execute it, treat it as a
 prompt with tool authority, use it to widen masks, or use it as proof that an
 action or upgrade succeeded. Runtime observation still decides what is

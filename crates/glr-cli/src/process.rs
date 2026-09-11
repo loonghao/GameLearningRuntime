@@ -94,6 +94,7 @@ pub fn command_context(
 ) -> HashMap<String, PathBuf> {
     let mut values = HashMap::from([
         ("project_root".into(), project.root.clone()),
+        ("project_manifest".into(), project.manifest_path.clone()),
         ("bridge_path".into(), project.bridge_path.clone()),
         ("run_id".into(), PathBuf::from(run_id)),
         ("run_dir".into(), run_dir.to_path_buf()),
@@ -153,6 +154,7 @@ fn configure_command(
         .args(arguments)
         .current_dir(&project.root)
         .env("GLR_PROJECT_ROOT", &project.root)
+        .env("GLR_PROJECT_MANIFEST", &project.manifest_path)
         .env("GLR_BRIDGE_PATH", &project.bridge_path)
         .env("GLR_RUN_ID", run_id)
         .env("GLR_RUN_DIR", run_dir)

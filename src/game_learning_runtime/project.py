@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import math
 import re
+import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, Literal
@@ -14,8 +15,14 @@ from typing import Any, Literal
 from game_learning_runtime.capture_liveness import ContentLivenessConfig
 from game_learning_runtime.game_launcher import GameLaunchConfig
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
 PROJECT_SCHEMA_VERSION = "glr.project.v1"
-PROJECT_FILE_NAME = "glr-project.json"
+PROJECT_FILE_NAME = "glr-project.toml"
+PROJECT_FILE_NAMES = (PROJECT_FILE_NAME, "glr-project.json")
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _PLACEHOLDERS = frozenset(
     {
@@ -29,6 +36,7 @@ _PLACEHOLDERS = frozenset(
         "previous_evaluation_path",
         "previous_research_path",
         "project_root",
+        "project_manifest",
         "research_path",
         "run_dir",
         "run_id",
@@ -317,39 +325,94 @@ class GLRProject:
     capture: CaptureConfig | None
     game: GameLaunchConfig | None
     schema_version: str = PROJECT_SCHEMA_VERSION
+    manifest_path: Path | None = None
+    extensions: Mapping[str, Path] = field(default_factory=lambda: MappingProxyType({}))
 
 
 def find_project(start: str | Path = ".") -> Path:
     """Find the nearest project configuration without crossing the filesystem root."""
 
-    current = Path(start).resolve()
-    if current.is_file():
+    current = Path(start).absolute()
+    if current.is_file() or current.name in PROJECT_FILE_NAMES:
         current = current.parent
+    current = current.resolve()
     for directory in (current, *current.parents):
-        candidate = directory / PROJECT_FILE_NAME
-        if candidate.is_file() and not candidate.is_symlink():
+        candidates = [
+            directory / name
+            for name in PROJECT_FILE_NAMES
+            if (directory / name).exists() or (directory / name).is_symlink()
+        ]
+        if len(candidates) > 1:
+            raise ValueError("multiple project manifests in the same directory")
+        if candidates:
+            candidate = candidates[0]
+            if candidate.is_symlink() or not candidate.is_file():
+                raise ValueError("project config must be a regular non-symlink file")
             return candidate
-    raise FileNotFoundError(f"could not find {PROJECT_FILE_NAME} from {current}")
+    raise FileNotFoundError(f"could not find a GLR project manifest from {current}")
+
+
+def resolve_game_directory(root: str | Path, configured: str) -> Path:
+    """Resolve an owned relative game path or an explicitly configured absolute path.
+
+    This is a path check only: it does not discover, install, or launch a game.
+    Local override policy belongs to the extension that owns the game config.
+    """
+
+    value = _text(configured, path="game.directory")
+    candidate = Path(value)
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = _inside_project(
+            Path(root).resolve(),
+            _portable_relative(value, path="game.directory"),
+            path="game.directory",
+        )
+    if not resolved.is_dir():
+        raise FileNotFoundError("configured game.directory does not exist or is not a directory")
+    return resolved
+
+
+def _extensions(root: Path, value: object) -> Mapping[str, Path]:
+    references = _mapping(value, path="project.extensions")
+    result: dict[str, Path] = {}
+    for namespace, reference in references.items():
+        _identifier(namespace, path="project.extensions namespace")
+        entry = _mapping(reference, path=f"project.extensions.{namespace}")
+        _reject_unknown(entry, allowed=frozenset({"config"}), path="project.extensions entry")
+        relative = _portable_relative(entry["config"], path="project.extensions config")
+        candidate = root
+        for part in relative.parts:
+            candidate = candidate / part
+            if candidate.is_symlink():
+                raise ValueError("extension config must be a regular non-symlink file")
+        resolved = _inside_project(root, relative, path="project.extensions config")
+        if not resolved.is_file():
+            raise FileNotFoundError("extension config must be an existing regular file")
+        result[namespace] = resolved
+    return MappingProxyType(result)
 
 
 def load_project(path: str | Path = ".") -> GLRProject:
     """Load and resolve a strict ``glr.project.v1`` configuration."""
 
     requested = Path(path)
-    config_path = (
-        requested / PROJECT_FILE_NAME
-        if requested.is_dir()
-        else requested
-        if requested.name == PROJECT_FILE_NAME
-        else find_project(requested)
-    )
+    if requested.name in PROJECT_FILE_NAMES and not requested.is_file():
+        raise FileNotFoundError("requested project manifest is missing")
+    config_path = find_project(requested)
     if config_path.is_symlink() or not config_path.is_file():
         raise FileNotFoundError(f"project config must be a regular non-symlink file: {config_path}")
     root = config_path.parent.resolve()
+    raw = config_path.read_bytes()
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError("project config exceeds the 8 MiB limit")
     try:
-        value = _mapping(json.loads(config_path.read_text(encoding="utf-8")), path="project")
-    except json.JSONDecodeError as error:
-        raise ValueError("project config must be UTF-8 JSON") from error
+        text = raw.decode("utf-8")
+        parsed = tomllib.loads(text) if config_path.suffix == ".toml" else json.loads(text)
+        value = _mapping(parsed, path="project")
+    except (UnicodeDecodeError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
+        raise ValueError("project config must be valid UTF-8 TOML or JSON") from error
     _reject_unknown(
         value,
         allowed=frozenset(
@@ -368,6 +431,7 @@ def load_project(path: str | Path = ".") -> GLRProject:
                 "evaluator",
                 "capture",
                 "game",
+                "extensions",
             }
         ),
         path="project",
@@ -382,10 +446,6 @@ def load_project(path: str | Path = ".") -> GLRProject:
                 "runtime",
                 "trainer",
                 "player",
-                "researcher",
-                "planner",
-                "evaluator",
-                "capture",
             }
         ),
     )
@@ -405,6 +465,8 @@ def load_project(path: str | Path = ".") -> GLRProject:
     )
     return GLRProject(
         root=root,
+        manifest_path=config_path,
+        extensions=_extensions(root, value.get("extensions", {})),
         environment_id=_identifier(value["environment_id"], path="project.environment_id"),
         environment_family=_identifier(
             value["environment_family"], path="project.environment_family"
@@ -423,7 +485,7 @@ def load_project(path: str | Path = ".") -> GLRProject:
         ),
         researcher=(
             None
-            if value["researcher"] is None
+            if value.get("researcher") is None
             else ProjectCommand.from_mapping(
                 _mapping(value["researcher"], path="project.researcher"),
                 path="project.researcher",
@@ -431,14 +493,14 @@ def load_project(path: str | Path = ".") -> GLRProject:
         ),
         planner=(
             None
-            if value["planner"] is None
+            if value.get("planner") is None
             else ProjectCommand.from_mapping(
                 _mapping(value["planner"], path="project.planner"), path="project.planner"
             )
         ),
         evaluator=(
             None
-            if value["evaluator"] is None
+            if value.get("evaluator") is None
             else ProjectCommand.from_mapping(
                 _mapping(value["evaluator"], path="project.evaluator"),
                 path="project.evaluator",
@@ -446,7 +508,7 @@ def load_project(path: str | Path = ".") -> GLRProject:
         ),
         capture=(
             None
-            if value["capture"] is None
+            if value.get("capture") is None
             else CaptureConfig.from_mapping(_mapping(value["capture"], path="project.capture"))
         ),
         game=(
@@ -459,6 +521,7 @@ def load_project(path: str | Path = ".") -> GLRProject:
 
 __all__ = [
     "PROJECT_FILE_NAME",
+    "PROJECT_FILE_NAMES",
     "PROJECT_SCHEMA_VERSION",
     "CaptureConfig",
     "CaptureSessionConfig",
@@ -466,4 +529,5 @@ __all__ = [
     "ProjectCommand",
     "find_project",
     "load_project",
+    "resolve_game_directory",
 ]

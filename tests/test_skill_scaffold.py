@@ -64,7 +64,8 @@ def test_skill_scaffold_creates_a_trainable_privacy_safe_seam(
     assert config.knowledge_by_id["guide-research"].authority.value == "advisory"
     assert reward_safety.outcome_signal == "outcome"
     assert demonstration_gate is not None
-    project = json.loads((output / "glr-project.json").read_text(encoding="utf-8"))
+    project = tomllib.loads((output / "glr-project.toml").read_text(encoding="utf-8"))
+    assert not (output / "glr-project.json").exists()
     assert project["schema_version"] == "glr.project.v1"
     assert project["lifecycle"]["schema_version"] == "glr.lifecycle.v1"
     assert project["lifecycle"]["modes"] == ["train", "frozen-playback"]
@@ -377,7 +378,7 @@ def test_generated_training_smoke_produces_a_verifiable_reproduction_bundle(
             "--output",
             str(run_dir),
         ],
-        cwd=output,
+        cwd=output / "scripts",
         env=environment,
         check=True,
         capture_output=True,

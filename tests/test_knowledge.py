@@ -134,6 +134,43 @@ def test_injector_selects_ranked_stage_and_tag_relevant_context() -> None:
     assert context.items[0].snapshot_id == "build-42"
     assert len(context.metadata["query_sha256"]) == 64
     assert context.metadata["observed_at"] == "2026-09-01T00:30:00Z"
+    assert context.metadata["triggered"] is True
+    assert context.metadata["hit"] is True
+    assert context.metadata["candidate_count"] == 4
+    assert context.metadata["matched_count"] == 2
+    assert context.metadata["rejected_by_intent"] == 1
+    assert context.metadata["rejected_by_tags"] == 1
+    assert context.metadata["dropped_by_limit"] == 0
+
+
+def test_injector_diagnostics_distinguish_miss_from_not_triggered() -> None:
+    injector = KnowledgeInjector(TrainingConfig.from_mapping(_training_mapping()))
+    context = injector.inject(
+        [_payload()],
+        KnowledgeQuery(stage=0, tags=frozenset({"unmatched"})),
+        observed_at=datetime(2026, 9, 1, 0, 30, tzinfo=timezone.utc),
+    )
+    assert context.metadata["triggered"] is True
+    assert context.metadata["hit"] is False
+    assert context.metadata["candidate_count"] == 4
+    assert context.metadata["matched_count"] == 0
+    assert context.metadata["rejected_by_stage"] == 2
+    assert context.metadata["rejected_by_confidence"] == 1
+    assert context.metadata["rejected_by_tags"] == 1
+    assert context.items == ()
+
+
+def test_injector_diagnostics_explain_truncation_without_changing_selection() -> None:
+    injector = KnowledgeInjector(TrainingConfig.from_mapping(_training_mapping()))
+    context = injector.inject(
+        [_payload()],
+        KnowledgeQuery(stage=3, max_items=1),
+        observed_at=datetime(2026, 9, 1, 0, 30, tzinfo=timezone.utc),
+    )
+    assert context.metadata["matched_count"] == 3
+    assert context.metadata["selected_count"] == 1
+    assert context.metadata["dropped_by_limit"] == 2
+    assert [item.item_id for item in context.items] == ["upgrade-core"]
 
 
 def test_injector_query_fingerprint_is_deterministic_and_query_bound() -> None:
