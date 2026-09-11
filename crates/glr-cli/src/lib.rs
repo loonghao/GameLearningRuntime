@@ -7,6 +7,7 @@ mod process;
 mod project;
 mod report;
 mod store;
+mod task;
 pub mod update;
 
 use std::ffi::OsString;

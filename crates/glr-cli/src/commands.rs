@@ -99,6 +99,10 @@ pub fn execute(cli: Cli) -> Result<i32> {
         let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
         return run_transaction(&store, command.clone(), cli.json);
     }
+    if let CliCommand::Task { command } = &cli.command {
+        let project = load_project(&cli.project)?;
+        return crate::task::execute(&project, command.clone(), cli.json);
+    }
     let project = load_project(&cli.project)?;
     let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
     match cli.command {
@@ -311,6 +315,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
         CliCommand::Transaction { .. } => {
             unreachable!("transaction handled before project loading")
         }
+        CliCommand::Task { .. } => unreachable!("task handled before store loading"),
     }
 }
 
@@ -345,6 +350,10 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
         reports
             .push(json!({"role": "recorder", "configured": false, "executable_available": true}));
     }
+    let tasks = crate::task::doctor_report(project)?;
+    ready &= tasks
+        .as_ref()
+        .is_none_or(|report| report["ready"].as_bool() == Some(true));
     emit(
         "doctor",
         &json!({
@@ -359,6 +368,7 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
             "bridge_exists": project.bridge_path.exists(),
             "store_path": project.data_dir.join("runs.sqlite3"),
             "roles": reports,
+            "tasks": tasks,
             "lifecycle": project.lifecycle.as_ref()
                 .map(|value| value.manifest(&project.root))
                 .transpose()?,
@@ -1507,7 +1517,7 @@ fn remaining(deadline: Instant) -> Result<Duration> {
         .ok_or_else(|| Error::Contract("goal wall-clock budget was exhausted".into()))
 }
 
-fn emit<T: Serialize>(command: &str, data: &T, compact: bool) -> Result<()> {
+pub(crate) fn emit<T: Serialize>(command: &str, data: &T, compact: bool) -> Result<()> {
     let envelope = json!({
         "schema_version": CLI_OUTPUT_SCHEMA_VERSION,
         "command": command,

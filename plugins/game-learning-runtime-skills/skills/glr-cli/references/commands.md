@@ -168,6 +168,9 @@ Use `--json` for compact `glr.cli-output.v1` output.
 ```powershell
 glr --project . --json doctor
 glr --project . --json runtime start
+glr --project . --json task list
+glr --project . --json task show season
+glr --project . --json task run season --set profile=example/default
 glr --project . --json train
 glr --project . --json train --no-capture
 glr --project . --json goal run --goal goals/reach-destination.json
@@ -182,6 +185,13 @@ glr --project . --json knowledge import --input artifacts/spatial-knowledge.json
 glr --project . --json play --bundle artifacts/model-bundle
 glr --project . --json report build run-0123456789abcdef
 ```
+
+Project-local `glr.toml` tasks use strict `glr.tasks.v1`. Prefer
+`runner = "vx"` and an argv beginning with `uv`, `run` for Python workflows so
+VX resolves the locked toolchain and environment. GLR rejects shell strings,
+partial placeholders, dependency cycles, unknown parameters, unsafe paths, and
+unbounded timeouts. Task receipts under `.glr/tasks/` record process outcomes;
+they are not authoritative gameplay or learning evidence.
 
 `train` and `goal run` record lifecycle, events, metrics, logs, capture artifacts, and hashes under
 the configured data directory. Training tensors and transitions remain checksummed artifacts or

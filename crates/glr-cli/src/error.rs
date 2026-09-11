@@ -12,6 +12,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("TOML error: {0}")]
+    Toml(#[from] toml::de::Error),
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("update request failed: {0}")]
@@ -30,6 +32,7 @@ impl Error {
             Self::Missing(_) => "FileNotFoundError",
             Self::Io(_) => "IoError",
             Self::Json(_) => "JsonError",
+            Self::Toml(_) => "TomlError",
             Self::Sqlite(_) => "SqliteError",
             Self::Http(_) => "UpdateError",
             Self::Semver(_) => "VersionError",

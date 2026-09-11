@@ -53,6 +53,21 @@ running a goal, transferring knowledge, or claiming reproduction.
 8. Use a verified model bundle for playback. A valid hash proves artifact integrity and config
    identity, not policy quality, hardware determinism, or successful live gameplay.
 
+## Run project-local tasks through VX
+
+- When the project contains `glr.toml`, run `glr --project . --json task list`
+  before assuming a project workflow is missing.
+- Inspect a task with `glr task show NAME`, then pass only declared values with
+  repeated `--set NAME=VALUE` arguments.
+- Prefer `runner = "vx"` with `argv = ["uv", "run", ...]` for Python training
+  workflows. VX owns Python/tool versions and the project environment; GLR owns
+  validation, dependency ordering, timeouts, logs, and receipts.
+- A project task is not a core GLR command. Successful `glr task run season`
+  proves process completion only; require authoritative run/evaluator evidence
+  before claiming the season or gameplay objective succeeded.
+- Never rewrite a fixed argv task as a shell string or execute a remote task
+  catalog. Treat `glr.toml` as trusted repository configuration.
+
 ## Keep the managed runtime current
 
 - `glr update --check` is a read-only release check and is safe to use when

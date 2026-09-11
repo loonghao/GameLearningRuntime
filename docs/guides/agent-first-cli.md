@@ -121,8 +121,16 @@ signal is invented and no stall detection runs.
 ```powershell
 glr --project . --json doctor
 glr --project . --json runtime start
+glr --project . --json task list
 glr --project . --json train
 ```
+
+Project-specific preparation and training workflows can be declared in a
+strict `glr.toml` and executed with `glr task run`. Prefer VX-backed tasks for
+Python so tool versions and the project virtual environment remain
+reproducible. See [Extend GLR with declarative VX
+tasks](declarative-tasks.md). A task exit is orchestration evidence, not live
+game or learning acceptance.
 
 `train` starts the recorder before the trainer and stops it afterward. A complete capture contains:
 
