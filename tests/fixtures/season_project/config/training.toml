@@ -1,0 +1,2 @@
+schema_version = "example.training.v1"
+max_steps = 8

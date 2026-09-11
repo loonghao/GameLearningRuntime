@@ -1,0 +1,10 @@
+schema_version = "glr.season.v1"
+season_id = "example-season"
+ruleset_id = "standard"
+environment_id = "example.environment-v1"
+protocol_version = "1.0"
+status = "pending"
+[extensions.training]
+config = "config/training.toml"
+[extensions.preset]
+config = "config/preset.toml"

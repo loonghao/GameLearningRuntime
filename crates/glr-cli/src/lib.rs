@@ -6,6 +6,7 @@ mod error;
 mod process;
 mod project;
 mod report;
+mod season;
 mod store;
 pub mod update;
 

@@ -157,6 +157,13 @@ Use `glr.training.v1` in `training.json`.
 
 ## Implement the adapter contract
 
+For a season-enabled project, consume the CLI's frozen `glr.season-context.v1`
+instead of choosing an active profile independently. Verify declaration and
+extension bytes (including explicitly mounted nested preset inputs), and compare
+the selected ruleset with authoritative runtime identity before training actions.
+`pending` runtime startup is only a probe/setup boundary; it must not implicitly
+start training. Shared semantic code remains reusable across declarative seasons.
+
 1. Write failing contract tests first.
 2. Declare immutable `EnvironmentSpec` tensor shapes, dtypes, bounds, masks,
    protocol version, and capabilities.

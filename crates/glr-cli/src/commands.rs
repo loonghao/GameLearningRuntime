@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::args::{
     CheckpointCommand, Cli, Command as CliCommand, GoalCommand, KnowledgeCommand, QueryCommand,
-    ReportCommand, RunsCommand, RuntimeCommand, TransactionCommand, UpdateArgs,
+    ReportCommand, RunsCommand, RuntimeCommand, SeasonCommand, TransactionCommand, UpdateArgs,
 };
 use crate::contracts::{
     AgentGoal, GoalEvaluation, GoalEvidenceBundle, ResearchBundle, SpatialKnowledgeBundle,
@@ -77,6 +77,16 @@ struct TrainerOutcome {
 }
 
 pub fn execute(cli: Cli) -> Result<i32> {
+    if cli.season.is_some()
+        && matches!(
+            &cli.command,
+            CliCommand::Update(_) | CliCommand::Checkpoint { .. } | CliCommand::Transaction { .. }
+        )
+    {
+        return Err(Error::Invalid(
+            "season selection is not supported for this command".into(),
+        ));
+    }
     if let CliCommand::Update(arguments) = &cli.command {
         return run_update(&cli, arguments);
     }
@@ -99,10 +109,63 @@ pub fn execute(cli: Cli) -> Result<i32> {
         let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
         return run_transaction(&store, command.clone(), cli.json);
     }
-    let project = load_project(&cli.project)?;
+    let mut project = load_project(&cli.project)?;
+    if let CliCommand::Season {
+        command: SeasonCommand::Init,
+    } = &cli.command
+    {
+        let season = cli
+            .season
+            .as_deref()
+            .ok_or_else(|| Error::Invalid("season init requires --season and --ruleset".into()))?;
+        let ruleset = cli
+            .ruleset
+            .as_deref()
+            .ok_or_else(|| Error::Invalid("season init requires --season and --ruleset".into()))?;
+        emit(
+            "season.init",
+            &crate::season::initialize(&project, season, ruleset)?,
+            cli.json,
+        )?;
+        return Ok(0);
+    }
+    project.season_context =
+        crate::season::select(&project, cli.season.as_deref(), cli.ruleset.as_deref())?;
+    match &cli.command {
+        CliCommand::Doctor => return doctor(&project, cli.json),
+        CliCommand::Season { command } => {
+            let value = match command {
+                SeasonCommand::List => serde_json::to_value(crate::season::list(&project)?)?,
+                SeasonCommand::Show => project
+                    .season_context
+                    .as_ref()
+                    .ok_or_else(|| {
+                        Error::Invalid("season show requires --season and --ruleset".into())
+                    })?
+                    .value()?,
+                SeasonCommand::Init => unreachable!(),
+            };
+            emit(
+                if matches!(command, SeasonCommand::List) {
+                    "season.list"
+                } else {
+                    "season.show"
+                },
+                &value,
+                cli.json,
+            )?;
+            return Ok(0);
+        }
+        CliCommand::Runtime { .. } => crate::season::require_selection(&project, false)?,
+        CliCommand::Train { .. } | CliCommand::Goal { .. } | CliCommand::Play { .. } => {
+            crate::season::require_selection(&project, true)?
+        }
+        _ => {}
+    }
     let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
     match cli.command {
         CliCommand::Doctor => doctor(&project, cli.json),
+        CliCommand::Season { .. } => unreachable!("season handled before opening store"),
         CliCommand::Runtime {
             command: RuntimeCommand::Start,
         } => run_project_role(
@@ -315,6 +378,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
 }
 
 fn doctor(project: &Project, as_json: bool) -> Result<i32> {
+    let seasons = crate::season::list(project)?;
     let roles = [
         ("runtime", Some(&project.runtime)),
         ("trainer", Some(&project.trainer)),
@@ -324,6 +388,11 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
         ("evaluator", project.evaluator.as_ref()),
     ];
     let mut reports = Vec::new();
+    let training_config_ready = project.seasons.is_none()
+        || project
+            .season_context
+            .as_ref()
+            .is_some_and(|value| value.status == "ready");
     let mut ready = true;
     for (name, command) in roles {
         let configured = command.is_some();
@@ -345,10 +414,18 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
         reports
             .push(json!({"role": "recorder", "configured": false, "executable_available": true}));
     }
+    let installation_ready = ready;
+    ready &= training_config_ready;
     emit(
         "doctor",
         &json!({
             "ready": ready,
+            "installation_ready": installation_ready,
+            "training_config_ready": training_config_ready,
+            "season_context": project.season_context.as_ref().map(|value| value.value()).transpose()?,
+            "seasons": seasons,
+            "season_selection_required": project.seasons.is_some() && project.season_context.is_none(),
+            "live_runtime_verified": false,
             "version": env!("CARGO_PKG_VERSION"),
             "target": crate::update::BUILD_TARGET,
             "project_root": project.root,
@@ -444,10 +521,12 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         json!({
             "environment_family": project.environment_family,
             "lifecycle": lifecycle,
+            "season_context": project.season_context.as_ref().map(|value| value.value()).transpose()?,
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
     fs::create_dir_all(&run_dir)?;
+    persist_season(project, store, &run.run_id, &run_dir)?;
     let trainer_log = run_dir.join("trainer.log");
     let capture_session = if capture && project.capture.is_some() {
         Some(start_capture(project, &run.run_id, &run_dir)?)
@@ -528,12 +607,45 @@ struct ProjectRoleInvocation<'a> {
     metadata: Value,
 }
 
+fn persist_season(project: &Project, store: &Store, run_id: &str, run_dir: &Path) -> Result<()> {
+    let Some(context) = &project.season_context else {
+        return Ok(());
+    };
+    let result = (|| {
+        context.verify(&project.root)?;
+        let path = run_dir.join("season-context.json");
+        write_json(&path, &context.value()?)?;
+        store.register_artifact(
+            run_id,
+            "season-context.json",
+            &path,
+            "season-context",
+            "application/json",
+        )?;
+        store.append_event(run_id, "season.selected", context.value()?)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = store.finish_run(run_id, "failed", Some(1));
+    }
+    result
+}
+
 fn run_project_role(
     project: &Project,
     store: &Store,
     invocation: ProjectRoleInvocation<'_>,
 ) -> Result<i32> {
     let mut combined_metadata = invocation.metadata.as_object().cloned().unwrap_or_default();
+    combined_metadata.insert(
+        "season_context".into(),
+        project
+            .season_context
+            .as_ref()
+            .map(|value| value.value())
+            .transpose()?
+            .unwrap_or(Value::Null),
+    );
     combined_metadata.insert(
         "environment_family".into(),
         Value::String(project.environment_family.clone()),
@@ -556,6 +668,7 @@ fn run_project_role(
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
     fs::create_dir_all(&run_dir)?;
     let log = run_dir.join(format!("{}.log", invocation.kind));
+    persist_season(project, store, &run.run_id, &run_dir)?;
     let extra = HashMap::new();
     let exit_code = match run_command(CommandInvocation {
         command: invocation.command,
@@ -635,12 +748,14 @@ fn run_goal(
             "environment_family": project.environment_family,
             "goal_id": goal.goal_id,
             "objective": goal.objective,
+            "season_context": project.season_context.as_ref().map(|value| value.value()).transpose()?,
             "lifecycle": lifecycle,
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
     fs::create_dir_all(&run_dir)?;
     let canonical_goal = run_dir.join("goal.json");
+    persist_season(project, store, &run.run_id, &run_dir)?;
     let initial_research = run_dir.join("research.json");
     write_json(&canonical_goal, &goal)?;
     let deadline = Instant::now() + Duration::from_secs(goal.budget.max_wall_seconds);

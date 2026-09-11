@@ -1,0 +1,5 @@
+schema_version = "glr.seasons.v1"
+[[entries]]
+season_id = "example-season"
+ruleset_id = "standard"
+config = "config/seasons/example-season/standard.toml"

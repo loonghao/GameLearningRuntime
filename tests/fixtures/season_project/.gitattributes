@@ -1,0 +1,2 @@
+# Byte-bound fixtures must not undergo newline conversion.
+* -text

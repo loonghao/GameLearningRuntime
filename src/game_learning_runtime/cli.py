@@ -37,6 +37,13 @@ from game_learning_runtime.run_store import (
     SpatialRoute,
     TrainingStore,
 )
+from game_learning_runtime.season import (
+    ENVIRONMENT_KEYS,
+    initialize_season,
+    list_seasons,
+    require_selection,
+    select_season,
+)
 from game_learning_runtime.spatial_knowledge import SpatialKnowledgeBundle
 
 CLI_OUTPUT_SCHEMA_VERSION = "glr.cli-output.v1"
@@ -282,8 +289,25 @@ def _doctor(project: GLRProject, *, as_json: bool) -> int:
             }
         )
         required_ready = required_ready and available
+    seasons = list_seasons(project)
+    installation_ready = required_ready
+    training_config_ready = project.seasons is None or (
+        project.season_context is not None and project.season_context.status == "ready"
+    )
+    if project.seasons is not None:
+        required_ready = (
+            required_ready
+            and project.season_context is not None
+            and project.season_context.status == "ready"
+        )
     result = {
         "ready": required_ready,
+        "installation_ready": installation_ready,
+        "training_config_ready": training_config_ready,
+        "season_context": project.season_context.to_mapping() if project.season_context else None,
+        "seasons": seasons,
+        "season_selection_required": project.seasons is not None and project.season_context is None,
+        "live_runtime_verified": False,
         "project_root": str(project.root),
         "project_manifest": str(project.manifest_path) if project.manifest_path else None,
         "extensions": {key: str(path) for key, path in project.extensions.items()},
@@ -352,6 +376,10 @@ def _process_environment(
         environment["GLR_MODEL_BUNDLE"] = str(bundle)
     for key, value in (extra or {}).items():
         environment[f"GLR_{key.upper()}"] = str(value)
+    for key in ENVIRONMENT_KEYS:
+        environment.pop(key, None)
+    if project.season_context is not None:
+        environment.update(project.season_context.environment(project.root))
     return environment
 
 
@@ -502,6 +530,7 @@ def _finish_capture(
 
 
 def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) -> int:
+    require_selection(project, ready=True)
     store = _store(project)
     run = store.create_run(
         environment_id=project.environment_id,
@@ -511,6 +540,7 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
     )
     run_dir = project.data_dir / "runs" / run.run_id
     run_dir.mkdir(parents=True, exist_ok=False)
+    _persist_season(project, store, run.run_id, run_dir)
     trainer_log = run_dir / "trainer.log"
     capture_session: tuple[subprocess.Popen[str], IO[str], Path] | None = None
     capture_complete = True
@@ -603,6 +633,7 @@ def _run_project_role(
     bundle: Path | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> int:
+    require_selection(project, ready=kind != "runtime")
     store = _store(project)
     run = store.create_run(
         environment_id=project.environment_id,
@@ -613,6 +644,7 @@ def _run_project_role(
     run_dir = project.data_dir / "runs" / run.run_id
     run_dir.mkdir(parents=True, exist_ok=False)
     log_path = run_dir / f"{kind}.log"
+    _persist_season(project, store, run.run_id, run_dir)
     try:
         exit_code = _run_command(
             command,
@@ -663,6 +695,28 @@ def _write_json(path: Path, value: Mapping[str, Any]) -> None:
         json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def _persist_season(project: GLRProject, store: TrainingStore, run_id: str, run_dir: Path) -> None:
+    if project.season_context is None:
+        return
+    try:
+        project.season_context.verify(project.root)
+        path = run_dir / "season-context.json"
+        _write_json(path, project.season_context.to_mapping())
+        store.register_artifact(
+            run_id,
+            path="season-context.json",
+            source=path,
+            role="season-context",
+            media_type="application/json",
+        )
+        store.append_event(
+            run_id, kind="season.selected", payload=project.season_context.to_mapping()
+        )
+    except BaseException:
+        store.finish_run(run_id, status=RunStatus.FAILED, exit_code=1)
+        raise
 
 
 def _remaining_seconds(deadline: float) -> float:
@@ -763,6 +817,7 @@ def _validate_goal_research(
 
 
 def _run_goal(project: GLRProject, *, goal_path: Path, as_json: bool, capture_enabled: bool) -> int:
+    require_selection(project, ready=True)
     if project.researcher is None or project.planner is None or project.evaluator is None:
         raise ContractViolation(
             "goal run requires project researcher, planner, trainer, and evaluator commands"
@@ -784,6 +839,7 @@ def _run_goal(project: GLRProject, *, goal_path: Path, as_json: bool, capture_en
     )
     run_dir = project.data_dir / "runs" / run.run_id
     run_dir.mkdir(parents=True, exist_ok=False)
+    _persist_season(project, store, run.run_id, run_dir)
     canonical_goal_path = run_dir / "goal.json"
     research_path = run_dir / "research.json"
     _write_json(canonical_goal_path, goal.to_mapping())
@@ -1113,7 +1169,9 @@ def _import_knowledge(project: GLRProject, *, source: Path, as_json: bool) -> in
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="glr", description="Game Learning Runtime control plane")
-    parser.add_argument("--project", default=".", help="project root or glr-project.json")
+    parser.add_argument("--project", default=".", help="project root or manifest")
+    parser.add_argument("--season")
+    parser.add_argument("--ruleset")
     parser.add_argument("--json", action="store_true", help="emit compact stable JSON")
     parser.add_argument(
         "--format",
@@ -1122,6 +1180,10 @@ def _parser() -> argparse.ArgumentParser:
         help="human table output (default) or the stable JSON envelope",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    season = commands.add_parser("season")
+    season_commands = season.add_subparsers(dest="season_command", required=True)
+    for command in ("list", "show", "init"):
+        season_commands.add_parser(command)
 
     commands.add_parser("doctor", help="validate configured roles and game launch readiness")
 
@@ -1179,10 +1241,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     arguments.json = arguments.json or arguments.format == "json"
     project = load_project(Path(arguments.project))
+    data: Any
+    if arguments.command == "season" and arguments.season_command == "init":
+        if arguments.season is None or arguments.ruleset is None:
+            raise ValueError("season init requires --season and --ruleset")
+        _emit(
+            "season.init",
+            initialize_season(project, arguments.season, arguments.ruleset).to_mapping(),
+            as_json=arguments.json,
+        )
+        return 0
+    object.__setattr__(
+        project, "season_context", select_season(project, arguments.season, arguments.ruleset)
+    )
+    if arguments.command == "season":
+        if arguments.season_command == "list":
+            data = list_seasons(project)
+        else:
+            if project.season_context is None:
+                raise ValueError("season show requires --season and --ruleset")
+            data = project.season_context.to_mapping()
+        _emit(f"season.{arguments.season_command}", data, as_json=arguments.json)
+        return 0
+    if arguments.command in {"train", "goal", "play", "runtime"}:
+        require_selection(project, ready=arguments.command != "runtime")
     if arguments.command == "doctor":
         return _doctor(project, as_json=arguments.json)
     store = _store(project)
-    data: Any
     if arguments.command == "train":
         return _run_training(
             project, as_json=arguments.json, capture_enabled=not arguments.no_capture

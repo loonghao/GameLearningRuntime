@@ -21,6 +21,7 @@
 - [ADR-0019: Add an optional DeepSeek Harness provider boundary](0019-add-optional-deepseek-harness-provider.md)
 - [ADR-0020: Add rollout attempts and local queue barriers](0020-rollout-attempts-and-queue-barriers.md)
 - [ADR-0021: Resolve portable projects from one manifest](0021-portable-project-manifests.md)
+- [ADR-0022: Freeze explicit season and ruleset context before roles](0022-freeze-season-selection.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

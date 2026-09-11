@@ -381,6 +381,7 @@ struct ProjectFile {
     lifecycle: Option<LifecycleConfig>,
     #[serde(default)]
     extensions: HashMap<String, ExtensionConfig>,
+    seasons: Option<crate::season::Reference>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -393,6 +394,9 @@ struct ExtensionConfig {
 pub struct Project {
     pub root: PathBuf,
     pub manifest_path: PathBuf,
+    pub manifest_sha256: String,
+    pub seasons: Option<String>,
+    pub season_context: Option<crate::season::Context>,
     pub extensions: HashMap<String, PathBuf>,
     pub environment_id: String,
     pub environment_family: String,
@@ -554,9 +558,18 @@ pub fn load_project(requested: &Path) -> Result<Project> {
         }
         extensions.insert(namespace, resolved);
     }
+    if let Some(reference) = &value.seasons {
+        crate::season::config_path(&root, &reference.config)?;
+        if !reference.config.ends_with(".toml") {
+            return Err(Error::Invalid("season catalog must be TOML".into()));
+        }
+    }
     Ok(Project {
         root,
         manifest_path: fs::canonicalize(config_path)?,
+        manifest_sha256: format!("{:x}", Sha256::digest(&bytes)),
+        seasons: value.seasons.map(|reference| reference.config),
+        season_context: None,
         extensions,
         environment_id: value.environment_id,
         environment_family: value.environment_family,

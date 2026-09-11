@@ -183,7 +183,88 @@ fn configure_command(
     for (key, value) in extra {
         process.env(format!("GLR_{}", key.to_ascii_uppercase()), value);
     }
+    for key in crate::season::ENVIRONMENT_KEYS {
+        process.env_remove(key);
+    }
+    if let Some(context) = &project.season_context {
+        context.verify(&project.root)?;
+        let value = context.value()?;
+        process
+            .env("GLR_SEASON_ID", &context.season_id)
+            .env("GLR_RULESET_ID", &context.ruleset_id)
+            .env("GLR_SEASON_CONFIG_SHA256", &context.declaration.sha256)
+            .env(
+                "GLR_SEASON_CONTEXT_SHA256",
+                value["context_sha256"].as_str().expect("digest"),
+            )
+            .env("GLR_SEASON_CONTEXT", context.json()?);
+    }
     Ok(process)
+}
+
+#[cfg(test)]
+mod season_context_tests {
+    use super::*;
+    use crate::project::load_project;
+
+    #[test]
+    fn every_role_gets_frozen_context_and_changed_bytes_prevent_spawn() {
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/season_project");
+        let mut project = load_project(&root).unwrap();
+        project.season_context =
+            crate::season::select(&project, Some("example-season"), Some("standard")).unwrap();
+        let context = project.season_context.as_ref().unwrap();
+        let expected = context.json().unwrap();
+        for role in [&project.runtime, &project.trainer, &project.player] {
+            let command =
+                configure_command(role, &project, "synthetic", &root, None, &HashMap::new())
+                    .unwrap();
+            let environment: HashMap<_, _> = command
+                .get_envs()
+                .map(|(key, value)| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        value.map(|value| value.to_string_lossy().into_owned()),
+                    )
+                })
+                .collect();
+            assert_eq!(environment["GLR_SEASON_CONTEXT"], Some(expected.clone()));
+            assert_eq!(
+                environment["GLR_SEASON_CONFIG_SHA256"],
+                Some(context.declaration.sha256.clone())
+            );
+        }
+        project.season_context.as_mut().unwrap().project.sha256 = "0".repeat(64);
+        assert!(
+            configure_command(
+                &project.runtime,
+                &project,
+                "synthetic",
+                &root,
+                None,
+                &HashMap::new()
+            )
+            .is_err()
+        );
+        project.season_context = None;
+        let command = configure_command(
+            &project.runtime,
+            &project,
+            "synthetic",
+            &root,
+            None,
+            &HashMap::new(),
+        )
+        .unwrap();
+        for key in crate::season::ENVIRONMENT_KEYS {
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(name, value)| name == key && value.is_none())
+            );
+        }
+    }
 }
 
 pub struct CommandInvocation<'a> {

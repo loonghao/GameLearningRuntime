@@ -228,8 +228,9 @@ assert video.is_file(), "recorder did not start concurrently"
     }
 
 
+@pytest.mark.parametrize("season_enabled", [False, True])
 def test_cli_goal_run_researches_plans_trains_and_requires_persisted_authority(
-    tmp_path: Path, capsys: object
+    tmp_path: Path, capsys: object, season_enabled: bool
 ) -> None:
     researcher = tmp_path / "researcher.py"
     researcher.write_text(
@@ -373,7 +374,33 @@ Path(os.environ["GLR_EVALUATION_PATH"]).write_text(json.dumps({
         encoding="utf-8",
     )
 
-    assert main(["--project", str(tmp_path), "--json", "goal", "run", "--goal", str(goal)]) == 0
+    selection: list[str] = []
+    if season_enabled:
+        from game_learning_runtime.project import load_project
+        from game_learning_runtime.season import initialize_season
+
+        manifest_path = tmp_path / "glr-project.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["seasons"] = {"config": "config/seasons.toml"}
+        manifest_path.write_text(json.dumps(manifest))
+        context = initialize_season(load_project(tmp_path), "example-season", "standard")
+        declaration = tmp_path / context.declaration.path
+        declaration.write_text(declaration.read_text().replace('"pending"', '"ready"'))
+        for role in (researcher, planner, trainer, evaluator):
+            prefix = (
+                "import os\nfrom pathlib import Path\n"
+                "from game_learning_runtime.project import load_project\n"
+                "context = load_project().season_context\nassert context is not None\n"
+                f"Path(os.environ['GLR_RUN_DIR'], '{role.stem}.season.json')"
+                ".write_text(context.to_json())\n"
+            )
+            role.write_text(prefix + role.read_text())
+        selection = ["--season", "example-season", "--ruleset", "standard"]
+
+    assert (
+        main(["--project", str(tmp_path), *selection, "--json", "goal", "run", "--goal", str(goal)])
+        == 0
+    )
 
     output = json.loads(capsys.readouterr().out)  # type: ignore[attr-defined]
     assert output["command"] == "goal.run"
@@ -382,6 +409,17 @@ Path(os.environ["GLR_EVALUATION_PATH"]).write_text(json.dumps({
     store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
     run = store.get_run(output["data"]["run"]["run_id"])
     assert run.status is RunStatus.SUCCEEDED
+    if season_enabled:
+        run_dir = tmp_path / ".glr/runs" / run.run_id
+        expected = json.loads((run_dir / "season-context.json").read_text())
+        receipts = list(run_dir.rglob("*.season.json"))
+        assert {path.stem for path in receipts} == {
+            "researcher.season",
+            "planner.season",
+            "goal_trainer.season",
+            "evaluator.season",
+        }
+        assert all(json.loads(path.read_text()) == expected for path in receipts)
     assert (
         store.query_research(
             environment_id="example.adventure-v1", environment_family="action-rpg"

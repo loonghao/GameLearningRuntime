@@ -1,0 +1,14 @@
+schema_version = "glr.project.v1"
+environment_id = "example.environment-v1"
+environment_family = "example-family"
+protocol_version = "1.0"
+data_dir = ".glr"
+bridge_path = "config"
+[runtime]
+argv = ["python", "-c", "pass"]
+[trainer]
+argv = ["python", "-c", "pass"]
+[player]
+argv = ["python", "-c", "pass"]
+[seasons]
+config = "config/seasons.toml"

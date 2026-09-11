@@ -39,3 +39,9 @@ python -m game_learning_runtime.qa "inspect the whole game for bugs" `
 
 Do not claim release quality from this report alone. Keep proprietary traces and
 secrets out of artifacts; publish only evidence the project owner authorized.
+
+For `[seasons]` projects, use explicit `--season` and `--ruleset` on GLR training
+checks and retain the `season-context` artifact in evidence. Do not bypass a
+pending/missing selection with a direct trainer script. Report doctor
+`installation_ready`, `training_config_ready`, and actual live ruleset/readback
+as separate gates. Configuration readiness is not a live-game QA result.

@@ -13,6 +13,10 @@ pub struct Cli {
     pub project: PathBuf,
     #[arg(long, global = true)]
     pub json: bool,
+    #[arg(long, global = true, requires = "ruleset")]
+    pub season: Option<String>,
+    #[arg(long, global = true, requires = "season")]
+    pub ruleset: Option<String>,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -21,6 +25,11 @@ pub struct Cli {
 pub enum Command {
     /// Validate a GLR project and its local deployment dependencies.
     Doctor,
+    /// Inspect or initialize declarative season/ruleset configurations.
+    Season {
+        #[command(subcommand)]
+        command: SeasonCommand,
+    },
     /// Start the configured game/runtime bridge.
     Runtime {
         #[command(subcommand)]
@@ -73,6 +82,14 @@ pub enum Command {
     },
     /// Check or apply a checksum-verified GLR distribution update.
     Update(UpdateArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SeasonCommand {
+    List,
+    Show,
+    /// Create a pending declaration only; no game files or execution hooks.
+    Init,
 }
 
 #[derive(Debug, Clone, Subcommand)]

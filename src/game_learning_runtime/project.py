@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -14,6 +15,7 @@ from typing import Any, Literal
 
 from game_learning_runtime.capture_liveness import ContentLivenessConfig
 from game_learning_runtime.game_launcher import GameLaunchConfig
+from game_learning_runtime.season import SeasonContext, load_season_context, season_path
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -327,6 +329,9 @@ class GLRProject:
     schema_version: str = PROJECT_SCHEMA_VERSION
     manifest_path: Path | None = None
     extensions: Mapping[str, Path] = field(default_factory=lambda: MappingProxyType({}))
+    manifest_sha256: str = ""
+    seasons: str | None = None
+    season_context: SeasonContext | None = None
 
 
 def find_project(start: str | Path = ".") -> Path:
@@ -432,6 +437,7 @@ def load_project(path: str | Path = ".") -> GLRProject:
                 "capture",
                 "game",
                 "extensions",
+                "seasons",
             }
         ),
         path="project",
@@ -463,10 +469,20 @@ def load_project(path: str | Path = ".") -> GLRProject:
         _portable_relative(value["data_dir"], path="project.data_dir"),
         path="project.data_dir",
     )
-    return GLRProject(
+    seasons = value.get("seasons")
+    if seasons is not None:
+        reference = _mapping(seasons, path="project.seasons")
+        _reject_unknown(reference, allowed=frozenset({"config"}), path="project.seasons")
+        season_path(root, reference["config"])
+        if not reference["config"].endswith(".toml"):
+            raise ValueError("season catalog must be TOML")
+        seasons = reference["config"]
+    project = GLRProject(
         root=root,
         manifest_path=config_path,
         extensions=_extensions(root, value.get("extensions", {})),
+        manifest_sha256=hashlib.sha256(raw).hexdigest(),
+        seasons=seasons,
         environment_id=_identifier(value["environment_id"], path="project.environment_id"),
         environment_family=_identifier(
             value["environment_family"], path="project.environment_family"
@@ -517,6 +533,8 @@ def load_project(path: str | Path = ".") -> GLRProject:
             else GameLaunchConfig.from_mapping(_mapping(value["game"], path="project.game"))
         ),
     )
+    object.__setattr__(project, "season_context", load_season_context(project))
+    return project
 
 
 __all__ = [

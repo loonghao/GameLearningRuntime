@@ -163,6 +163,10 @@ adopted by the consumer before claiming its installed GLR is compatible.
 
 ## Commands
 
+Season-enabled projects use first-class `season list/show/init` and explicit
+`--season` plus `--ruleset` selection. Read [seasons.md](seasons.md) for strict
+declarations, pending/readiness gates, frozen role context and run evidence.
+
 Use `--json` for compact `glr.cli-output.v1` output.
 
 ```powershell

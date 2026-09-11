@@ -100,6 +100,12 @@ when scaffolding, migrating environments, or handing a project to another user.
 
 ## Recording and training data
 
+When a project declares `[seasons]`, read
+[references/seasons.md](references/seasons.md) before initialization or execution.
+Require an explicit season/ruleset pair and one frozen context. Pending permits
+runtime probing but not train/goal/play. Distinguish doctor installation readiness,
+configuration readiness, and actual runtime acceptance; never infer the last one.
+
 When capture is configured, keep it enabled for `glr train` and `glr goal run` unless the user
 explicitly opts out. The recorder is a concurrent project-owned sidecar and must emit both a small
 H.264 MP4 and `glr.capture-frame.v1` step/frame index. A video without a valid checksummed index is
