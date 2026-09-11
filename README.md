@@ -123,7 +123,7 @@ workflow:
 ```powershell
 glr --project . --json doctor
 glr --project . --json runtime start
-glr --project . --json train
+glr --project . --context config/contexts/ranked.toml --json train
 glr --project . --json task list
 glr --project . --json task run season --set profile=example/default
 glr --project . --json goal run --goal goals/reach-destination.json
@@ -144,6 +144,13 @@ Projects can add strict, fixed-argv workflows in `glr.toml`. Use
 environment resolution while GLR owns validation, dependency ordering, timeout,
 logs, and execution receipts. See [Extend GLR with declarative VX
 tasks](docs/guides/declarative-tasks.md).
+
+Select invocation-specific configuration with a strict project-relative
+`glr.run-context.v1` TOML file. GLR freezes the context and its declared inputs,
+passes the receipt to every configured role, and persists it with the run.
+Domain concepts such as a season or ruleset remain labels or VX task policy;
+they do not become core CLI commands. See [Bind an invocation run
+context](docs/guides/run-contexts.md).
 
 `glr update --check` only inspects the latest stable release. After an explicit
 update request, `glr update --yes` verifies the exact target archive and

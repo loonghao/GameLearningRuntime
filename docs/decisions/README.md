@@ -22,6 +22,7 @@
 - [ADR-0020: Add rollout attempts and local queue barriers](0020-rollout-attempts-and-queue-barriers.md)
 - [ADR-0021: Resolve portable projects from one manifest](0021-portable-project-manifests.md)
 - [ADR-0023: Add a project-local VX task runner](0023-add-project-local-vx-task-runner.md)
+- [ADR-0024: Bind invocation-scoped run contexts](0024-bind-invocation-run-contexts.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

@@ -6,6 +6,7 @@ mod error;
 mod process;
 mod project;
 mod report;
+mod run_context;
 mod store;
 mod task;
 pub mod update;

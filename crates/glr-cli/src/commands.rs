@@ -77,6 +77,20 @@ struct TrainerOutcome {
 }
 
 pub fn execute(cli: Cli) -> Result<i32> {
+    if cli.context.is_some()
+        && !matches!(
+            cli.command,
+            CliCommand::Doctor
+                | CliCommand::Runtime { .. }
+                | CliCommand::Train { .. }
+                | CliCommand::Goal { .. }
+                | CliCommand::Play { .. }
+        )
+    {
+        return Err(Error::Invalid(
+            "--context is supported only by doctor, runtime, train, goal, and play".into(),
+        ));
+    }
     if let CliCommand::Update(arguments) = &cli.command {
         return run_update(&cli, arguments);
     }
@@ -103,7 +117,12 @@ pub fn execute(cli: Cli) -> Result<i32> {
         let project = load_project(&cli.project)?;
         return crate::task::execute(&project, command.clone(), cli.json);
     }
-    let project = load_project(&cli.project)?;
+    let mut project = load_project(&cli.project)?;
+    project.run_context = cli
+        .context
+        .as_ref()
+        .map(|path| crate::run_context::RunContext::load(&project, path))
+        .transpose()?;
     let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
     match cli.command {
         CliCommand::Doctor => doctor(&project, cli.json),
@@ -372,6 +391,7 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
             "lifecycle": project.lifecycle.as_ref()
                 .map(|value| value.manifest(&project.root))
                 .transpose()?,
+            "run_context": crate::run_context::metadata(project)?,
         }),
         as_json,
     )?;
@@ -454,10 +474,12 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         json!({
             "environment_family": project.environment_family,
             "lifecycle": lifecycle,
+            "run_context": crate::run_context::metadata(project)?,
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
     fs::create_dir_all(&run_dir)?;
+    crate::run_context::persist(project, store, &run.run_id, &run_dir)?;
     let trainer_log = run_dir.join("trainer.log");
     let capture_session = if capture && project.capture.is_some() {
         Some(start_capture(project, &run.run_id, &run_dir)?)
@@ -548,6 +570,7 @@ fn run_project_role(
         "environment_family".into(),
         Value::String(project.environment_family.clone()),
     );
+    combined_metadata.insert("run_context".into(), crate::run_context::metadata(project)?);
     combined_metadata.insert(
         "lifecycle".into(),
         project
@@ -565,6 +588,7 @@ fn run_project_role(
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
     fs::create_dir_all(&run_dir)?;
+    crate::run_context::persist(project, store, &run.run_id, &run_dir)?;
     let log = run_dir.join(format!("{}.log", invocation.kind));
     let extra = HashMap::new();
     let exit_code = match run_command(CommandInvocation {
@@ -646,10 +670,12 @@ fn run_goal(
             "goal_id": goal.goal_id,
             "objective": goal.objective,
             "lifecycle": lifecycle,
+            "run_context": crate::run_context::metadata(project)?,
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
     fs::create_dir_all(&run_dir)?;
+    crate::run_context::persist(project, store, &run.run_id, &run_dir)?;
     let canonical_goal = run_dir.join("goal.json");
     let initial_research = run_dir.join("research.json");
     write_json(&canonical_goal, &goal)?;

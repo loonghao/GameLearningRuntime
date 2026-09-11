@@ -408,6 +408,7 @@ pub struct Project {
     pub capture: Option<CaptureConfig>,
     pub progress: Option<ProgressConfig>,
     pub lifecycle: Option<LifecycleConfig>,
+    pub run_context: Option<crate::run_context::RunContext>,
 }
 
 pub fn find_project(start: &Path) -> Result<PathBuf> {
@@ -572,6 +573,7 @@ pub fn load_project(requested: &Path) -> Result<Project> {
         capture: value.capture,
         progress: value.progress,
         lifecycle: value.lifecycle,
+        run_context: None,
     })
 }
 

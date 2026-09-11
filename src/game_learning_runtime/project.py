@@ -18,7 +18,7 @@ from game_learning_runtime.game_launcher import GameLaunchConfig
 if sys.version_info >= (3, 11):
     import tomllib
 else:
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 PROJECT_SCHEMA_VERSION = "glr.project.v1"
 PROJECT_FILE_NAME = "glr-project.toml"
