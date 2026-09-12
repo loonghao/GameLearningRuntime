@@ -76,9 +76,9 @@ vx python "$skillRoot/scripts/scaffold_adapter.py" `
   --access external
 ```
 
-For an authorized Unity Mono or Unreal runtime that permits third-party mods,
-read [loader-plugins.md](references/loader-plugins.md) completely, verify one
-compatible upstream release, and create a loader-plugin lane:
+For an authorized Unity Mono/Il2Cpp or Unreal runtime that permits third-party
+mods, read [loader-plugins.md](references/loader-plugins.md) completely, verify
+one compatible upstream release, and create a loader-plugin lane:
 
 ```powershell
 vx python "$skillRoot/scripts/scaffold_adapter.py" `
@@ -91,7 +91,8 @@ vx python "$skillRoot/scripts/scaffold_adapter.py" `
   --loader-version v5.4.23.5
 ```
 
-Use `--engine unreal --loader ue4ss --loader-version v3.0.1` for the UE4SS
+Use `--loader bepinex-il2cpp` for a Unity Il2Cpp runtime on BepInEx 6, and
+`--engine unreal --loader ue4ss --loader-version v3.0.1` for the UE4SS
 template. Release numbers are examples, not universal compatibility claims;
 refresh them from official upstream sources before scaffolding.
 
@@ -156,6 +157,12 @@ Use `glr.training.v1` in `training.json`.
   it were expert data.
 
 ## Implement the adapter contract
+
+Dynamic commands belong to the GLR Python control plane; Unity, Unreal, and
+Godot hosts remain thin main-thread dispatchers and can hot-reload signed
+registries. Use the project-owned `dcc-cua` provider only as a bounded,
+identity-checked foreground keyboard/mouse fallback with post-action readback;
+never use generic computer-use routing.
 
 1. Write failing contract tests first.
 2. Declare immutable `EnvironmentSpec` tensor shapes, dtypes, bounds, masks,
