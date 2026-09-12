@@ -37,6 +37,7 @@ from game_learning_runtime.bridge import (
     BridgeStepRequest,
     EnvironmentBridgeDriver,
 )
+from game_learning_runtime.command_registry import CommandRegistry, CommandSpec
 from game_learning_runtime.capture import (
     CAPTURE_FRAME_SCHEMA_VERSION,
     CAPTURE_MANIFEST_SCHEMA_VERSION,
