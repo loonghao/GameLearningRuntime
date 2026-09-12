@@ -158,11 +158,13 @@ Use `glr.training.v1` in `training.json`.
 
 ## Implement the adapter contract
 
-Dynamic commands belong to the GLR Python control plane; Unity, Unreal, and
-Godot hosts remain thin main-thread dispatchers and can hot-reload signed
-registries. Use the project-owned `dcc-cua` provider only as a bounded,
-identity-checked foreground keyboard/mouse fallback with post-action readback;
-never use generic computer-use routing.
+For dynamic gameplay commands, register the command in the GLR Python control
+plane and keep Unity, Unreal, and Godot code as thin main-thread hosts. A host
+may hot-reload the signed registry without rebuilding or restarting the game.
+If a semantic command is unavailable, the project-owned `dcc-cua` provider may
+be used as a bounded foreground keyboard/mouse fallback only after target
+identity and readiness are verified, with authoritative post-action readback.
+Do not fall back to generic computer-use routing.
 
 1. Write failing contract tests first.
 2. Declare immutable `EnvironmentSpec` tensor shapes, dtypes, bounds, masks,
