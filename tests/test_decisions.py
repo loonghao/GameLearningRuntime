@@ -138,6 +138,17 @@ def test_executor_does_not_replace_rejected_policy_choice():
     assert result["receipt"]["accepted"] is False
 
 
+def test_receipt_snapshot_is_detached_from_executor_owned_nested_data():
+    receipt = {"accepted": True, "details": {"positions": [{"x": 1}]}}
+    decision = Decision("s", (Candidate("walk", "walk"),), "walk", "digest", "train")
+    result = execute_decision(decision, lambda command, parameters: receipt)
+    receipt["details"]["positions"][0]["x"] = 2
+    receipt["details"]["positions"].append({"x": 3})
+    assert result["receipt"] == {"accepted": True, "details": {"positions": [{"x": 1}]}}
+    result["receipt"]["details"]["positions"][0]["x"] = 4
+    assert receipt["details"]["positions"] == [{"x": 2}, {"x": 3}]
+
+
 def test_parameter_payload_is_defensively_decoded_and_finite():
     item = Candidate("a", "walk", '{"x": 1}')
     item.parameters["x"] = 8

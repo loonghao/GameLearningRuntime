@@ -6,6 +6,7 @@ reject a choice, but must never silently replace it with a scripted choice.
 
 import json
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,7 +73,7 @@ def execute_decision(
 ) -> dict[str, Any]:
     """Submit precisely the policy selection, retaining rejected receipts too."""
     selected = decision.selected
-    receipt = dict(execute(selected.command, selected.parameters))
+    receipt = deepcopy(dict(execute(selected.command, selected.parameters)))
     return {
         "state": decision.state,
         "selected_key": selected.key,
