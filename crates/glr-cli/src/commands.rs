@@ -475,6 +475,9 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
             "environment_family": project.environment_family,
             "lifecycle": lifecycle,
             "run_context": crate::run_context::metadata(project)?,
+            "status_scope": "process_execution",
+            "learning_status": "unverified",
+            "improvement_status": "unverified"
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);

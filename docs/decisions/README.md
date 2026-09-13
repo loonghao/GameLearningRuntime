@@ -24,5 +24,7 @@
 - [ADR-0023: Add a project-local VX task runner](0023-add-project-local-vx-task-runner.md)
 - [ADR-0024: Bind invocation-scoped run contexts](0024-bind-invocation-run-contexts.md)
 
+- [ADR-0025: Record learner-owned dynamic decisions](0025-record-learner-owned-decisions.md)
+
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.
