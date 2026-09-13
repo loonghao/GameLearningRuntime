@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.16.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.15.0...v0.16.0) (2026-09-13)
+
+
+### Features
+
+* add learner-owned decision contracts ([#121](https://github.com/loonghao/GameLearningRuntime/issues/121)) ([b55355b](https://github.com/loonghao/GameLearningRuntime/commit/b55355bf2146a001fc9f0814115f63a385aba130))
+
 ## [0.15.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.14.0...v0.15.0) (2026-09-11)
 
 
