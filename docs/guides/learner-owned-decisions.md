@@ -5,6 +5,7 @@ a trainer executable successfully does not establish that its policy changed,
 improved, or achieved the objective. Basic `glr train` therefore records
 `status_scope=process_execution`, with learning and improvement unverified.
 These fields persist with the run; they do not change exit-code semantics.
+The documented Python CLI training entry point records the same fields.
 
 For dynamic action spaces, `game_learning_runtime.decisions` separates:
 

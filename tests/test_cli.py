@@ -117,6 +117,13 @@ print("trainer complete")
     store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
     run = store.get_run(run_id)
     assert run.status is RunStatus.SUCCEEDED
+    for key, value in {
+        "status_scope": "process_execution",
+        "learning_status": "unverified",
+        "improvement_status": "unverified",
+    }.items():
+        assert run.metadata[key] == value
+        assert output["data"]["metadata"][key] == value
     assert store.list_events(run_id)[0].kind == "trainer.ready"
     assert (tmp_path / ".glr/runs" / run_id / "model.bin").read_bytes() == b"model"
     assert store.list_artifacts(run_id)[0].role == "run-log"

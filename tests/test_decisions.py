@@ -146,6 +146,20 @@ def test_parameter_payload_is_defensively_decoded_and_finite():
         Candidate("a", "walk", '{"x": NaN}')
 
 
+@pytest.mark.parametrize("missing", ["", " ", "\t\n", None, 1, False])
+@pytest.mark.parametrize("side", ["initial", "final"])
+def test_missing_policy_digest_cannot_certify_change(missing, side):
+    assert (
+        learning_status(
+            transitions=1,
+            updates=1,
+            initial_digest=missing if side == "initial" else "a",
+            final_digest=missing if side == "final" else "b",
+        )
+        == "learning_unverified"
+    )
+
+
 def test_training_counters_never_certify_improvement():
     assert (
         learning_status(transitions=0, updates=30, initial_digest="a", final_digest="b")

@@ -101,7 +101,10 @@ def learning_status(
         raise ValueError("evidence counts cannot be negative")
     if not transitions:
         return "no_transitions"
-    if not updates or not initial_digest or not final_digest:
+    if not updates or any(
+        not isinstance(digest, str) or not digest.strip()
+        for digest in (initial_digest, final_digest)
+    ):
         return "learning_unverified"
     if initial_digest == final_digest:
         return "policy_unchanged"

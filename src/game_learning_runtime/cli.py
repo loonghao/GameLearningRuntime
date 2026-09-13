@@ -507,7 +507,12 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
         environment_id=project.environment_id,
         protocol_version=project.protocol_version,
         kind="training",
-        metadata={"environment_family": project.environment_family},
+        metadata={
+            "environment_family": project.environment_family,
+            "status_scope": "process_execution",
+            "learning_status": "unverified",
+            "improvement_status": "unverified",
+        },
     )
     run_dir = project.data_dir / "runs" / run.run_id
     run_dir.mkdir(parents=True, exist_ok=False)
