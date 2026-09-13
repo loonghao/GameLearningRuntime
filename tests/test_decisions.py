@@ -46,6 +46,22 @@ def test_executor_exception_does_not_retry():
     assert calls == ["walk"]
 
 
+def test_execution_provenance_retains_the_observation_state():
+    candidates = (Candidate("a", "walk"),)
+
+    def execute(command, parameters):
+        return {"accepted": True}
+
+    records = [
+        execute_decision(Decision(state, candidates, "a", "digest", "train"), execute)
+        for state in ("observation-1", "observation-2")
+    ]
+    assert [record["state"] for record in records] == ["observation-1", "observation-2"]
+    assert {k: v for k, v in records[0].items() if k != "state"} == {
+        k: v for k, v in records[1].items() if k != "state"
+    }
+
+
 @pytest.mark.parametrize(
     "transitions,updates,initial,final,expected",
     [

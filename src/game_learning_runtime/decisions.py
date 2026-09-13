@@ -74,6 +74,7 @@ def execute_decision(
     selected = decision.selected
     receipt = dict(execute(selected.command, selected.parameters))
     return {
+        "state": decision.state,
         "selected_key": selected.key,
         "command": selected.command,
         "parameters": selected.parameters,
