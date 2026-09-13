@@ -195,6 +195,14 @@ fn standalone_cli_is_the_project_entrypoint_and_persists_runs() {
     let training = stdout(&run(project.path(), &["train"]));
     assert_eq!(training["command"], "train");
     assert_eq!(training["data"]["status"], "succeeded");
+    assert_eq!(
+        training["data"]["metadata"]["status_scope"],
+        "process_execution"
+    );
+    assert_eq!(
+        training["data"]["metadata"]["learning_status"],
+        "unverified"
+    );
     let run_id = training["data"]["run_id"].as_str().unwrap();
     assert!(
         project
