@@ -76,9 +76,9 @@ vx python "$skillRoot/scripts/scaffold_adapter.py" `
   --access external
 ```
 
-For an authorized Unity Mono or Unreal runtime that permits third-party mods,
-read [loader-plugins.md](references/loader-plugins.md) completely, verify one
-compatible upstream release, and create a loader-plugin lane:
+For an authorized Unity Mono/Il2Cpp or Unreal runtime that permits third-party
+mods, read [loader-plugins.md](references/loader-plugins.md) completely, verify
+one compatible upstream release, and create a loader-plugin lane:
 
 ```powershell
 vx python "$skillRoot/scripts/scaffold_adapter.py" `
@@ -91,7 +91,8 @@ vx python "$skillRoot/scripts/scaffold_adapter.py" `
   --loader-version v5.4.23.5
 ```
 
-Use `--engine unreal --loader ue4ss --loader-version v3.0.1` for the UE4SS
+Use `--loader bepinex-il2cpp` for a Unity Il2Cpp runtime on BepInEx 6, and
+`--engine unreal --loader ue4ss --loader-version v3.0.1` for the UE4SS
 template. Release numbers are examples, not universal compatibility claims;
 refresh them from official upstream sources before scaffolding.
 
@@ -156,6 +157,14 @@ Use `glr.training.v1` in `training.json`.
   it were expert data.
 
 ## Implement the adapter contract
+
+For dynamic gameplay commands, register the command in the GLR Python control
+plane and keep Unity, Unreal, and Godot code as thin main-thread hosts. A host
+may hot-reload the signed registry without rebuilding or restarting the game.
+If a semantic command is unavailable, the project-owned `dcc-cua` provider may
+be used as a bounded foreground keyboard/mouse fallback only after target
+identity and readiness are verified, with authoritative post-action readback.
+Do not fall back to generic computer-use routing.
 
 1. Write failing contract tests first.
 2. Declare immutable `EnvironmentSpec` tensor shapes, dtypes, bounds, masks,
