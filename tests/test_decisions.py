@@ -1,3 +1,5 @@
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from game_learning_runtime.decisions import Candidate, Decision, execute_decision, learning_status
@@ -147,6 +149,18 @@ def test_receipt_snapshot_is_detached_from_executor_owned_nested_data():
     assert result["receipt"] == {"accepted": True, "details": {"positions": [{"x": 1}]}}
     result["receipt"]["details"]["positions"][0]["x"] = 4
     assert receipt["details"]["positions"] == [{"x": 2}, {"x": 3}]
+
+
+def test_decision_records_have_no_mutable_instance_dictionary():
+    candidate = Candidate("walk", "walk")
+    decision = Decision("s", (candidate,), "walk", "digest", "train")
+    for record, field in ((candidate, "command"), (decision, "selected_key")):
+        assert not hasattr(record, "__dict__")
+        with pytest.raises(TypeError):
+            vars(record)
+        with pytest.raises(FrozenInstanceError):
+            setattr(record, field, "replacement")
+    assert decision.selected.command == "walk"
 
 
 def test_parameter_payload_is_defensively_decoded_and_finite():

@@ -30,3 +30,6 @@ evaluation out of training data and verify that policy parameters did not change
 
 This module complements the tensor-based collector; it does not replace it or
 require Q-learning, PPO, TorchRL, or any particular model architecture.
+Slotted frozen records prevent ordinary attribute and instance-dictionary edits;
+they are not a sandbox for untrusted Python code. Runtime authorization remains
+the executor's responsibility.

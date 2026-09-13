@@ -16,7 +16,7 @@ def _text(value: object, name: str) -> None:
         raise ValueError(f"{name} must be nonempty text")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Candidate:
     key: str
     command: str
@@ -40,7 +40,7 @@ class Candidate:
         return parameters
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Decision:
     state: str
     candidates: tuple[Candidate, ...]
