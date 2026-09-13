@@ -15,8 +15,11 @@ For dynamic action spaces, `game_learning_runtime.decisions` separates:
 
 The execution helper does not select a fallback after rejection. An actuator may
 implement a bounded movement primitive but may not choose another strategic
-destination. Missing capabilities should be exposed as limitations, not repaired
-by silently reintroducing a scripted controller.
+destination. Its returned provenance includes the decision state and every
+candidate's key, command and parameters, including alternatives that were not
+selected, so equal-sized candidate sets remain distinguishable. Missing
+capabilities should be exposed as limitations, not repaired by silently
+reintroducing a scripted controller.
 
 `learning_status` reports only whether recorded transitions accompanied a policy
 change. It does not authenticate a trainer's claims or certify improvement. A

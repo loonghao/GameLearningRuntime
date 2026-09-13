@@ -62,6 +62,32 @@ def test_execution_provenance_retains_the_observation_state():
     }
 
 
+def test_execution_provenance_retains_complete_candidate_alternatives():
+    selected = Candidate("walk", "walk", '{"x": 1}')
+    alternatives = [
+        Candidate("jump", "jump"),
+        Candidate("crouch", "crouch"),
+        Candidate("jump", "jump", '{"height": 2}'),
+    ]
+
+    def execute(command, parameters):
+        return {"accepted": True}
+
+    records = [
+        execute_decision(Decision("s", (selected, alternative), "walk", "digest", "train"), execute)
+        for alternative in alternatives
+    ]
+    assert all(record["candidate_count"] == 2 for record in records)
+    assert len({str(record["candidates"]) for record in records}) == 3
+    assert records[0]["candidates"] == [
+        {"key": "walk", "command": "walk", "parameters": {"x": 1}},
+        {"key": "jump", "command": "jump", "parameters": {}},
+    ]
+    records[0]["candidates"][0]["parameters"]["x"] = 99
+    assert selected.parameters == {"x": 1}
+    assert records[0]["parameters"] == {"x": 1}
+
+
 @pytest.mark.parametrize(
     "transitions,updates,initial,final,expected",
     [

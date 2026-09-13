@@ -81,6 +81,10 @@ def execute_decision(
         "policy_digest": decision.policy_digest,
         "mode": decision.mode,
         "candidate_count": len(decision.candidates),
+        "candidates": [
+            {"key": item.key, "command": item.command, "parameters": item.parameters}
+            for item in decision.candidates
+        ],
         "receipt": receipt,
     }
 
