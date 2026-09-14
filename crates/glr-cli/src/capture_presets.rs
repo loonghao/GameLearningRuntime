@@ -137,6 +137,10 @@ pub struct ProjectLayout {
     pub training_data: [&'static str; 2],
     pub reports: [&'static str; 2],
     pub checkpoints: String,
+    pub checkpoint_best: String,
+    pub checkpoint_promotion: String,
+    pub learning_checkpoints: String,
+    pub latest_learning_checkpoint: String,
 }
 
 pub fn layout(project: &Project) -> ProjectLayout {
@@ -160,5 +164,21 @@ pub fn layout(project: &Project) -> ProjectLayout {
         training_data: ["<run>/artifacts/<dataset>", "<run>/trainer-result.json"],
         reports: ["<run>/report/index.html", "<run>/review/report/index.html"],
         checkpoints: format!("{}/checkpoints", portable(&project.data_dir)),
+        checkpoint_best: format!(
+            "{}/checkpoints/<environment-id>/<goal-id>/best.checkpoint",
+            portable(&project.data_dir)
+        ),
+        checkpoint_promotion: format!(
+            "{}/checkpoints/<environment-id>/<goal-id>/best.json",
+            portable(&project.data_dir)
+        ),
+        learning_checkpoints: format!(
+            "{}/checkpoints/<environment-id>/<goal-id>/runs/<run-id>/<trial-id>/<stage>.json",
+            portable(&project.data_dir)
+        ),
+        latest_learning_checkpoint: format!(
+            "{}/checkpoints/<environment-id>/<goal-id>/latest.json",
+            portable(&project.data_dir)
+        ),
     }
 }

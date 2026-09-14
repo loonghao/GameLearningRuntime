@@ -4,6 +4,7 @@ mod checkpoint;
 mod commands;
 mod contracts;
 mod error;
+mod learning_checkpoint;
 mod process;
 mod project;
 mod report;

@@ -22,9 +22,9 @@ acceptance.
 Only after an explicit user update request, apply the exact-target release:
 
 ```powershell
-glr --json update --yes
-glr --json update --yes --skills-dir .agents/skills
-glr --json update --yes --no-skills
+glr --json update
+glr --json update --skills-dir .agents/skills
+glr --json update --no-skills
 ```
 
 The default update scope is the CLI, sibling Runtime Host, and project Skills.
@@ -34,6 +34,7 @@ manager to replace a plugin package, or copy the package's `skills/` payload
 into the project directory intentionally before running a project update.
 The updater requires HTTPS, a matching target manifest, and the published
 `SHA256SUMS`; it never runs an installer script or changes project/trainer data.
+The former `--yes` form remains accepted for compatibility.
 Re-run `--version`, `doctor`, and `update --check` after an update.
 
 The public release check uses GitHub's latest-release asset link instead of the
@@ -207,6 +208,13 @@ setup and status policy in VX tasks rather than adding core subcommands.
 `train` and `goal run` record lifecycle, events, metrics, logs, capture artifacts, and hashes under
 the configured data directory. Training tensors and transitions remain checksummed artifacts or
 JSONL datasets; SQLite is the query projection, not the tensor store.
+
+Goal runs keep promoted model bytes under
+`.glr/checkpoints/<environment-id>/<goal-id>/best.checkpoint` and atomically
+write `glr.learning-checkpoint.v1` control-state snapshots after research,
+planning, training, and evaluation under the same goal namespace. These
+snapshots record learning status and paths; learner-owned model, optimizer, and
+replay-buffer bytes remain in the candidate or promoted checkpoint.
 
 ## Recording presets and storage layout
 

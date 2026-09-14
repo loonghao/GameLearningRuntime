@@ -133,6 +133,24 @@ fn capture_commands_publish_training_preset_and_canonical_layout() {
             .ends_with("/.glr/runs/<run-id>")
     );
     assert_eq!(layout["data"]["capture"][0], "<run>/capture.mp4");
+    assert!(
+        layout["data"]["checkpoint_best"]
+            .as_str()
+            .unwrap()
+            .ends_with("/.glr/checkpoints/<environment-id>/<goal-id>/best.checkpoint")
+    );
+    assert!(
+        layout["data"]["learning_checkpoints"]
+            .as_str()
+            .unwrap()
+            .ends_with("/<run-id>/<trial-id>/<stage>.json")
+    );
+    assert!(
+        layout["data"]["latest_learning_checkpoint"]
+            .as_str()
+            .unwrap()
+            .ends_with("/<environment-id>/<goal-id>/latest.json")
+    );
 }
 
 #[test]

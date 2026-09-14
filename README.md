@@ -153,12 +153,13 @@ they do not become core CLI commands. See [Bind an invocation run
 context](docs/guides/run-contexts.md).
 
 `glr update --check` only inspects the latest stable release. After an explicit
-update request, `glr update --yes` verifies the exact target archive and
+update request, `glr update` verifies the exact target archive and
 `SHA256SUMS`, then updates `glr`, its sibling `glr-hostd`, and the project-owned
 Skills. It never changes game code, trainer dependencies, models, datasets, or
 project configuration. The check uses GitHub's public latest-release asset link
 without consuming anonymous REST API quota. Use `--no-skills` for binary-only
 maintenance or `--skills-dir` for an explicitly selected Skills directory.
+The former `--yes` form remains accepted for compatibility.
 
 ### Library integration
 
