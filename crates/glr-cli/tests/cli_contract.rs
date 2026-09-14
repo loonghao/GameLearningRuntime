@@ -110,6 +110,86 @@ fn stdout(output: &Output) -> Value {
 }
 
 #[test]
+fn plugin_commands_inspect_install_and_resolve_without_execution() {
+    let project = create_project();
+    let source = project.path().join("plugin-source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("plugin.py"),
+        b"def create():\n    return None\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("glr-plugin.json"),
+        serde_json::to_vec(&json!({
+            "schema_version": "glr.plugin.v1",
+            "id": "cli-plugin",
+            "version": "1.0.0",
+            "kind": "learner",
+            "name": "CLI plugin",
+            "description": "A static plugin fixture.",
+            "entrypoint": "plugin.py:create",
+            "capabilities": ["learner.ppo"],
+            "permissions": ["read:environment"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let inspected = stdout(&run(
+        project.path(),
+        &["plugin", "inspect", "--source", source.to_str().unwrap()],
+    ));
+    assert_eq!(inspected["command"], "plugin.inspect");
+    let digest = inspected["data"]["content_sha256"].as_str().unwrap();
+    let installed = stdout(&run(
+        project.path(),
+        &[
+            "plugin",
+            "install",
+            "--source",
+            source.to_str().unwrap(),
+            "--sha256",
+            digest,
+        ],
+    ));
+    assert_eq!(installed["command"], "plugin.install");
+
+    let enabled = stdout(&run(
+        project.path(),
+        &[
+            "plugin",
+            "profile",
+            "enable",
+            "training",
+            "cli-plugin",
+            "--grant",
+            "read:environment",
+        ],
+    ));
+    assert_eq!(enabled["data"]["plugins"][0]["enabled"], true);
+    let resolved = stdout(&run(
+        project.path(),
+        &["plugin", "profile", "resolve", "training"],
+    ));
+    assert_eq!(resolved["data"]["plugins"][0]["id"], "cli-plugin");
+    let health = stdout(&run(
+        project.path(),
+        &["plugin", "health", "--profile", "training"],
+    ));
+    assert_eq!(health["data"][0]["status"], "ready");
+    let disabled = stdout(&run(
+        project.path(),
+        &["plugin", "profile", "disable", "training", "cli-plugin"],
+    ));
+    assert_eq!(disabled["data"]["plugins"][0]["enabled"], false);
+    assert!(
+        stdout(&run(project.path(), &["plugin", "remove", "cli-plugin"]))["data"]["id"]
+            == "cli-plugin"
+    );
+}
+
+#[test]
 fn capture_commands_publish_training_preset_and_canonical_layout() {
     let project = create_project();
     let preset = stdout(&run(project.path(), &["capture", "preset"]));

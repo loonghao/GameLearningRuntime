@@ -68,6 +68,7 @@ Unity、Unreal、Source、原生程序还是测试模拟器。GLR 标准化的�
 | 集成 | 可选 Gymnasium、TorchRL 0.13 与模型中立的 PyTorch BC/PPO/GAE/V-trace objective |
 | 验证 | 失败即关闭的契约包装器与隐私安全的合成 conformance profiles |
 | Agent 控制面 | 独立 Rust `glr` JSON CLI、严格项目角色、有预算的 research/plan/train/evaluate 闭环、SQLite 历史查询、空间知识迁移与二进制/Skill 受控更新 |
+| 插件控制面 | 声明式 `glr.plugin.v1` Bundle 与 `glr.profile.v1` 组合，提供不执行代码的 inspect/install、显式权限授予、依赖解析和 digest 校验 |
 | Review 与监督采集 | 并发的项目自有 H.264 小窗录制，以及带校验和的 episode/step-to-frame 索引 |
 | 运行回顾报告 | 离线交互式 `glr.run-report.v1` HTML，包含指标、事件时间线、跑图路线、解锁进度、明确的 PvP 结果和带校验和的媒体链接 |
 | Agent 工作流 | `glr-adapter-builder` 与 `glr-cli` 两个独立 Skill，分别负责适配器构建与日常操作 |
@@ -125,6 +126,26 @@ glr --project . --json play --bundle artifacts/model-bundle
 项目清单负责声明准确的可执行文件路径、环境身份、数据位置，以及
 runtime/trainer/player/researcher/planner/evaluator/recorder 角色。GLR 负责验证和编排
 这些角色，但不会把具体游戏启动器、爬虫或学习算法写死在核心中。
+
+### 类 DSH 的插件 Bundle
+
+项目可以通过声明式 Profile 组合经过审查的 learner、recorder、evaluator 或 harness
+Bundle，工作流借鉴 DeepSeek Harness（DSH）。控制面只接受本地目录，校验
+`glr.plugin.v1` 与 `glr.profile.v1`，在 inspect 或 install 时不会导入 entrypoint、运行
+hook、启动进程或访问网络：
+
+```powershell
+glr --project . --json plugin inspect --source plugins/torchrl-learner
+glr --project . --json plugin install --source plugins/torchrl-learner --sha256 <digest>
+glr --project . --json plugin profile enable training torchrl-learner --grant read:environment
+glr --project . --json plugin profile resolve training
+glr --project . --json plugin health --profile training
+```
+
+详见[插件系统指南](docs/guides/plugin-system.zh-CN.md)中的 Bundle 契约、权限模型和
+Python API。TorchRL 的可选 0.13 集成已有 CI 契约，因此是首选 learner 槽位；Sample
+Factory 作为独立的高吞吐后端按需加入。仓库交付的是契约与生命周期，不包含任一框架的
+负载。
 
 `glr update --check` 只读检查最新稳定版本。用户明确要求更新后，
 `glr update` 会校验准确平台的压缩包与 `SHA256SUMS`，随后更新 `glr`、同目录的
@@ -466,6 +487,7 @@ Runtime Host、安装清单和两套 GLR Skills；Release 还包含 C# Provider 
 - [接入 Unity 与 Unreal 游戏运行时](docs/guides/engine-runtime-integration.zh-CN.md)
 - [使用 Runtime Host 与 C#/C++ Provider SDK](docs/guides/runtime-host-and-provider-sdks.zh-CN.md)
 - [接入获授权的 BepInEx 与 UE4SS Loader](docs/guides/loader-plugin-integration.zh-CN.md)
+- [组合类 DSH 的声明式插件 Bundle](docs/guides/plugin-system.zh-CN.md)
 - [按配置启动游戏实例并开始训练](docs/guides/game-launch.md)
 - [标准 CLI、表格化输出与查询](docs/guides/agent-first-cli.zh-CN.md)
 - [复现训练模型](docs/guides/reproducible-model-bundles.zh-CN.md)

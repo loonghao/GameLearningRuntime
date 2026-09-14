@@ -25,6 +25,12 @@ from game_learning_runtime.capture import build_capture_manifest
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.game_launcher import GameLauncher, GameLaunchError, LaunchCommand
 from game_learning_runtime.model_bundle import verify_model_bundle
+from game_learning_runtime.plugins import (
+    PluginError,
+    PluginManager,
+    PluginProfile,
+    PluginProfileRef,
+)
 from game_learning_runtime.project import GLRProject, ProjectCommand, load_project
 from game_learning_runtime.run_store import (
     ArtifactRecord,
@@ -1116,6 +1122,153 @@ def _import_knowledge(project: GLRProject, *, source: Path, as_json: bool) -> in
     return 0
 
 
+def _plugin_project_root(requested: str | Path) -> Path:
+    """Resolve a plugin store root without requiring role executables.
+
+    Plugin management is a control-plane operation.  It must remain usable in
+    a newly scaffolded project whose runtime roles are not installed yet, so it
+    intentionally does not call :func:`load_project`.
+    """
+
+    path = Path(requested).absolute()
+    if path.is_file():
+        return path.parent
+    return path
+
+
+def _plugin_manager(requested: str | Path) -> PluginManager:
+    return PluginManager(_plugin_project_root(requested))
+
+
+def _plugin_ref_mapping(ref: PluginProfileRef) -> PluginProfileRef:
+    """Return a validated copy so profile edits cannot retain mutable state."""
+
+    return PluginProfileRef(
+        plugin_id=ref.plugin_id,
+        version=ref.version,
+        enabled=ref.enabled,
+        permissions=ref.permissions,
+        config=ref.config,
+    )
+
+
+def _run_plugin_command(arguments: argparse.Namespace) -> int:
+    manager = _plugin_manager(arguments.project)
+    command = arguments.plugin_command
+    if command == "inspect":
+        inspection = manager.inspect(Path(arguments.source))
+        _emit("plugin.inspect", inspection.to_mapping(), as_json=arguments.json)
+        return 0
+    if command == "install":
+        installation = manager.install(Path(arguments.source), expected_sha256=arguments.sha256)
+        _emit("plugin.install", installation.to_mapping(), as_json=arguments.json)
+        return 0
+    if command == "list":
+        _emit(
+            "plugin.list",
+            [item.to_mapping() for item in manager.list_installed()],
+            as_json=arguments.json,
+        )
+        return 0
+    if command == "health":
+        health = manager.health(arguments.profile)
+        _emit("plugin.health", list(health), as_json=arguments.json)
+        return 0
+    if command == "remove":
+        manager.remove(arguments.plugin_id, arguments.version)
+        _emit(
+            "plugin.remove",
+            {"id": arguments.plugin_id, "version": arguments.version},
+            as_json=arguments.json,
+        )
+        return 0
+    if command == "profile":
+        profile_command = arguments.profile_command
+        if profile_command == "list":
+            _emit(
+                "plugin.profile.list",
+                [profile.to_mapping() for profile in manager.list_profiles()],
+                as_json=arguments.json,
+            )
+            return 0
+        if profile_command in {"show", "resolve"}:
+            profile = manager.load_profile(arguments.name)
+            if profile_command == "show":
+                data: Mapping[str, Any] = {
+                    **profile.to_mapping(),
+                    "digest": profile.digest(),
+                }
+                output_command = "plugin.profile.show"
+            else:
+                data = manager.resolve_profile(profile).to_mapping()
+                output_command = "plugin.profile.resolve"
+            _emit(output_command, data, as_json=arguments.json)
+            return 0
+        if profile_command in {"enable", "disable"}:
+            profile_path = manager.profile_root / f"{arguments.name}.json"
+            if not profile_path.exists() and not profile_path.is_symlink():
+                if profile_command == "disable":
+                    raise FileNotFoundError(profile_path)
+                profile = PluginProfile(name=arguments.name)
+            else:
+                profile = manager.load_profile(arguments.name)
+            entries = list(profile.plugins)
+            matching = next(
+                (
+                    index
+                    for index, item in enumerate(entries)
+                    if item.plugin_id == arguments.plugin_id
+                ),
+                None,
+            )
+            if profile_command == "enable":
+                if matching is None:
+                    entries.append(
+                        PluginProfileRef(
+                            plugin_id=arguments.plugin_id,
+                            version=arguments.version or "*",
+                            permissions=tuple(arguments.grant or ()),
+                        )
+                    )
+                else:
+                    current = entries[matching]
+                    entries[matching] = PluginProfileRef(
+                        plugin_id=current.plugin_id,
+                        version=arguments.version or current.version,
+                        enabled=True,
+                        permissions=(
+                            tuple(arguments.grant)
+                            if arguments.grant is not None
+                            else current.permissions
+                        ),
+                        config=current.config,
+                    )
+            elif matching is None:
+                raise PluginError(
+                    f"plugin {arguments.plugin_id!r} is not present in profile {arguments.name!r}"
+                )
+            else:
+                current = entries[matching]
+                entries[matching] = _plugin_ref_mapping(
+                    PluginProfileRef(
+                        plugin_id=current.plugin_id,
+                        version=current.version,
+                        enabled=False,
+                        permissions=current.permissions,
+                        config=current.config,
+                    )
+                )
+            updated = PluginProfile(name=profile.name, plugins=tuple(entries))
+            manager.save_profile(updated)
+            _emit(
+                f"plugin.profile.{profile_command}",
+                updated.to_mapping(),
+                as_json=arguments.json,
+            )
+            return 0
+    raise AssertionError("unreachable plugin command")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="glr", description="Game Learning Runtime control plane")
     parser.add_argument("--project", default=".", help="project root or glr-project.json")
@@ -1175,6 +1328,45 @@ def _parser() -> argparse.ArgumentParser:
     knowledge_export.add_argument("--output", required=True)
     knowledge_import = knowledge_commands.add_parser("import")
     knowledge_import.add_argument("--input", required=True)
+
+    plugin = commands.add_parser(
+        "plugin", help="inspect, install, and compose declarative project plugins"
+    )
+    plugin_commands = plugin.add_subparsers(dest="plugin_command", required=True)
+    plugin_inspect = plugin_commands.add_parser(
+        "inspect", help="validate a local plugin bundle without executing it"
+    )
+    plugin_inspect.add_argument("--source", required=True)
+    plugin_install = plugin_commands.add_parser(
+        "install", help="atomically copy a validated local bundle into the project store"
+    )
+    plugin_install.add_argument("--source", required=True)
+    plugin_install.add_argument("--sha256", help="expected inspected bundle SHA-256 digest")
+    plugin_commands.add_parser("list", help="list installed plugin bundles")
+    plugin_health = plugin_commands.add_parser(
+        "health", help="report static plugin readiness without starting plugins"
+    )
+    plugin_health.add_argument("--profile")
+    plugin_remove = plugin_commands.add_parser("remove", help="remove a disabled plugin bundle")
+    plugin_remove.add_argument("plugin_id")
+    plugin_remove.add_argument("--version")
+    profiles = plugin_commands.add_parser("profile", help="manage explicit plugin profiles")
+    profile_commands = profiles.add_subparsers(dest="profile_command", required=True)
+    profile_commands.add_parser("list", help="list saved plugin profiles")
+    for profile_action, help_text in (
+        ("show", "show one saved profile"),
+        ("resolve", "resolve one profile against installed bundles"),
+    ):
+        profile_parser = profile_commands.add_parser(profile_action, help=help_text)
+        profile_parser.add_argument("name")
+    profile_enable = profile_commands.add_parser("enable", help="enable or add a profile plugin")
+    profile_enable.add_argument("name")
+    profile_enable.add_argument("plugin_id")
+    profile_enable.add_argument("--version")
+    profile_enable.add_argument("--grant", action="append")
+    profile_disable = profile_commands.add_parser("disable", help="disable a profile plugin")
+    profile_disable.add_argument("name")
+    profile_disable.add_argument("plugin_id")
     return parser
 
 
@@ -1183,6 +1375,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     arguments = _parser().parse_args(argv)
     arguments.json = arguments.json or arguments.format == "json"
+    if arguments.command == "plugin":
+        return _run_plugin_command(arguments)
     project = load_project(Path(arguments.project))
     if arguments.command == "doctor":
         return _doctor(project, as_json=arguments.json)
@@ -1321,6 +1515,7 @@ def entrypoint() -> None:  # pragma: no cover - exercised by package smoke tests
         FileNotFoundError,
         GameLaunchError,
         KeyError,
+        PluginError,
         TypeError,
         ValueError,
     ) as error:

@@ -22,6 +22,8 @@ pub enum Error {
     Semver(#[from] semver::Error),
     #[error("invalid release archive: {0}")]
     Zip(#[from] zip::result::ZipError),
+    #[error("plugin error: {0}")]
+    Plugin(String),
 }
 
 impl Error {
@@ -37,6 +39,7 @@ impl Error {
             Self::Http(_) => "UpdateError",
             Self::Semver(_) => "VersionError",
             Self::Zip(_) => "ArchiveError",
+            Self::Plugin(_) => "PluginError",
         }
     }
 }

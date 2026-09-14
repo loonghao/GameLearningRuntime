@@ -86,6 +86,11 @@ pub enum Command {
     },
     /// Check or apply a checksum-verified GLR distribution update.
     Update(UpdateArgs),
+    /// Inspect, install, and compose declarative project plugins.
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -115,6 +120,62 @@ pub enum TaskCommand {
         #[arg(long = "set", value_name = "NAME=VALUE")]
         parameters: Vec<String>,
     },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum PluginCommand {
+    /// Validate a local plugin bundle without executing it.
+    Inspect {
+        #[arg(long)]
+        source: PathBuf,
+    },
+    /// Atomically copy a validated local bundle into the project store.
+    Install {
+        #[arg(long)]
+        source: PathBuf,
+        /// Expected SHA-256 digest of the inspected bundle.
+        #[arg(long)]
+        sha256: Option<String>,
+    },
+    /// List installed plugin bundles.
+    List,
+    /// Report static plugin readiness without starting plugins.
+    Health {
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Remove a plugin bundle that is not enabled by a profile.
+    Remove {
+        id: String,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    /// Manage explicit plugin profiles.
+    Profile {
+        #[command(subcommand)]
+        command: PluginProfileCommand,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum PluginProfileCommand {
+    /// List saved plugin profiles.
+    List,
+    /// Show one saved profile.
+    Show { name: String },
+    /// Resolve one profile against installed bundles.
+    Resolve { name: String },
+    /// Enable or add a plugin in a profile.
+    Enable {
+        name: String,
+        id: String,
+        #[arg(long)]
+        version: Option<String>,
+        #[arg(long = "grant")]
+        grants: Vec<String>,
+    },
+    /// Disable a plugin in a profile.
+    Disable { name: String, id: String },
 }
 
 #[derive(Debug, Clone, Subcommand)]
