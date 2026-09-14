@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use semver::{Version, VersionReq};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -985,7 +985,19 @@ fn walk_inventory(
         if !metadata.is_file() || is_hard_linked(&metadata) {
             return Err(plugin_error("plugin source can contain only regular files"));
         }
-        let relative = portable_path(path.strip_prefix(root).unwrap())?;
+        // `Path` uses the host separator, while the bundle contract always
+        // stores `/`-separated paths.  Normalize the inventory spelling on
+        // Windows before applying the portable-path checks; otherwise a
+        // perfectly valid nested bundle (`sub/payload.py`) would be rejected
+        // because its relative `Path` renders as `sub\\payload.py`.
+        let relative_path = path.strip_prefix(root).unwrap();
+        let relative_raw = relative_path.to_string_lossy();
+        let relative_raw = if cfg!(windows) {
+            relative_raw.replace('\\', "/")
+        } else {
+            relative_raw.into_owned()
+        };
+        let relative = portable_path_text(&relative_raw)?;
         let (sha256, size) = hash_file(&path)?;
         if size > MAX_FILE_BYTES {
             return Err(plugin_error("plugin file exceeds the size limit"));
@@ -1270,19 +1282,23 @@ fn ensure_text(value: &str, label: &str, maximum: usize) -> Result<()> {
 
 fn portable_path(path: &Path) -> Result<String> {
     let raw = path.to_string_lossy();
-    if path.is_absolute() || raw.contains('\\') || raw.contains(':') {
+    if path.is_absolute() {
+        return Err(plugin_error("plugin paths must be portable relative paths"));
+    }
+    portable_path_text(&raw)
+}
+
+fn portable_path_text(raw: &str) -> Result<String> {
+    if raw.is_empty() || raw.starts_with('/') || raw.contains('\\') || raw.contains(':') {
         return Err(plugin_error("plugin paths must be portable relative paths"));
     }
     let mut parts = Vec::new();
-    for component in path.components() {
-        let Component::Normal(part) = component else {
-            return Err(plugin_error("plugin paths must be portable relative paths"));
-        };
-        let part = part.to_string_lossy();
+    for part in raw.split('/') {
         if part.is_empty()
+            || part == "."
+            || part == ".."
             || part.ends_with('.')
             || part.ends_with(' ')
-            || part.contains(':')
             || !part.is_ascii()
             || part.chars().any(|character| character.is_control())
         {
@@ -1295,7 +1311,7 @@ fn portable_path(path: &Path) -> Result<String> {
         if ["CON", "PRN", "AUX", "NUL"].contains(&stem.as_str()) || reserved_port {
             return Err(plugin_error("plugin path uses a reserved component"));
         }
-        parts.push(part.into_owned());
+        parts.push(part.to_owned());
     }
     if parts.is_empty() || parts.len() > MAX_PATH_DEPTH {
         return Err(plugin_error("plugin paths must be bounded relative paths"));
@@ -1739,6 +1755,25 @@ mod tests {
         assert_eq!(resolved[0].id, "fixture-plugin");
         assert_eq!(resolved[0].path, ".glr/plugins/fixture-plugin/1.2.3");
         assert_eq!(digest.len(), 64);
+    }
+
+    #[test]
+    fn nested_payload_paths_use_the_portable_separator() {
+        let root = tempdir().unwrap();
+        let source = bundle(root.path(), "nested-plugin", "1.0.0");
+        std::fs::create_dir_all(source.join("nested")).unwrap();
+        std::fs::write(source.join("nested").join("payload.bin"), b"nested").unwrap();
+        let manager = Manager::new(&root.path().join("project")).unwrap();
+        let inspection = manager.inspect(&source).unwrap();
+        assert!(
+            inspection
+                .files
+                .iter()
+                .any(|file| file.path == "nested/payload.bin")
+        );
+        manager
+            .install(&source, Some(&inspection.content_sha256))
+            .unwrap();
     }
 
     #[test]
