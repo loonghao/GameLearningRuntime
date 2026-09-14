@@ -1,4 +1,5 @@
 mod args;
+mod capture_presets;
 mod checkpoint;
 mod commands;
 mod contracts;

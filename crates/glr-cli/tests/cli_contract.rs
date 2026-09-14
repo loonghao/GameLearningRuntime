@@ -110,6 +110,32 @@ fn stdout(output: &Output) -> Value {
 }
 
 #[test]
+fn capture_commands_publish_training_preset_and_canonical_layout() {
+    let project = create_project();
+    let preset = stdout(&run(project.path(), &["capture", "preset"]));
+    assert_eq!(preset["command"], "capture.preset.show");
+    assert_eq!(preset["data"]["name"], "training-balanced");
+    assert_eq!(preset["data"]["crf"], 18);
+    assert_eq!(preset["data"]["frame_rate"], 30);
+    assert_eq!(preset["data"]["gop_frames"], 30);
+    assert_eq!(preset["data"]["ffmpeg_output_argv"][21], "{capture_video}");
+
+    let presets = stdout(&run(project.path(), &["capture", "preset", "--list"]));
+    assert_eq!(presets["data"].as_array().unwrap().len(), 2);
+
+    let layout = stdout(&run(project.path(), &["capture", "layout"]));
+    assert_eq!(layout["command"], "capture.layout");
+    assert_eq!(layout["data"]["schema_version"], "glr.storage-layout.v1");
+    assert!(
+        layout["data"]["run_directory"]
+            .as_str()
+            .unwrap()
+            .ends_with("/.glr/runs/<run-id>")
+    );
+    assert_eq!(layout["data"]["capture"][0], "<run>/capture.mp4");
+}
+
+#[test]
 fn doctor_emits_hash_bound_lifecycle_manifest() {
     let project = create_project();
     let config = project.path().join("training.json");

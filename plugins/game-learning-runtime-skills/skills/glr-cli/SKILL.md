@@ -127,6 +127,11 @@ explicitly opts out. The recorder is a concurrent project-owned sidecar and must
 H.264 MP4 and `glr.capture-frame.v1` step/frame index. A video without a valid checksummed index is
 review media, not supervised-learning data.
 
+Before wiring or operating capture, run `glr --project . --json capture preset` and
+`glr --project . --json capture layout`. Use `training-balanced` unless measurements justify
+another preset. Keep video, frame index, logs, datasets, and reports below the returned run
+directory; do not invent game-specific recording or report roots.
+
 Do not claim live-game acceptance from synthetic tests, process exit, video presence, run status,
 or model hashes. Report the exact remaining runtime acceptance boundary.
 

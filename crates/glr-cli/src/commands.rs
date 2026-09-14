@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::args::{
-    CheckpointCommand, Cli, Command as CliCommand, GoalCommand, KnowledgeCommand, QueryCommand,
-    ReportCommand, RunsCommand, RuntimeCommand, TransactionCommand, UpdateArgs,
+    CaptureCommand, CheckpointCommand, Cli, Command as CliCommand, GoalCommand, KnowledgeCommand,
+    QueryCommand, ReportCommand, RunsCommand, RuntimeCommand, TransactionCommand, UpdateArgs,
 };
 use crate::contracts::{
     AgentGoal, GoalEvaluation, GoalEvidenceBundle, ResearchBundle, SpatialKnowledgeBundle,
@@ -125,6 +125,32 @@ pub fn execute(cli: Cli) -> Result<i32> {
         .transpose()?;
     let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
     match cli.command {
+        CliCommand::Capture { command } => match command {
+            CaptureCommand::Preset { name, list } => {
+                if list {
+                    emit(
+                        "capture.preset.list",
+                        &crate::capture_presets::list(),
+                        cli.json,
+                    )?;
+                } else {
+                    emit(
+                        "capture.preset.show",
+                        crate::capture_presets::find(&name)?,
+                        cli.json,
+                    )?;
+                }
+                Ok(0)
+            }
+            CaptureCommand::Layout => {
+                emit(
+                    "capture.layout",
+                    &crate::capture_presets::layout(&project),
+                    cli.json,
+                )?;
+                Ok(0)
+            }
+        },
         CliCommand::Doctor => doctor(&project, cli.json),
         CliCommand::Runtime {
             command: RuntimeCommand::Start,
