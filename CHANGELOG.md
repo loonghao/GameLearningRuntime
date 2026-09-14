@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.16.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.15.0...v0.16.0) (2026-09-14)
+
+
+### Features
+
+* add learner-owned decision contracts ([#121](https://github.com/loonghao/GameLearningRuntime/issues/121)) ([b55355b](https://github.com/loonghao/GameLearningRuntime/commit/b55355bf2146a001fc9f0814115f63a385aba130))
+* add training capture presets and layout ([4ef5e42](https://github.com/loonghao/GameLearningRuntime/commit/4ef5e42488a08c44083f19b93789244a2cb0155b))
+* add typed dynamic command registry ([4f06014](https://github.com/loonghao/GameLearningRuntime/commit/4f060149aad97eb3920e28fa6ba3ac53d4755286))
+
+
+### Bug Fixes
+
+* satisfy dynamic registry quality gates ([8409f4d](https://github.com/loonghao/GameLearningRuntime/commit/8409f4dbcec1d80abc6d225d7174672f6de10271))
+* synchronize adapter builder skill payload ([0764bc6](https://github.com/loonghao/GameLearningRuntime/commit/0764bc619d2728208fe8240cba9c667755027225))
+
+
+### Documentation
+
+* standardize dynamic engine command providers ([e127c39](https://github.com/loonghao/GameLearningRuntime/commit/e127c39607b56774ba12e61d146d128c93155060))
+
 ## [0.15.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.14.0...v0.15.0) (2026-09-11)
 
 
