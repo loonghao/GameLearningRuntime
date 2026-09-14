@@ -22,7 +22,16 @@ platform-specific exact-window input, consumes `GLR_CAPTURE_VIDEO`,
 ```text
 .glr/
   runs.sqlite3
-  checkpoints/
+  checkpoints/<environment-id>/<goal-id>/
+    best.checkpoint
+    best.json
+    latest.json
+    runs/<run-id>/<trial-id>/
+      01-research.json
+      02-planner.json
+      03-trainer.json
+      04-evaluator.json
+      latest.json
   runs/<run-id>/
     trainer.log
     capture.log
@@ -38,6 +47,15 @@ platform-specific exact-window input, consumes `GLR_CAPTURE_VIDEO`,
 
 Keep `.glr/` out of Git. Do not add sibling `recordings/`, `logs`, `training-data/`,
 or `reports/` roots. Migrate old exports only as an explicit, reviewable operation.
+
+Goal checkpoints are namespaced by environment and goal so unrelated projects,
+goals, and runs cannot overwrite one another. GLR atomically writes a strict
+`glr.learning-checkpoint.v1` snapshot after research, planning, training, and
+evaluation. Each snapshot records the stage learning status, cumulative planned
+training steps, and run-relative state paths; `latest.json` points to the most
+recent completed stage at the goal, run, and trial levels. Model and optimizer bytes remain learner-owned in the
+candidate or promoted checkpoint and are never embedded into this control-state
+snapshot.
 
 An MP4 without `capture-index.jsonl` is review media only. Every index record must use
 `glr.capture-frame.v1` and bind the run, episode, step, frame, video PTS, and observation

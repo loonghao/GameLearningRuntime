@@ -16,6 +16,9 @@ use crate::contracts::{
     write_json,
 };
 use crate::error::{Error, Result};
+use crate::learning_checkpoint::{
+    LEARNING_CHECKPOINT_SCHEMA_VERSION, LearningCheckpoint, ensure_goal_root, write_stage,
+};
 use crate::process::{
     CaptureLifecycle, CaptureSession, CaptureState, CommandInvocation, executable_available,
     finish_capture, relative_portable, run_command, start_capture,
@@ -74,6 +77,17 @@ struct TrainerOutcome {
     status: &'static str,
     metrics: HashMap<String, f64>,
     stall: Option<StallVerdict>,
+}
+
+struct LearningCheckpointUpdate<'a> {
+    goal: &'a AgentGoal,
+    run_id: &'a str,
+    trial_id: &'a str,
+    stage: &'a str,
+    stage_index: u8,
+    learning_status: &'a str,
+    total_training_steps: u64,
+    state: Value,
 }
 
 pub fn execute(cli: Cli) -> Result<i32> {
@@ -868,6 +882,22 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
         fs::create_dir_all(&trial_dir)?;
         let trial_path = trial_dir.join("plan.json");
         let evaluation_path = trial_dir.join("evaluation.json");
+        if trial_number == 1 {
+            persist_learning_checkpoint(
+                project,
+                store,
+                LearningCheckpointUpdate {
+                    goal,
+                    run_id: &run.run_id,
+                    trial_id: &trial_id,
+                    stage: "research",
+                    stage_index: 1,
+                    learning_status: "completed",
+                    total_training_steps: total_steps,
+                    state: json!({"research_path": portable_run_path(run_dir, &active_research)?}),
+                },
+            )?;
+        }
         if trial_number > 1 {
             let refreshed = trial_dir.join("research.json");
             let mut context = HashMap::from([
@@ -909,6 +939,20 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             ] {
                 register_goal_artifact(store, &run.run_id, run_dir, path, role, media_type)?;
             }
+            persist_learning_checkpoint(
+                project,
+                store,
+                LearningCheckpointUpdate {
+                    goal,
+                    run_id: &run.run_id,
+                    trial_id: &trial_id,
+                    stage: "research",
+                    stage_index: 1,
+                    learning_status: "completed",
+                    total_training_steps: total_steps,
+                    state: json!({"research_path": portable_run_path(run_dir, &refreshed)?}),
+                },
+            )?;
         }
         let mut context = HashMap::from([
             ("goal_path".into(), canonical_goal.to_path_buf()),
@@ -922,19 +966,17 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             ),
         ]);
         if goal.promotion.is_some() {
-            let checkpoint_dir = project.data_dir.join("checkpoints");
+            let checkpoint_dir =
+                ensure_goal_root(&project.data_dir, &project.environment_id, &goal.goal_id)?;
             context.insert(
                 "checkpoint_path".into(),
-                checkpoint_dir.join(format!("{}.checkpoint", goal.goal_id)),
+                checkpoint_dir.join("best.checkpoint"),
             );
             context.insert(
                 "candidate_checkpoint_path".into(),
                 trial_dir.join("checkpoint.candidate"),
             );
-            context.insert(
-                "promotion_path".into(),
-                checkpoint_dir.join(format!("{}.best.json", goal.goal_id)),
-            );
+            context.insert("promotion_path".into(), checkpoint_dir.join("best.json"));
         }
         if let Some(previous) = &previous_evaluation {
             context.insert("previous_evaluation_path".into(), previous.clone());
@@ -972,6 +1014,20 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             }
         }
         total_steps += trial.max_steps;
+        persist_learning_checkpoint(
+            project,
+            store,
+            LearningCheckpointUpdate {
+                goal,
+                run_id: &run.run_id,
+                trial_id: &trial_id,
+                stage: "planner",
+                stage_index: 2,
+                learning_status: "completed",
+                total_training_steps: total_steps,
+                state: json!({"trial_path": portable_run_path(run_dir, &trial_path)?}),
+            },
+        )?;
         store.append_event(
             &run.run_id,
             "trial.planned",
@@ -1031,6 +1087,25 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             "trial.trainer",
             json!({"trial_id": trial_id, "status": trainer_outcome.status}),
         )?;
+        persist_learning_checkpoint(
+            project,
+            store,
+            LearningCheckpointUpdate {
+                goal,
+                run_id: &run.run_id,
+                trial_id: &trial_id,
+                stage: "trainer",
+                stage_index: 3,
+                learning_status: trainer_outcome.status,
+                total_training_steps: total_steps,
+                state: json!({
+                    "trainer_result_path": portable_run_path(run_dir, &trial_dir.join("trainer.result.json"))?,
+                    "candidate_checkpoint_path": portable_run_path(run_dir, &trial_dir.join("checkpoint.candidate"))?,
+                    "metrics": &trainer_outcome.metrics,
+                    "stall": &trainer_outcome.stall,
+                }),
+            },
+        )?;
         if let Some(stall) = trainer_outcome.stall.clone() {
             let (updated_rounds, abort) = observe_stall(
                 consecutive_stalled_rounds,
@@ -1071,10 +1146,8 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
         consecutive_stalled_rounds = observe_stall(consecutive_stalled_rounds, false, 0).0;
         let promotion = if let Some(config) = &goal.promotion {
             let candidate = trial_dir.join("checkpoint.candidate");
-            let live = project
-                .data_dir
-                .join("checkpoints")
-                .join(format!("{}.checkpoint", goal.goal_id));
+            let live = ensure_goal_root(&project.data_dir, &project.environment_id, &goal.goal_id)?
+                .join("best.checkpoint");
             let metric = store
                 .latest_metric_value(&run.run_id, &config.metric, metric_floor)?
                 .ok_or_else(|| {
@@ -1150,6 +1223,28 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             "trial.evaluated",
             json!({"trial_id": trial_id, "satisfied": evaluation.satisfied, "criteria": evaluation.criteria, "promotion": promotion}),
         )?;
+        persist_learning_checkpoint(
+            project,
+            store,
+            LearningCheckpointUpdate {
+                goal,
+                run_id: &run.run_id,
+                trial_id: &trial_id,
+                stage: "evaluator",
+                stage_index: 4,
+                learning_status: if evaluation.satisfied {
+                    "satisfied"
+                } else {
+                    "completed"
+                },
+                total_training_steps: total_steps,
+                state: json!({
+                    "evaluation_path": portable_run_path(run_dir, &evaluation_path)?,
+                    "satisfied": evaluation.satisfied,
+                    "promotion": promotion,
+                }),
+            },
+        )?;
         for (path, role, media_type) in [
             (&trial_path, "trial-plan", "application/json"),
             (&evaluation_path, "goal-evidence", "application/json"),
@@ -1203,6 +1298,46 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
         stalled_rounds: consecutive_stalled_rounds,
         stall_abort: false,
     })
+}
+
+fn persist_learning_checkpoint(
+    project: &Project,
+    store: &Store,
+    update: LearningCheckpointUpdate<'_>,
+) -> Result<PathBuf> {
+    let path = write_stage(
+        &project.data_dir,
+        &LearningCheckpoint {
+            schema_version: LEARNING_CHECKPOINT_SCHEMA_VERSION,
+            environment_id: &project.environment_id,
+            goal_id: &update.goal.goal_id,
+            run_id: update.run_id,
+            trial_id: update.trial_id,
+            stage: update.stage,
+            stage_index: update.stage_index,
+            learning_status: update.learning_status,
+            total_training_steps: update.total_training_steps,
+            state: update.state,
+        },
+    )?;
+    store.append_event(
+        update.run_id,
+        "learning.checkpoint",
+        json!({
+            "trial_id": update.trial_id,
+            "stage": update.stage,
+            "learning_status": update.learning_status,
+            "checkpoint_path": path,
+        }),
+    )?;
+    Ok(path)
+}
+
+fn portable_run_path(run_dir: &Path, path: &Path) -> Result<String> {
+    let relative = path.strip_prefix(run_dir).map_err(|_| {
+        Error::Contract("learning checkpoint state path must remain inside the run".into())
+    })?;
+    Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
 fn run_goal_role(

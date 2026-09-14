@@ -209,6 +209,13 @@ setup and status policy in VX tasks rather than adding core subcommands.
 the configured data directory. Training tensors and transitions remain checksummed artifacts or
 JSONL datasets; SQLite is the query projection, not the tensor store.
 
+Goal runs keep promoted model bytes under
+`.glr/checkpoints/<environment-id>/<goal-id>/best.checkpoint` and atomically
+write `glr.learning-checkpoint.v1` control-state snapshots after research,
+planning, training, and evaluation under the same goal namespace. These
+snapshots record learning status and paths; learner-owned model, optimizer, and
+replay-buffer bytes remain in the candidate or promoted checkpoint.
+
 ## Recording presets and storage layout
 
 Run `glr --project . --json capture preset` to get the default `training-balanced`
