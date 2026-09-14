@@ -50,10 +50,20 @@ Profiles are saved as .glr/profiles/<name>.json:
 }
 ~~~
 
+Profile configuration is canonicalized and included in the profile digest.
+Finite JSON numbers, booleans, strings, arrays, and objects are supported;
+non-finite values are rejected. Rust enables correctly-rounded float parsing so
+Python and Rust preserve the same digest bytes at decimal boundaries.
+Text field limits are measured in UTF-8 bytes, so the Python SDK and Rust CLI
+apply the same boundary for non-ASCII metadata.
+
 The profile grant must be a subset of the manifest declaration. Dependencies
 are selected by highest satisfying semantic version, then emitted in a stable
 dependency-first order. Cycles, conflicting requirements, unsupported
-platforms, incompatible GLR versions, and missing bundles fail closed. If a
+platforms, incompatible GLR versions, and missing bundles fail closed. The Rust
+CLI checks `requires.glr` against its compiled version; pass `glr_version` to
+the Python `PluginManager` when the SDK is enforcing a specific runtime, or
+leave it unset for source-side inventory that has no runtime binding. If a
 dependency is also listed explicitly, its explicit profile grants and config
 are retained rather than silently discarded; incompatible repeated requests
 fail closed.

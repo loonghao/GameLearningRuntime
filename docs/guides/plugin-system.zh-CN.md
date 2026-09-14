@@ -36,6 +36,15 @@ Profile 保存于 .glr/profiles/<name>.json。Profile 中授予的权限必须�
 同时在 Profile 中显式列出，显式授予的权限和配置会保留，不会被依赖解析静默丢弃；不兼容
 的重复请求会失败关闭。
 
+Rust CLI 会用自身编译版本校验 `requires.glr`；Python `PluginManager` 在需要绑定具体
+runtime 时传入 `glr_version`，不传则适合没有 runtime 绑定的源代码清单检查。
+
+配置会参与 profile digest 的规范化计算。当前支持有限 JSON 数字、布尔值、字符串、数组
+和对象，非有限值会被拒绝。Rust 启用正确舍入的浮点解析，使 Python 与 Rust 在小数边界
+保留一致的 digest 字节。
+文本字段的长度限制按 UTF-8 字节计算，因此 Python SDK 与 Rust CLI 对非 ASCII 元数据使用
+一致的边界。
+
 ## CLI 流程
 
 独立 Rust CLI 是正式入口；Python SDK 提供同名开发接口：

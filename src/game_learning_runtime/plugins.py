@@ -132,10 +132,15 @@ def _strict_fields(
 
 
 def _text(value: object, *, path: str, maximum: int = 4096) -> str:
+    try:
+        encoded_length = len(value.encode("utf-8")) if isinstance(value, str) else -1
+    except UnicodeEncodeError:
+        encoded_length = -1
     if (
         not isinstance(value, str)
         or not value
-        or len(value) > maximum
+        or encoded_length > maximum
+        or encoded_length < 0
         or any(
             unicodedata.category(character) == "Cc" or 0xD800 <= ord(character) <= 0xDFFF
             for character in value

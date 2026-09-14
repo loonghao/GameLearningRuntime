@@ -45,10 +45,18 @@ only after applying trust, authorization, and runtime-specific policy.
   symlinks/reparse points, duplicate paths, oversized files, and digest
   mismatches fail closed.
 - A profile grant cannot exceed the permissions declared by its plugin.
+- Digest-bearing profile configuration accepts finite JSON numbers (plus
+  booleans, strings, arrays, and objects); Rust enables correctly-rounded
+  float parsing to preserve Python/Rust digest parity at decimal boundaries.
+- Text field limits are measured in UTF-8 bytes across the Python SDK and Rust
+  CLI, keeping non-ASCII metadata validation at the same boundary.
 - Dependencies are resolved deterministically, with cycle and version-conflict
   detection. Explicit profile grants/configuration are retained when a bundle
   is first discovered through a dependency; incompatible repeated requests fail
   closed. Output paths are project-relative and profile digests are stable.
+- The Rust CLI checks `requires.glr` against its compiled version. The Python
+  SDK accepts an explicit `glr_version` for the same check and intentionally
+  permits it to be omitted for source-side inventory without a runtime binding.
 - `in-process` is metadata, not an authorization bypass.  The default
   isolation hint is `process`; no runner is implied by the contract.
 - Existing `glr.project.v1` role commands and `glr.extensions` remain valid.

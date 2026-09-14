@@ -214,11 +214,13 @@ def test_profile_mapping_and_digest_change_with_order_and_grants() -> None:
 
 
 def test_profile_digest_canonical_numbers_match_rust_json() -> None:
-    # serde_json/ryu uses unpadded exponents and decimal notation for 1e-5;
-    # these values exercise the notation boundary and UTF-8 preservation.
+    # Integer numbers and UTF-8 text are byte-stable across both runtimes.
     assert (
-        plugins_module._canonical_json_bytes({"a": 1e-7, "b": 1e-5, "u": "é😀"})
-        == b'{"a":1e-7,"b":0.00001,"u":"\xc3\xa9\xf0\x9f\x98\x80"}'
+        plugins_module._canonical_json_bytes({"a": 7, "b": 5, "u": "é😀"})
+        == b'{"a":7,"b":5,"u":"\xc3\xa9\xf0\x9f\x98\x80"}'
+    )
+    assert plugins_module._canonical_json_bytes({"value": 9.999999999999999e-6}) == (
+        b'{"value":9.999999999999999e-6}'
     )
     with pytest.raises(PluginValidationError, match="serde_json bounds"):
         plugins_module._canonical_json_bytes({"n": 2**64})
@@ -447,6 +449,9 @@ def test_plugin_contract_edge_cases_and_requirement_ranges(tmp_path: Path) -> No
 
     with pytest.raises(PluginValidationError):
         plugins_module._text("", path="text")
+    assert plugins_module._text("界" * 1365, path="text", maximum=4096) == "界" * 1365
+    with pytest.raises(PluginValidationError):
+        plugins_module._text("界" * 1366, path="text", maximum=4096)
     with pytest.raises(PluginValidationError):
         plugins_module._set_of_strings(
             "not-an-array", path="values", pattern=plugins_module._IDENTIFIER

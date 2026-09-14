@@ -1696,7 +1696,8 @@ fn is_hard_linked(metadata: &Metadata) -> bool {
 mod tests {
     use super::{
         Manager, PLUGIN_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION, Profile, ProfileRef,
-        canonical_json, canonical_requirement, portable_path, requirement_req,
+        canonical_json, canonical_requirement, ensure_text, portable_path, requirement_req,
+        validate_config,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -1829,7 +1830,21 @@ mod tests {
     }
 
     #[test]
+    fn text_limits_use_utf8_bytes_across_runtimes() {
+        let boundary = "界".repeat(1365); // 4,095 UTF-8 bytes.
+        assert!(ensure_text(&boundary, "text", 4096).is_ok());
+        let over_limit = "界".repeat(1366); // 4,098 UTF-8 bytes.
+        assert!(ensure_text(&over_limit, "text", 4096).is_err());
+    }
+
+    #[test]
     fn canonical_json_numbers_preserve_cross_language_spelling() {
+        let parsed: serde_json::Value = serde_json::from_str("9.999999999999999e-06").unwrap();
+        assert_eq!(
+            canonical_json(&parsed),
+            b"9.999999999999999e-6",
+            "JSON float parsing must retain the correctly rounded value"
+        );
         let value = json!({
             "a": 1e-7,
             "b": 1e-5,
@@ -1845,6 +1860,12 @@ mod tests {
             canonical_json(&value),
             "{\"a\":1e-7,\"b\":0.00001,\"c\":1e-6,\"d\":0.0001,\"e\":1e+20,\"f\":1e+21,\"g\":0.000012345678901234568,\"h\":1.2345678901234567e+20,\"u\":\"é😀\"}".as_bytes()
         );
+    }
+
+    #[test]
+    fn profile_config_accepts_roundtripped_floating_point_numbers() {
+        assert!(validate_config(&json!({"nested": {"value": 9.999999999999999e-6}})).is_ok());
+        assert!(validate_config(&json!({"count": 7})).is_ok());
     }
 
     #[test]
