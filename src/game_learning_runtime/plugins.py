@@ -185,7 +185,12 @@ def _set_of_strings(
 
 
 def _portable_path(value: object, *, path: str) -> str:
-    if not isinstance(value, str) or not value or "\\" in value or ":" in value:
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\\" in value
+        or any(character in '<>:"|?*' for character in value)
+    ):
         raise PluginValidationError(f"{path} must be a portable relative path")
     candidate = PurePosixPath(value)
     if (

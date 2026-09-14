@@ -1289,7 +1289,11 @@ fn portable_path(path: &Path) -> Result<String> {
 }
 
 fn portable_path_text(raw: &str) -> Result<String> {
-    if raw.is_empty() || raw.starts_with('/') || raw.contains('\\') || raw.contains(':') {
+    if raw.is_empty()
+        || raw.starts_with('/')
+        || raw.contains('\\')
+        || raw.chars().any(|character| "<>:\"|?*".contains(character))
+    {
         return Err(plugin_error("plugin paths must be portable relative paths"));
     }
     let mut parts = Vec::new();
@@ -1827,6 +1831,11 @@ mod tests {
     #[test]
     fn portable_paths_are_ascii_for_cross_platform_identity() {
         assert!(portable_path(std::path::Path::new("payload-é.py")).is_err());
+        for path in [
+            "bad<.py", "bad>.py", "bad:.py", "bad\".py", "bad|.py", "bad?.py", "bad*.py",
+        ] {
+            assert!(portable_path(std::path::Path::new(path)).is_err(), "{path}");
+        }
     }
 
     #[test]

@@ -460,6 +460,9 @@ def test_plugin_contract_edge_cases_and_requirement_ranges(tmp_path: Path) -> No
         plugins_module._portable_path("", path="path")
     with pytest.raises(PluginValidationError):
         plugins_module._portable_path("payload-é.py", path="path")
+    for invalid in '<>:"|?*':
+        with pytest.raises(PluginValidationError):
+            plugins_module._portable_path(f"bad{invalid}.py", path="path")
     with pytest.raises(PluginValidationError):
         plugins_module._parse_semver(None, path="version")
     with pytest.raises(PluginValidationError):
