@@ -167,6 +167,8 @@ Use `--json` for compact `glr.cli-output.v1` output.
 
 ```powershell
 glr --project . --json doctor
+glr --project . --json capture preset
+glr --project . --json capture layout
 glr --project . --json runtime start
 glr --project . --context config/contexts/ranked.toml --json doctor
 glr --project . --context config/contexts/ranked.toml --json train
@@ -205,6 +207,21 @@ setup and status policy in VX tasks rather than adding core subcommands.
 `train` and `goal run` record lifecycle, events, metrics, logs, capture artifacts, and hashes under
 the configured data directory. Training tensors and transitions remain checksummed artifacts or
 JSONL datasets; SQLite is the query projection, not the tensor store.
+
+## Recording presets and storage layout
+
+Run `glr --project . --json capture preset` to get the default `training-balanced`
+FFmpeg output arguments. They specify H.264/libx264, CRF 18, `fast`, 30 FPS CFR,
+1920x1080, yuv420p, GOP 30, fixed keyframes, fast-start metadata, and no audio.
+The project recorder owns the exact-window input and replaces `{capture_video}` with
+`GLR_CAPTURE_VIDEO`. Use `capture preset --list` to discover alternatives.
+
+Run `glr --project . --json capture layout` to resolve the canonical local paths.
+Keep each run's logs, video, index, datasets, and report below
+`.glr/runs/<run-id>/`, shared checkpoints below `.glr/checkpoints/`, and the query
+projection at `.glr/runs.sqlite3`. Do not create game-specific top-level recording,
+log, training-data, or report roots. A video without a valid checksummed
+`glr.capture-frame.v1` index remains review media, not training data.
 
 ## Offline run reports
 
