@@ -1,4 +1,7 @@
+import pytest
+
 from game_learning_runtime.command_registry import CommandRegistry, CommandSpec
+
 
 def test_registry_is_deterministic_and_generation_tracked():
     r = CommandRegistry((CommandSpec("shrine_rest"), CommandSpec("shop_buy", params=("item_id",))))
@@ -9,9 +12,7 @@ def test_registry_is_deterministic_and_generation_tracked():
     assert r.generation == 2
     assert r.require("equip_item").name == "equip_item"
 
+
 def test_duplicate_commands_rejected():
-    try:
+    with pytest.raises(ValueError, match="duplicate command name"):
         CommandRegistry((CommandSpec("x"), CommandSpec("x")))
-    except ValueError:
-        return
-    assert False
