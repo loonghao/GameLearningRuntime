@@ -20,6 +20,12 @@ versioning, and low adoption cost for local vx/uv projects.
 └───────────────────────────┬─────────────────────────────────┘
                             │ Tensor trees / Unroll / JSONL
 ┌───────────────────────────▼─────────────────────────────────┐
+│ Plugin control plane                                        │
+│ glr.plugin.v1 bundles │ glr.profile.v1 compositions         │
+│ inspect/install/list/health │ explicit grants + digests     │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ resolved declarative data
+┌───────────────────────────▼─────────────────────────────────┐
 │ GLR application layer                                       │
 │ SyncCollector │ recorder/replay │ framework adapters         │
 │ optional BC/PPO/GAE/V-trace objective primitives            │
@@ -98,6 +104,14 @@ knowledge, and cited research; tensors, transitions, videos, and model bytes
 remain checksummed artifacts. The bounded goal loop can refresh research and
 adjust declarative reward terms between trials, but only persisted authoritative
 runtime metrics can satisfy its machine-readable criteria.
+
+The plugin control plane adds a declarative, no-exec extension boundary above
+those project roles. `glr.plugin.v1` describes a portable local bundle and its
+capabilities; `glr.profile.v1` composes pinned bundles with explicit permission
+grants. The Rust and Python CLIs inspect, stage, list, health-check, resolve, and
+remove bundles without importing plugin code, starting processes, or contacting
+the network. A future runtime may consume a resolved record through a reviewed
+adapter, but installation alone never grants game or host authority.
 
 The control plane is a standalone Rust executable and the primary distribution
 entrypoint. A unified, target-specific release archive contains `glr`, the

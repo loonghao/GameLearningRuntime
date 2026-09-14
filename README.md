@@ -74,6 +74,7 @@ engine, transport, or algorithm.
 | Integrations | Optional Gymnasium, TorchRL 0.13, and model-neutral PyTorch BC/PPO/GAE/V-trace objectives |
 | Validation | Fail-closed contract wrapper and privacy-safe synthetic conformance profiles |
 | Agent control plane | Standalone Rust `glr` JSON CLI, strict project roles, bounded research/plan/train/evaluate goals, SQLite run queries, spatial knowledge transfer, managed binary/Skill updates |
+| Plugin control plane | Declarative `glr.plugin.v1` bundles and `glr.profile.v1` compositions with no-exec inspect/install, explicit permission grants, dependency resolution, and digest checks |
 | Review and supervised capture | Concurrent project-owned H.264 capture with checksummed episode/step-to-frame index |
 | Run review reports | Offline interactive `glr.run-report.v1` HTML with metrics, event timeline, route traces, progression, explicit PvP results, and checksummed media links |
 | Agent workflow | Separate `glr-adapter-builder` and `glr-cli` Skills for adapter construction versus operation |
@@ -144,6 +145,28 @@ Projects can add strict, fixed-argv workflows in `glr.toml`. Use
 environment resolution while GLR owns validation, dependency ordering, timeout,
 logs, and execution receipts. See [Extend GLR with declarative VX
 tasks](docs/guides/declarative-tasks.md).
+
+### DSH-like plugin bundles
+
+Projects can compose reviewed learner, recorder, evaluator, or harness bundles
+through a declarative profile, inspired by DeepSeek Harness (DSH). The control
+plane accepts local directories, validates `glr.plugin.v1` and `glr.profile.v1`,
+and never imports entrypoints, runs hooks, starts processes, or accesses the
+network during inspection or installation:
+
+```powershell
+glr --project . --json plugin inspect --source plugins/torchrl-learner
+glr --project . --json plugin install --source plugins/torchrl-learner --sha256 <digest>
+glr --project . --json plugin profile enable training torchrl-learner --grant read:environment
+glr --project . --json plugin profile resolve training
+glr --project . --json plugin health --profile training
+```
+
+Use the [plugin system guide](docs/guides/plugin-system.md) for the bundle
+schema, permission model, and Python API. TorchRL is the recommended first
+learner slot because its optional 0.13 integration is already CI-tested;
+Sample Factory remains an independent high-throughput backend choice. The
+repository ships the contracts and lifecycle, not either framework's payload.
 
 Select invocation-specific configuration with a strict project-relative
 `glr.run-context.v1` TOML file. GLR freezes the context and its declared inputs,
@@ -565,6 +588,7 @@ runbook](docs/runbooks/release.md).
 - [Connect Unity and Unreal runtimes](docs/guides/engine-runtime-integration.md)
 - [Use the Runtime Host and C#/C++ provider SDKs](docs/guides/runtime-host-and-provider-sdks.md)
 - [Connect authorized BepInEx and UE4SS loaders](docs/guides/loader-plugin-integration.md)
+- [Compose DSH-like declarative plugin bundles](docs/guides/plugin-system.md)
 - [Start configured game instances before training](docs/guides/game-launch.md)
 - [Extend GLR with declarative VX tasks](docs/guides/declarative-tasks.md)
 - [Standard agent-first CLI and query tables](docs/guides/agent-first-cli.md)

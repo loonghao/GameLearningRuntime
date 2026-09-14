@@ -25,6 +25,7 @@
 - [ADR-0024: Bind invocation-scoped run contexts](0024-bind-invocation-run-contexts.md)
 
 - [ADR-0025: Record learner-owned dynamic decisions](0025-record-learner-owned-decisions.md)
+- [ADR-0026: Add a plugin-first extension system](0026-plugin-first-extension-system.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

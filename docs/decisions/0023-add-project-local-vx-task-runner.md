@@ -74,9 +74,10 @@ platforms and shell composition creates avoidable injection and audit risks.
 **Implement Python environment management inside GLR.** Rejected because VX and
 uv already own tool and Python environment resolution.
 
-**Load native or Python CLI plugins.** Deferred because an ABI/plugin lifecycle
-is unnecessary for declarative local workflows and materially increases trust
-and compatibility costs.
+**Load native or Python CLI plugins.** Deferred because an executable ABI/plugin
+lifecycle is unnecessary for declarative local workflows and materially
+increases trust and compatibility costs. ADR-0026 later adds a no-exec,
+declarative bundle/profile inventory without changing this boundary.
 
 ## References
 
