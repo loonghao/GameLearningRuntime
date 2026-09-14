@@ -1,10 +1,11 @@
 """Typed, reloadable command registry shared by game adapters."""
+
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from hashlib import sha256
-import json
-from typing import Any, Mapping
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class CommandSpec:
 
 class CommandRegistry:
     """Deterministic registry; replacement is atomic and generation tracked."""
+
     def __init__(self, specs: tuple[CommandSpec, ...] = ()) -> None:
         self._generation = 0
         self._specs: dict[str, CommandSpec] = {}
@@ -43,8 +45,11 @@ class CommandRegistry:
     def capabilities(self) -> dict[str, Any]:
         commands = [self._specs[n].__dict__ for n in self.names()]
         payload = json.dumps(commands, sort_keys=True, separators=(",", ":"))
-        return {"commands": commands, "generation": self._generation,
-                "registry_sha256": sha256(payload.encode()).hexdigest()}
+        return {
+            "commands": commands,
+            "generation": self._generation,
+            "registry_sha256": sha256(payload.encode()).hexdigest(),
+        }
 
     def require(self, name: str) -> CommandSpec:
         try:
