@@ -79,7 +79,7 @@ running a goal, transferring knowledge, or claiming reproduction.
 
 - `glr update --check` is a read-only release check and is safe to use when
   diagnosing version drift.
-- Run `glr update --yes` only when the user explicitly asks to update GLR. It
+- Run `glr update` only when the user explicitly asks to update GLR. It
   verifies the exact platform archive and `SHA256SUMS`, then updates the `glr`
   executable, its sibling `glr-hostd`, and the repository-owned `glr-cli` and
   `glr-adapter-builder` Skills.

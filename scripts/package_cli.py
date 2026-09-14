@@ -56,7 +56,7 @@ def package_cli(*, cli: Path, host: Path, target: str, version: str, output: Pat
 1. Verify this archive against `SHA256SUMS` from the same GitHub Release.
 2. Put `glr{executable_suffix}` and `glr-hostd{executable_suffix}` on `PATH`.
 3. Run `glr --version` and `glr --project PATH doctor`.
-4. Copy `skills/*` into a project's `.agents/skills/`, or let `glr update --yes`
+4. Copy `skills/*` into a project's `.agents/skills/`, or let `glr update`
    synchronize them on the next release.
 
 The standalone CLI is the deployment and agent-control entrypoint. Install the

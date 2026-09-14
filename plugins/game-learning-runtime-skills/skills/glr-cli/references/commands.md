@@ -22,9 +22,9 @@ acceptance.
 Only after an explicit user update request, apply the exact-target release:
 
 ```powershell
-glr --json update --yes
-glr --json update --yes --skills-dir .agents/skills
-glr --json update --yes --no-skills
+glr --json update
+glr --json update --skills-dir .agents/skills
+glr --json update --no-skills
 ```
 
 The default update scope is the CLI, sibling Runtime Host, and project Skills.
@@ -34,6 +34,7 @@ manager to replace a plugin package, or copy the package's `skills/` payload
 into the project directory intentionally before running a project update.
 The updater requires HTTPS, a matching target manifest, and the published
 `SHA256SUMS`; it never runs an installer script or changes project/trainer data.
+The former `--yes` form remains accepted for compatibility.
 Re-run `--version`, `doctor`, and `update --check` after an update.
 
 The public release check uses GitHub's latest-release asset link instead of the

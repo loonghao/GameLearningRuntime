@@ -29,14 +29,14 @@ does not prove a live bridge handshake or game acceptance.
 ## Update managed GLR components
 
 `glr update --check` is read-only. When the user explicitly requests an update,
-run `glr update --yes`. The updater requires HTTPS, downloads the exact Rust
+run `glr update`. The updater requires HTTPS, downloads the exact Rust
 target archive and `SHA256SUMS`, verifies the release manifest and digest, then
 replaces the CLI, sibling Runtime Host, and project Skills.
 
 ```powershell
-glr --json update --yes
-glr --json update --yes --skills-dir .agents/skills
-glr --json update --yes --no-skills
+glr --json update
+glr --json update --skills-dir .agents/skills
+glr --json update --no-skills
 ```
 
 It never runs an installer script or modifies game code, role dependencies,
@@ -46,6 +46,7 @@ same-release integrity; it is not publisher signature verification. Re-run
 Checks use GitHub's public latest-release asset link and do not consume the
 anonymous REST API quota. The selected version and exact target archive are
 derived from the published `SHA256SUMS` before any update is applied.
+The former `--yes` form remains accepted for compatibility.
 
 ## Configure the project
 

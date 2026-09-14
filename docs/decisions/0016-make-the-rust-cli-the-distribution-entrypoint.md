@@ -41,7 +41,7 @@ The Rust CLI owns:
   research/plan/train/evaluate loop;
 - the SQLite metadata projection and compatibility with project roles that use
   the Python SDK;
-- `glr update --check` and confirmed `glr update --yes` operations.
+- read-only `glr update --check` and explicit `glr update` operations.
 
 Each supported GitHub Release target publishes one
 `glr-{version}-{rust-target}.zip`. The archive contains the `glr` CLI,
@@ -50,7 +50,8 @@ Each supported GitHub Release target publishes one
 updater selects the exact compiled Rust target, downloads the exact
 `SHA256SUMS`, verifies the archive before extraction, rejects unsafe archive
 paths and symlinks, and then replaces only those managed components. Applying
-an update requires `--yes`. Skill synchronization targets the current project's
+invoking `glr update` applies an update by default, while `--check` remains
+read-only. Skill synchronization targets the current project's
 `.agents/skills` directory unless the caller supplies `--skills-dir` or
 `--no-skills`.
 

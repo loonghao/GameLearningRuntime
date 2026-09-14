@@ -24,14 +24,14 @@ glr --json update --check
 
 ## 更新 GLR 托管组件
 
-`glr update --check` 是只读操作。用户明确要求更新后，执行 `glr update --yes`。Updater
+`glr update --check` 是只读操作。用户明确要求更新后，直接执行 `glr update`。Updater
 只通过 HTTPS 下载准确 Rust target 的压缩包和 `SHA256SUMS`，校验 release manifest 与
 摘要后，替换 CLI、同目录 Runtime Host 和项目 Skills。
 
 ```powershell
-glr --json update --yes
-glr --json update --yes --skills-dir .agents/skills
-glr --json update --yes --no-skills
+glr --json update
+glr --json update --skills-dir .agents/skills
+glr --json update --no-skills
 ```
 
 它不会运行安装脚本，也不会修改游戏代码、角色依赖、虚拟环境、模型、数据集或
@@ -39,6 +39,7 @@ glr --json update --yes --no-skills
 更新后重新执行 `--version`、`doctor` 和 `update --check`。
 检查通过 GitHub 的公开 latest-release 资源链接完成，不消耗匿名 REST API 配额。
 Updater 会先从发布的 `SHA256SUMS` 推导版本与准确平台产物，再执行任何更新。
+原有的 `--yes` 写法仍保留兼容。
 
 ## 配置项目
 

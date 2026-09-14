@@ -322,8 +322,8 @@ pub struct UpdateArgs {
     /// Check the release and checksum contract without changing files.
     #[arg(long, conflicts_with = "yes")]
     pub check: bool,
-    /// Confirm replacement of managed GLR binaries and skills.
-    #[arg(long)]
+    /// Backward-compatible alias; updates are applied by default.
+    #[arg(long, hide = true)]
     pub yes: bool,
     /// Override the target directory that receives bundled GLR skills.
     #[arg(long, conflicts_with = "no_skills")]
@@ -331,4 +331,41 @@ pub struct UpdateArgs {
     /// Update binaries only.
     #[arg(long)]
     pub no_skills: bool,
+}
+
+impl UpdateArgs {
+    pub fn applies_update(&self) -> bool {
+        !self.check
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn update_applies_by_default_and_check_remains_read_only() {
+        let cli = Cli::try_parse_from(["glr", "update"]).unwrap();
+        let Command::Update(arguments) = cli.command else {
+            panic!("expected update command");
+        };
+        assert!(arguments.applies_update());
+
+        let cli = Cli::try_parse_from(["glr", "update", "--check"]).unwrap();
+        let Command::Update(arguments) = cli.command else {
+            panic!("expected update command");
+        };
+        assert!(!arguments.applies_update());
+    }
+
+    #[test]
+    fn legacy_yes_flag_still_applies_an_update() {
+        let cli = Cli::try_parse_from(["glr", "update", "--yes"]).unwrap();
+        let Command::Update(arguments) = cli.command else {
+            panic!("expected update command");
+        };
+        assert!(arguments.yes);
+        assert!(arguments.applies_update());
+    }
 }

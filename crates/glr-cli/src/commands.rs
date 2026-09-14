@@ -427,13 +427,13 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
 fn run_update(cli: &Cli, arguments: &UpdateArgs) -> Result<i32> {
     let updater = Updater::github()?;
     let plan = updater.check()?;
-    if !arguments.yes {
+    if !arguments.applies_update() {
         emit(
             "update.check",
             &json!({
                 "plan": plan,
                 "applied": false,
-                "confirmation_required": !arguments.check,
+                "confirmation_required": false,
             }),
             cli.json,
         )?;
