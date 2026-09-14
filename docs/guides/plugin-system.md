@@ -54,6 +54,8 @@ Profile configuration is canonicalized and included in the profile digest.
 Finite JSON numbers, booleans, strings, arrays, and objects are supported;
 non-finite values are rejected. Rust enables correctly-rounded float parsing so
 Python and Rust preserve the same digest bytes at decimal boundaries.
+Integer literals must fit the signed-64/unsigned-64 bounds; negative zero is
+canonicalized to zero.
 Text field limits are measured in UTF-8 bytes, so the Python SDK and Rust CLI
 apply the same boundary for non-ASCII metadata.
 

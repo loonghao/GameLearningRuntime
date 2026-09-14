@@ -222,6 +222,8 @@ def test_profile_digest_canonical_numbers_match_rust_json() -> None:
     assert plugins_module._canonical_json_bytes({"value": 9.999999999999999e-6}) == (
         b'{"value":9.999999999999999e-6}'
     )
+    assert plugins_module._canonical_json_bytes({"integer_zero": 0}) == b'{"integer_zero":0}'
+    assert plugins_module._canonical_json_bytes({"negative_zero": -0.0}) == (b'{"negative_zero":0}')
     with pytest.raises(PluginValidationError, match="serde_json bounds"):
         plugins_module._canonical_json_bytes({"n": 2**64})
     with pytest.raises(PluginValidationError, match="keys must be strings"):

@@ -21,7 +21,7 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from math import isfinite
+from math import copysign, isfinite
 from pathlib import Path, PurePosixPath
 from threading import RLock
 from types import MappingProxyType
@@ -240,6 +240,10 @@ def _thaw_json(value: Any) -> Any:
         return {key: _thaw_json(item) for key, item in value.items()}
     if isinstance(value, tuple):
         return [_thaw_json(item) for item in value]
+    if isinstance(value, float) and value == 0.0 and copysign(1.0, value) < 0:
+        # Canonical JSON treats the integer and floating spellings of negative
+        # zero alike; this also matches serde_json's parsed ``-0`` behavior.
+        return 0
     return value
 
 

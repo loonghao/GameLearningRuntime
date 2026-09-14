@@ -48,6 +48,8 @@ only after applying trust, authorization, and runtime-specific policy.
 - Digest-bearing profile configuration accepts finite JSON numbers (plus
   booleans, strings, arrays, and objects); Rust enables correctly-rounded
   float parsing to preserve Python/Rust digest parity at decimal boundaries.
+  Integer literals must fit the signed-64/unsigned-64 bounds and negative zero
+  is canonicalized to zero.
 - Text field limits are measured in UTF-8 bytes across the Python SDK and Rust
   CLI, keeping non-ASCII metadata validation at the same boundary.
 - Dependencies are resolved deterministically, with cycle and version-conflict

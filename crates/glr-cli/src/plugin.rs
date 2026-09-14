@@ -1350,6 +1350,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, maximum: u64, label: &st
         return Err(plugin_error(format!("{label} exceeds the size limit")));
     }
     let bytes = fs::read(&path)?;
+    validate_json_integer_bounds(&bytes)?;
     let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
     let value = StrictJsonValue
         .deserialize(&mut deserializer)
@@ -1358,6 +1359,90 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, maximum: u64, label: &st
         .end()
         .map_err(|error| plugin_error(format!("invalid {label}: {error}")))?;
     serde_json::from_value(value).map_err(|error| plugin_error(format!("invalid {label}: {error}")))
+}
+
+/// Keep JSON integer semantics aligned with the Python SDK.
+///
+/// `serde_json` intentionally falls back to `f64` when an integer literal is
+/// larger than `u64` (or smaller than `i64::MIN`). That fallback would turn a
+/// declaration such as `18446744073709551616` into a rounded float and make
+/// the Rust and Python control planes disagree. Scan the original JSON
+/// spelling before deserialization so integer literals are bounded while
+/// decimal/exponent forms continue through the correctly-rounded float path.
+fn validate_json_integer_bounds(bytes: &[u8]) -> Result<()> {
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            index += 1;
+            continue;
+        }
+        if byte != b'-' && !byte.is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+
+        let start = index;
+        if byte == b'-' {
+            index += 1;
+            if index >= bytes.len() || !bytes[index].is_ascii_digit() {
+                continue;
+            }
+        }
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        while index < bytes.len()
+            && matches!(bytes[index], b'.' | b'e' | b'E' | b'+' | b'-' | b'0'..=b'9')
+        {
+            index += 1;
+        }
+        let token = &bytes[start..index];
+        if token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
+            continue;
+        }
+        let (negative, digits) = if token.first() == Some(&b'-') {
+            (true, &token[1..])
+        } else {
+            (false, token)
+        };
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            // Leave malformed number syntax to serde_json's parser.
+            continue;
+        }
+        let mut magnitude = 0_u128;
+        for digit in digits {
+            magnitude = magnitude
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(u128::from(digit - b'0')))
+                .ok_or_else(|| plugin_error("JSON integer is outside Rust serde_json bounds"))?;
+        }
+        let limit = if negative {
+            1_u128 << 63
+        } else {
+            u128::from(u64::MAX)
+        };
+        if magnitude > limit {
+            return Err(plugin_error(
+                "JSON integer is outside Rust serde_json bounds",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Deserialize JSON while rejecting duplicate object keys.
@@ -1413,6 +1498,9 @@ impl<'de> Visitor<'de> for StrictJsonVisitor {
     where
         E: de::Error,
     {
+        if value == 0.0 && value.is_sign_negative() {
+            return Ok(Value::Number(0.into()));
+        }
         serde_json::Number::from_f64(value)
             .map(Value::Number)
             .ok_or_else(|| E::custom("JSON number must be finite"))
@@ -1608,6 +1696,13 @@ fn canonical_json(value: &Value) -> Vec<u8> {
                 serde_json::to_value(sorted).expect("BTreeMap is serializable")
             }
             Value::Array(values) => Value::Array(values.iter().map(normalize).collect()),
+            Value::Number(number)
+                if number
+                    .as_f64()
+                    .is_some_and(|value| value == 0.0 && value.is_sign_negative()) =>
+            {
+                Value::Number(0.into())
+            }
             _ => value.clone(),
         }
     }
@@ -1699,9 +1794,9 @@ fn is_hard_linked(metadata: &Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        Manager, PLUGIN_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION, Profile, ProfileRef,
-        canonical_json, canonical_requirement, ensure_text, portable_path, requirement_req,
-        validate_config,
+        Manager, PLUGIN_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION, PROFILE_STORE_DIR, Profile,
+        ProfileRef, canonical_json, canonical_requirement, ensure_text, portable_path,
+        requirement_req, validate_config, validate_json_integer_bounds,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -1854,6 +1949,8 @@ mod tests {
             b"9.999999999999999e-6",
             "JSON float parsing must retain the correctly rounded value"
         );
+        let negative_integer_zero: serde_json::Value = serde_json::from_str("-0").unwrap();
+        assert_eq!(canonical_json(&negative_integer_zero), b"0");
         let value = json!({
             "a": 1e-7,
             "b": 1e-5,
@@ -1875,6 +1972,35 @@ mod tests {
     fn profile_config_accepts_roundtripped_floating_point_numbers() {
         assert!(validate_config(&json!({"nested": {"value": 9.999999999999999e-6}})).is_ok());
         assert!(validate_config(&json!({"count": 7})).is_ok());
+    }
+
+    #[test]
+    fn integer_json_bounds_are_checked_before_float_fallback() {
+        assert!(validate_json_integer_bounds(br#"{"value":18446744073709551615}"#).is_ok());
+        assert!(validate_json_integer_bounds(br#"{"value":18446744073709551616}"#).is_err());
+        assert!(validate_json_integer_bounds(br#"{"value":-9223372036854775808}"#).is_ok());
+        assert!(validate_json_integer_bounds(br#"{"value":-9223372036854775809}"#).is_err());
+        assert!(validate_json_integer_bounds(br#"{"value":18446744073709551616.0}"#).is_ok());
+        assert!(validate_json_integer_bounds(br#"{"value":18446744073709551616e0}"#).is_ok());
+        assert!(validate_json_integer_bounds(br#"{"value":"18446744073709551616"}"#).is_ok());
+    }
+
+    #[test]
+    fn profile_files_reject_out_of_range_integer_literals() {
+        let root = tempdir().unwrap();
+        let profile_root = root.path().join("project").join(PROFILE_STORE_DIR);
+        std::fs::create_dir_all(&profile_root).unwrap();
+        std::fs::write(
+            profile_root.join("bad.json"),
+            br#"{
+                "schema_version":"glr.profile.v1",
+                "name":"bad",
+                "plugins":[{"id":"fixture-plugin","config":{"n":18446744073709551616}}]
+            }"#,
+        )
+        .unwrap();
+        let manager = Manager::new(&root.path().join("project")).unwrap();
+        assert!(manager.load_profile("bad").is_err());
     }
 
     #[test]
