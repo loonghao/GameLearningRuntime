@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.17.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.16.0...v0.17.0) (2026-09-14)
+
+
+### Features
+
+* apply updates and persist staged checkpoints ([33ada85](https://github.com/loonghao/GameLearningRuntime/commit/33ada85f25c40928d2a0b0da72ff116d732926c4))
+
 ## [0.16.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.15.0...v0.16.0) (2026-09-14)
 
 
