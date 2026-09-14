@@ -49,6 +49,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ReportCommand,
     },
+    /// Inspect standard recording presets and the project storage layout.
+    Capture {
+        #[command(subcommand)]
+        command: CaptureCommand,
+    },
     /// Query learned and observed experience.
     Query {
         #[command(subcommand)]
@@ -81,6 +86,20 @@ pub enum Command {
     },
     /// Check or apply a checksum-verified GLR distribution update.
     Update(UpdateArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CaptureCommand {
+    /// List presets, or show one complete FFmpeg output configuration.
+    Preset {
+        #[arg(default_value = "training-balanced")]
+        name: String,
+        /// List the available preset summaries instead of selecting one.
+        #[arg(long)]
+        list: bool,
+    },
+    /// Show canonical logs, capture, dataset, checkpoint, and report paths.
+    Layout,
 }
 
 #[derive(Debug, Clone, Subcommand)]
