@@ -67,6 +67,10 @@ leave it unset for source-side inventory that has no runtime binding. If a
 dependency is also listed explicitly, its explicit profile grants and config
 are retained rather than silently discarded; incompatible repeated requests
 fail closed.
+Other `requires` keys (such as `torchrl` or `sample-factory`) are preserved
+declarations for the host runner and are not checked for installation by this
+control plane. Consequently, `health` reports static bundle/profile readiness,
+not proof that every external framework is available.
 
 ## CLI workflow
 

@@ -38,6 +38,9 @@ Profile 保存于 .glr/profiles/<name>.json。Profile 中授予的权限必须�
 
 Rust CLI 会用自身编译版本校验 `requires.glr`；Python `PluginManager` 在需要绑定具体
 runtime 时传入 `glr_version`，不传则适合没有 runtime 绑定的源代码清单检查。
+其它 `requires` 键（例如 `torchrl` 或 `sample-factory`）在当前控制面版本中只是保留的
+声明元数据，由未来的 host runner 检查实际可用性；`health` 的 ready 仅表示静态 Bundle/
+Profile 就绪，不代表所有外部框架已经安装。
 
 配置会参与 profile digest 的规范化计算。当前支持有限 JSON 数字、布尔值、字符串、数组
 和对象，非有限值会被拒绝。Rust 启用正确舍入的浮点解析，使 Python 与 Rust 在小数边界

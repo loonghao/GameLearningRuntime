@@ -57,6 +57,11 @@ only after applying trust, authorization, and runtime-specific policy.
 - The Rust CLI checks `requires.glr` against its compiled version. The Python
   SDK accepts an explicit `glr_version` for the same check and intentionally
   permits it to be omitted for source-side inventory without a runtime binding.
+- Other `requires` keys (for example `torchrl` or `sample-factory`) are
+  declaration metadata in this control-plane version: they are syntax-checked
+  and preserved, but availability is verified by the future host runner. A
+  `ready` health result is therefore static bundle/profile readiness, not proof
+  that every external framework is installed.
 - `in-process` is metadata, not an authorization bypass.  The default
   isolation hint is `process`; no runner is implied by the contract.
 - Existing `glr.project.v1` role commands and `glr.extensions` remain valid.
