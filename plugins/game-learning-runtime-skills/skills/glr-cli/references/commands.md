@@ -35,6 +35,8 @@ into the project directory intentionally before running a project update.
 The updater requires HTTPS, a matching target manifest, and the published
 `SHA256SUMS`; it never runs an installer script or changes project/trainer data.
 The former `--yes` form remains accepted for compatibility.
+When binaries are already current, an explicitly resolved project Skills
+directory is still synchronized from the verified release archive.
 Re-run `--version`, `doctor`, and `update --check` after an update.
 
 The public release check uses GitHub's latest-release asset link instead of the

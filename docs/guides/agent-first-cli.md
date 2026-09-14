@@ -47,6 +47,8 @@ Checks use GitHub's public latest-release asset link and do not consume the
 anonymous REST API quota. The selected version and exact target archive are
 derived from the published `SHA256SUMS` before any update is applied.
 The former `--yes` form remains accepted for compatibility.
+Current binaries still download and verify the matching release archive when a
+project Skills directory must be synchronized.
 
 ## Configure the project
 

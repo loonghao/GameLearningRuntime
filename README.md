@@ -160,6 +160,8 @@ project configuration. The check uses GitHub's public latest-release asset link
 without consuming anonymous REST API quota. Use `--no-skills` for binary-only
 maintenance or `--skills-dir` for an explicitly selected Skills directory.
 The former `--yes` form remains accepted for compatibility.
+When binaries are already current, `glr update` still synchronizes configured
+project Skills from the verified release archive.
 
 ### Library integration
 

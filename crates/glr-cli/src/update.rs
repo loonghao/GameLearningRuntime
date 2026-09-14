@@ -143,7 +143,7 @@ impl Updater {
     }
 
     pub fn apply(&self, plan: UpdatePlan, skills_dir: Option<&Path>) -> Result<UpdateResult> {
-        if !plan.version_update_available {
+        if !update_work_required(&plan, skills_dir) {
             return Ok(UpdateResult {
                 plan,
                 applied: false,
@@ -199,22 +199,25 @@ impl Updater {
             skills_updated = !manifest.skills.is_empty();
         }
 
-        let current_executable = std::env::current_exe()?;
-        let executable_dir = current_executable
-            .parent()
-            .ok_or_else(|| Error::Contract("current executable has no parent".into()))?;
-        let host_name = if cfg!(windows) {
-            "glr-hostd.exe"
-        } else {
-            "glr-hostd"
-        };
-        atomic_copy(&host, &executable_dir.join(host_name))?;
-        self_replace::self_replace(&cli)?;
+        if plan.version_update_available {
+            let current_executable = std::env::current_exe()?;
+            let executable_dir = current_executable
+                .parent()
+                .ok_or_else(|| Error::Contract("current executable has no parent".into()))?;
+            let host_name = if cfg!(windows) {
+                "glr-hostd.exe"
+            } else {
+                "glr-hostd"
+            };
+            atomic_copy(&host, &executable_dir.join(host_name))?;
+            self_replace::self_replace(&cli)?;
+        }
+        let host_updated = plan.version_update_available;
         Ok(UpdateResult {
             plan,
-            applied: true,
+            applied: host_updated || skills_updated,
             skills_updated,
-            host_updated: true,
+            host_updated,
         })
     }
 
@@ -247,6 +250,11 @@ impl Updater {
             "update endpoint returned HTTP {status}"
         )))
     }
+}
+
+fn update_work_required(plan: &UpdatePlan, skills_dir: Option<&Path>) -> bool {
+    plan.version_update_available
+        || (skills_dir.is_some() && plan.current_version == plan.latest_version)
 }
 
 fn read_response(response: Response, maximum: usize) -> Result<Vec<u8>> {
@@ -623,6 +631,21 @@ mod tests {
         assert!(!result.applied);
         assert!(!result.host_updated);
         assert!(!result.skills_updated);
+        let destination = tempfile::tempdir().unwrap();
+        // An equal version must still enter the verified download path for skills.
+        let error = updater
+            .apply(result.plan.clone(), Some(destination.path()))
+            .unwrap_err();
+        assert!(error.to_string().contains("HTTPS"));
+        assert_eq!(std::fs::read_dir(destination.path()).unwrap().count(), 0);
+
+        // A locally newer binary must never install skills from an older release.
+        let mut newer_plan = result.plan;
+        newer_plan.current_version = "1.2.4".into();
+        let result = updater.apply(newer_plan, Some(destination.path())).unwrap();
+        assert!(!result.applied);
+        assert!(!result.skills_updated);
+        assert!(!result.host_updated);
     }
 
     #[test]

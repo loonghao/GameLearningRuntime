@@ -40,6 +40,7 @@ glr --json update --no-skills
 检查通过 GitHub 的公开 latest-release 资源链接完成，不消耗匿名 REST API 配额。
 Updater 会先从发布的 `SHA256SUMS` 推导版本与准确平台产物，再执行任何更新。
 原有的 `--yes` 写法仍保留兼容。
+二进制已是最新版时，如果需要同步项目 Skills，Updater 仍会下载并校验对应 Release 压缩包。
 
 ## 配置项目
 
