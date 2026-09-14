@@ -83,6 +83,8 @@ running a goal, transferring knowledge, or claiming reproduction.
   verifies the exact platform archive and `SHA256SUMS`, then updates the `glr`
   executable, its sibling `glr-hostd`, and the repository-owned `glr-cli` and
   `glr-adapter-builder` Skills.
+- If the binaries are already current, `glr update` still synchronizes the
+  configured project Skills from the verified release archive.
 - Use `--skills-dir` only for an explicitly selected project Skills directory.
   Use `--no-skills` when the user requested binary-only maintenance.
 - The updater does not modify game code, project role dependencies, Python
