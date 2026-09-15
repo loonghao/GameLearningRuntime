@@ -71,16 +71,25 @@ pub struct Updater {
     client: Client,
     latest_checksums_url: String,
     releases_url: String,
+    attempts: usize,
 }
 
 impl Updater {
     pub fn github() -> Result<Self> {
+        Self::with_timeout(Duration::from_secs(30), 3)
+    }
+
+    pub(crate) fn notification() -> Result<Self> {
+        Self::with_timeout(Duration::from_millis(800), 1)
+    }
+
+    fn with_timeout(timeout: Duration, attempts: usize) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static("glr-self-update"));
         headers.insert(ACCEPT, HeaderValue::from_static("application/octet-stream"));
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
+            .timeout(timeout)
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
                 if attempt.url().scheme() != "https" {
                     attempt.error("GLR update redirects must remain on HTTPS")
@@ -97,6 +106,7 @@ impl Updater {
             client,
             latest_checksums_url: format!("{releases_url}/latest/download/SHA256SUMS"),
             releases_url,
+            attempts,
         })
     }
 
@@ -113,6 +123,7 @@ impl Updater {
             client,
             latest_checksums_url,
             releases_url,
+            attempts: 3,
         })
     }
 
@@ -179,6 +190,11 @@ impl Updater {
 
         let mut skills_updated = false;
         if let Some(destination) = skills_dir {
+            if manifest.skills.is_empty() {
+                return Err(Error::Contract(
+                    "release bundle contains no skills to synchronize".into(),
+                ));
+            }
             if destination.is_symlink() {
                 return Err(Error::Contract(
                     "managed skills directory cannot be a symlink".into(),
@@ -230,7 +246,7 @@ impl Updater {
             ));
         }
         let mut last_status = None;
-        for attempt in 0..3 {
+        for attempt in 0..self.attempts {
             let response = self.client.get(url).send()?;
             let status = response.status();
             if status.is_success() {
@@ -240,7 +256,9 @@ impl Updater {
             if status != StatusCode::TOO_MANY_REQUESTS && !status.is_server_error() {
                 break;
             }
-            thread::sleep(Duration::from_millis(250 * (1 << attempt)));
+            if attempt + 1 < self.attempts {
+                thread::sleep(Duration::from_millis(250 * (1 << attempt)));
+            }
         }
         let status = last_status.map_or(0, |status| status.as_u16());
         if status == StatusCode::NOT_FOUND.as_u16() {

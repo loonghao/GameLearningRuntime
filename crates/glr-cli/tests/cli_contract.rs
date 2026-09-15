@@ -41,12 +41,95 @@ fn create_project() -> TempDir {
 
 fn run(project: &Path, arguments: &[&str]) -> Output {
     Command::new(binary())
+        .env("GLR_NO_UPDATE_CHECK", "1")
         .arg("--project")
         .arg(project)
         .arg("--json")
         .args(arguments)
         .output()
         .unwrap()
+}
+
+#[test]
+fn update_requires_an_explicit_skills_destination_outside_a_project() {
+    let project = tempfile::tempdir().unwrap();
+    let output = run(project.path(), &["update"]);
+    assert!(!output.status.success());
+    let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--skills-dir")
+    );
+}
+
+#[test]
+fn cached_update_notice_preserves_json_stdout_and_exit_status() {
+    let project = create_project();
+    let home = tempfile::tempdir().unwrap();
+    let cache_dir = home.path().join(".glr/cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    fs::write(
+        cache_dir.join("update-check.json"),
+        serde_json::to_vec(&json!({
+            "current": env!("CARGO_PKG_VERSION"),
+            "target": glr_cli::update::BUILD_TARGET,
+            "checked_at": now,
+            "retry_at": now + 86400,
+            "latest": "999.0.0"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let baseline = run(project.path(), &["doctor"]);
+    let output = Command::new(binary())
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env_remove("CI")
+        .env_remove("GLR_NO_UPDATE_CHECK")
+        .args([
+            "--project",
+            project.path().to_str().unwrap(),
+            "--json",
+            "doctor",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), baseline.status.code());
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["command"], "doctor");
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("Run `glr update`")
+    );
+    for disable in ["CI", "GLR_NO_UPDATE_CHECK"] {
+        let disabled = Command::new(binary())
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .env_remove("CI")
+            .env_remove("GLR_NO_UPDATE_CHECK")
+            .env(disable, "1")
+            .args([
+                "--project",
+                project.path().to_str().unwrap(),
+                "--json",
+                "doctor",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(disabled.status.code(), baseline.status.code());
+        assert!(
+            !String::from_utf8(disabled.stderr)
+                .unwrap()
+                .contains("glr update")
+        );
+    }
 }
 
 fn run_raw(project: &Path, arguments: &[&str]) -> Output {
@@ -198,7 +281,13 @@ fn capture_commands_publish_training_preset_and_canonical_layout() {
     assert_eq!(preset["data"]["crf"], 18);
     assert_eq!(preset["data"]["frame_rate"], 30);
     assert_eq!(preset["data"]["gop_frames"], 30);
-    assert_eq!(preset["data"]["ffmpeg_output_argv"][21], "{capture_video}");
+    let argv = preset["data"]["ffmpeg_output_argv"].as_array().unwrap();
+    assert_eq!(argv.last().unwrap(), "{capture_video}");
+    assert_eq!(argv[0], "-vf");
+    let filter = argv[1].as_str().unwrap();
+    assert!(filter.contains("scale=1920:1080:force_original_aspect_ratio=decrease"));
+    assert!(filter.contains("pad=1920:1080:"));
+    assert!(filter.ends_with("setsar=1,fps=30"));
 
     let presets = stdout(&run(project.path(), &["capture", "preset", "--list"]));
     assert_eq!(presets["data"].as_array().unwrap().len(), 2);

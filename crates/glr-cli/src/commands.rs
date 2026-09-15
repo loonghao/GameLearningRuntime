@@ -443,6 +443,11 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
 }
 
 fn run_update(cli: &Cli, arguments: &UpdateArgs) -> Result<i32> {
+    let skills_dir = if arguments.applies_update() {
+        update_skills_directory(cli, arguments)?
+    } else {
+        None
+    };
     let updater = Updater::github()?;
     let plan = updater.check()?;
     if !arguments.applies_update() {
@@ -457,18 +462,30 @@ fn run_update(cli: &Cli, arguments: &UpdateArgs) -> Result<i32> {
         )?;
         return Ok(0);
     }
-    let skills_dir = if arguments.no_skills {
-        None
-    } else if let Some(path) = &arguments.skills_dir {
-        Some(absolute(path)?)
-    } else {
-        find_project(&cli.project)
-            .ok()
-            .and_then(|path| path.parent().map(|root| root.join(".agents/skills")))
-    };
     let result = updater.apply(plan, skills_dir.as_deref())?;
     emit("update.apply", &result, cli.json)?;
     Ok(0)
+}
+
+fn update_skills_directory(cli: &Cli, arguments: &UpdateArgs) -> Result<Option<PathBuf>> {
+    if arguments.no_skills {
+        Ok(None)
+    } else if let Some(path) = &arguments.skills_dir {
+        Ok(Some(absolute(path)?))
+    } else {
+        let project = find_project(&cli.project).map_err(|error| match error {
+            Error::Missing(_) => Error::Invalid(
+                "cannot resolve project skills directory; run glr update in a GLR project, specify --skills-dir, or explicitly use --no-skills".into()
+            ),
+            other => other,
+        })?;
+        Ok(Some(
+            project
+                .parent()
+                .ok_or_else(|| Error::Invalid("project has no parent".into()))?
+                .join(".agents/skills"),
+        ))
+    }
 }
 
 fn run_transaction(store: &Store, command: TransactionCommand, as_json: bool) -> Result<i32> {
@@ -1768,6 +1785,46 @@ fn absolute(path: &Path) -> Result<PathBuf> {
 mod tests {
     use super::{ProgressConfig, ProgressReport, observe_stall, progress_verdict};
     use serde_json::json;
+
+    #[test]
+    fn update_resolves_project_skills_and_explicit_opt_out() {
+        use crate::args::{Cli, Command};
+        use clap::Parser;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("glr-project.toml"), "").unwrap();
+        for (options, expected) in [
+            (vec![], Some(root.path().join(".agents/skills"))),
+            (vec!["--no-skills"], None),
+            (
+                vec!["--skills-dir", root.path().to_str().unwrap()],
+                Some(root.path().to_path_buf()),
+            ),
+        ] {
+            let mut argv = vec!["glr", "--project", root.path().to_str().unwrap(), "update"];
+            argv.extend(options);
+            let cli = Cli::try_parse_from(argv).unwrap();
+            let Command::Update(ref args) = cli.command else {
+                unreachable!()
+            };
+            assert_eq!(
+                super::update_skills_directory(&cli, args).unwrap(),
+                expected
+            );
+        }
+        std::fs::write(root.path().join("glr-project.json"), "{}").unwrap();
+        let cli =
+            Cli::try_parse_from(["glr", "--project", root.path().to_str().unwrap(), "update"])
+                .unwrap();
+        let Command::Update(ref args) = cli.command else {
+            unreachable!()
+        };
+        assert!(
+            super::update_skills_directory(&cli, args)
+                .unwrap_err()
+                .to_string()
+                .contains("multiple project manifests")
+        );
+    }
 
     fn config(window_steps: u64) -> ProgressConfig {
         ProgressConfig {
