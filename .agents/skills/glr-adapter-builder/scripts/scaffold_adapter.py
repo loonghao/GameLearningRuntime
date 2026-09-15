@@ -255,12 +255,12 @@ test:
 check: setup lock-check lint typecheck test
 
 train: setup
-    vx uv run python scripts/train_reference.py --output .glr-runs/reference-model
+    vx uv run python scripts/train_reference.py --output .glr/exports/model-bundles/reference-model
 
 reproduce:
-    vx uv run python scripts/verify_bundle.py .glr-runs/reference-model
+    vx uv run python scripts/verify_bundle.py .glr/exports/model-bundles/reference-model
 
-package-runtime output=".glr-dist/loader-package":
+package-runtime output=".glr/exports/loader-packages/loader-package":
     vx uv run python scripts/package_runtime.py --output {{output}}
 """
 
@@ -387,7 +387,7 @@ vx setup
 vx run check
 glr --project . --json doctor
 glr --project . --json train
-glr --project . --json play --bundle .glr-runs/model-bundle
+glr --project . --json play --bundle .glr/exports/model-bundles/model-bundle
 ```
 
 `glr-project.toml` is the one official lifecycle entry. Its strict
@@ -396,7 +396,7 @@ that this generated lane actually supports. `doctor` prints the resolved
 schema and SHA-256 for each input before any role runs.
 
 The trainer runs a deterministic synthetic behavior-cloning smoke test and writes a
-checksummed model bundle under `.glr-runs/`. It proves the training and
+checksummed model bundle under `.glr/exports/model-bundles/`. It proves the training and
 reproduction plumbing only; it is not live runtime acceptance.
 """
 
@@ -863,7 +863,7 @@ def _glr_project(package: str, environment_id: str, *, has_runtime: bool) -> dic
         "environment_id": environment_id,
         "environment_family": "synthetic-adapter",
         "protocol_version": "1.0",
-        "data_dir": ".glr-runs",
+        "data_dir": ".glr",
         "bridge_path": f"src/{package}",
         "runtime": {"argv": ["python", "scripts/glr_role.py", "runtime"]},
         "trainer": {"argv": ["python", "scripts/glr_role.py", "trainer"]},
@@ -1152,7 +1152,7 @@ def main() -> int:
     _write(output / "justfile", _justfile())
     _write(
         output / ".gitignore",
-        ".venv-glr/\n.glr-runs/\n.glr-dist/\n__pycache__/\n*.py[cod]\nconfig/*.local.toml\n",
+        ".venv-glr/\n.glr/\n__pycache__/\n*.py[cod]\nconfig/*.local.toml\n",
     )
     _write(
         output / "agent-interface.json",

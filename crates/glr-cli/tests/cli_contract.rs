@@ -231,6 +231,36 @@ fn capture_commands_publish_training_preset_and_canonical_layout() {
             .unwrap()
             .ends_with("/<environment-id>/<goal-id>/latest.json")
     );
+    assert!(
+        layout["data"]["exports"]
+            .as_str()
+            .unwrap()
+            .ends_with("/.glr/exports")
+    );
+    assert!(
+        layout["data"]["knowledge_exports"]
+            .as_str()
+            .unwrap()
+            .ends_with("/.glr/exports/knowledge")
+    );
+}
+
+#[test]
+fn knowledge_exports_cannot_escape_the_project_storage_root() {
+    let project = create_project();
+    let outside = project.path().join("artifacts/spatial-knowledge.json");
+    let rejected = run(
+        project.path(),
+        &["knowledge", "export", "--output", outside.to_str().unwrap()],
+    );
+    assert_eq!(rejected.status.code(), Some(2));
+    let error: Value = serde_json::from_slice(&rejected.stderr).unwrap();
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("project export root")
+    );
 }
 
 #[test]

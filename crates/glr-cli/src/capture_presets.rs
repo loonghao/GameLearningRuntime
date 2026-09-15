@@ -141,6 +141,10 @@ pub struct ProjectLayout {
     pub checkpoint_promotion: String,
     pub learning_checkpoints: String,
     pub latest_learning_checkpoint: String,
+    pub exports: String,
+    pub knowledge_exports: String,
+    pub model_bundles: String,
+    pub loader_packages: String,
 }
 
 pub fn layout(project: &Project) -> ProjectLayout {
@@ -152,7 +156,7 @@ pub fn layout(project: &Project) -> ProjectLayout {
         run_store: format!("{data_root}/runs.sqlite3"),
         runs: format!("{data_root}/runs"),
         run_directory: format!("{data_root}/runs/<run-id>"),
-        data_root,
+        data_root: data_root.clone(),
         logs: ["<run>/trainer.log", "<run>/capture.log", "<run>/<role>.log"],
         capture: [
             "<run>/capture.mp4",
@@ -180,5 +184,9 @@ pub fn layout(project: &Project) -> ProjectLayout {
             "{}/checkpoints/<environment-id>/<goal-id>/latest.json",
             portable(&project.data_dir)
         ),
+        exports: format!("{data_root}/exports"),
+        knowledge_exports: format!("{data_root}/exports/knowledge"),
+        model_bundles: format!("{data_root}/exports/model-bundles"),
+        loader_packages: format!("{data_root}/exports/loader-packages"),
     }
 }

@@ -187,11 +187,15 @@ glr --project . --json query entities --world forest --kind shrine --name 土地
 glr --project . --json query routes --world forest --to-entity shrine.forest-1
 glr --project . --json query research --tag navigation --category strategy
 glr --project . --json query research --verified-only
-glr --project . --json knowledge export --output artifacts/spatial-knowledge.json
-glr --project . --json knowledge import --input artifacts/spatial-knowledge.json
-glr --project . --json play --bundle artifacts/model-bundle
+glr --project . --json knowledge export --output .glr/exports/knowledge/spatial-knowledge.json
+glr --project . --json knowledge import --input .glr/exports/knowledge/spatial-knowledge.json
+glr --project . --json play --bundle .glr/exports/model-bundles/model-bundle
 glr --project . --json report build run-0123456789abcdef
 ```
+
+Use `.glr/runs/<run-id>/` for run evidence and `.glr/exports/` for durable model,
+loader-package, and knowledge exports. `knowledge export` rejects destinations
+outside the project export root.
 
 Project-local `glr.toml` tasks use strict `glr.tasks.v1`. Prefer
 `runner = "vx"` and an argv beginning with `uv`, `run` for Python workflows so

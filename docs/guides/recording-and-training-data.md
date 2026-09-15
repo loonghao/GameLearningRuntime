@@ -32,6 +32,10 @@ platform-specific exact-window input, consumes `GLR_CAPTURE_VIDEO`,
       03-trainer.json
       04-evaluator.json
       latest.json
+  exports/
+    knowledge/
+    model-bundles/
+    loader-packages/
   runs/<run-id>/
     trainer.log
     capture.log
@@ -46,7 +50,9 @@ platform-specific exact-window input, consumes `GLR_CAPTURE_VIDEO`,
 ```
 
 Keep `.glr/` out of Git. Do not add sibling `recordings/`, `logs`, `training-data/`,
-or `reports/` roots. Migrate old exports only as an explicit, reviewable operation.
+or `reports/` roots. Durable exports belong below `.glr/exports/`; run evidence belongs
+below `.glr/runs/<run-id>/`. The CLI rejects `knowledge export` destinations outside
+the project export root. Migrate old exports only as an explicit, reviewable operation.
 
 Goal checkpoints are namespaced by environment and goal so unrelated projects,
 goals, and runs cannot overwrite one another. GLR atomically writes a strict

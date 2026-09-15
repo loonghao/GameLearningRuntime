@@ -44,7 +44,7 @@ not become GLR action authority.
 
 Run `vx run package-runtime` after the declared host artifact exists. The
 generated packager validates only portable relative paths and writes a
-checksummed payload under `.glr-dist/`. It does not discover, select, or modify
+checksummed payload under `.glr/exports/loader-packages/`. It does not discover, select, or modify
 a game directory. An operator must choose the exact authorized target and
 perform or approve installation separately.
 

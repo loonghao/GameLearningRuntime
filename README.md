@@ -132,7 +132,7 @@ glr --project . --json query entities --world forest --kind shrine
 glr --project . --json query routes --world forest --to-entity shrine.forest-1
 glr --project . --json query research --tag navigation
 glr --project . --json report build run-0123456789abcdef
-glr --project . --json play --bundle artifacts/model-bundle
+glr --project . --json play --bundle .glr/exports/model-bundles/model-bundle
 ```
 
 The project manifest owns exact executable paths, environment identity, data
@@ -594,6 +594,7 @@ runbook](docs/runbooks/release.md).
 - [Standard agent-first CLI and query tables](docs/guides/agent-first-cli.md)
 - [Reproduce trained models](docs/guides/reproducible-model-bundles.md)
 - [Build offline interactive run reports](docs/guides/run-reports.md)
+- [Normalize project output layout](docs/guides/project-output-layout.md)
 - [Configure knowledge sources and rewards](docs/guides/knowledge-and-rewards.md)
 - [Enforce reward budgets and BC provenance](docs/guides/training-safety.md)
 - [Validate an adapter](docs/guides/adapter-conformance.md)

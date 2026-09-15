@@ -132,7 +132,8 @@ review media, not supervised-learning data.
 Before wiring or operating capture, run `glr --project . --json capture preset` and
 `glr --project . --json capture layout`. Use `training-balanced` unless measurements justify
 another preset. Keep video, frame index, logs, datasets, and reports below the returned run
-directory; do not invent game-specific recording or report roots.
+directory; durable model, loader, and knowledge exports belong below the returned
+`.glr/exports/` root. Do not invent game-specific recording, export, or report roots.
 
 Do not claim live-game acceptance from synthetic tests, process exit, video presence, run status,
 or model hashes. Report the exact remaining runtime acceptance boundary.
