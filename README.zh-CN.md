@@ -39,24 +39,28 @@ GLR 让 Agent 通过结构化环境接口学习：观察、动作、奖励、事
 或私有运行时数据的前提下展示公共契约。向仓库贡献真实适配器录像前，请先阅读
 [展示素材来源与采集规则](docs/assets/showcase/README.md)。
 
-## 我们实际使用 GLR 的游戏训练流程
+## 我们实际使用的训练流程
 
 我们在已获授权的本地流程中，使用 GLR 风格的接口控制训练 **黑神话：悟空** 与
-**Vampire Survivors**。下面的短片是训练流程的视觉快照，不代表已经完成某个 benchmark、
-获得终局胜利或证明了通用模型质量。12×12 缩略图联系列展示了如何把长时间运行压缩成紧凑的
-进程回顾。
+**Vampire Survivors**。这里把视觉演示和工程结论分开：媒体展示运行过程，观察、动作、
+奖励和终局结果仍以运行时契约及 run record 为准。
 
 | 黑神话：悟空 | Vampire Survivors |
 | --- | --- |
 | ![黑神话：悟空训练画面](docs/assets/showcase/wukong-training-clean.png) | ![Vampire Survivors 训练画面](docs/assets/showcase/vampire-survivors-training.png) |
 | [播放黑神话短片](docs/assets/showcase/wukong-training.mp4) | [播放 Vampire Survivors 短片](docs/assets/showcase/vampire-survivors-training.mp4) |
 
-<video controls preload="metadata" width="640" src="docs/assets/showcase/wukong-training-full.mp4"></video>
+### 完整的黑神话：悟空录像
 
-上方为 7 分钟的黑神话：悟空训练流程录像（已静音并压缩到适合仓库播放的尺寸）。
-快速查看时可播放上面的短片。
+[![播放七分钟黑神话：悟空录像](docs/assets/showcase/wukong-training-clean.png)](docs/assets/showcase/wukong-training-full.mp4)
+
+点击图片即可在 GitHub 媒体查看器中打开七分钟的静音录像。仓库中的版本已缩放并压缩，
+适合网页播放；快速查看时可播放上面的短片。
 
 ![Vampire Survivors 12×12 训练缩略图](docs/assets/showcase/training-contact-sheet-12x12.png)
+
+这张 12×12 联系列用于紧凑回顾一段较长的 Vampire Survivors 运行过程。以上素材是演示，
+不代表某个 benchmark 已完成、已经通关，或证明了通用模型质量。
 
 ## 一个边界，多种使用方
 
