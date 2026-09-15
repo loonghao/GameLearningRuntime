@@ -4,7 +4,7 @@
 
 Download `glr-{version}-{rust-target}.zip` and `SHA256SUMS` from the matching
 GitHub Release, verify the archive digest, extract it, and put `glr` plus
-`glr-hostd` on `PATH`. The archive also contains both repository-owned Skills
+`glr-hostd` on `PATH`. The archive also contains all three repository-owned Skills (`glr-cli`, `glr-adapter-builder`, `glr-qa`)
 under `skills/`; no Python installation is required to run the CLI.
 
 Start every project operation with:
@@ -28,6 +28,8 @@ glr --json update --no-skills
 ```
 
 The default update scope is the CLI, sibling Runtime Host, and project Skills.
+Outside a discoverable project, an apply request fails before downloading unless
+`--skills-dir` or `--no-skills` is supplied. `--check` remains project-independent.
 `--skills-dir` must name an explicitly selected project Skills directory; it
 does not update a user-level Agent Plugin installation. Use the host's plugin
 manager to replace a plugin package, or copy the package's `skills/` payload
@@ -42,6 +44,21 @@ Re-run `--version`, `doctor`, and `update --check` after an update.
 The public release check uses GitHub's latest-release asset link instead of the
 REST API, so it does not consume anonymous API quota. The updater derives the
 version, exact target archive, and digest from the published `SHA256SUMS`.
+
+### Automatic version notices
+
+Normal subcommands run a best-effort background release check. The cache at
+`~/.glr/cache/update-check.json` is scoped to binary version and platform target:
+24 hours after success, one hour after failure. Notifications go to stderr,
+including with `--json`; stdout and command exit codes are unchanged. Completion
+waits at most one second for the worker (the HTTP request has an 800 ms timeout).
+Offline failures are silent. Set `GLR_NO_UPDATE_CHECK=1` to disable automatic
+checks; presence of `CI` also disables them. Help, version, parse errors, and the
+explicit `update` command do not start a second automatic check.
+
+A notice never installs anything. `glr update` performs its own fresh checksum
+verification and synchronizes the selected project's bundled skills, including
+at an equal version; a newer local binary never installs older release skills.
 
 ## Project configuration
 
@@ -77,9 +94,9 @@ new projects should use the equivalent TOML layout below.
     "video_file": "capture.mp4",
     "index_file": "capture-index.jsonl",
     "codec": "h264",
-    "frame_rate": 12,
-    "width": 640,
-    "height": 360
+    "frame_rate": 30,
+    "width": 1920,
+    "height": 1080
   },
   "lifecycle": {
     "schema_version": "glr.lifecycle.v1",
@@ -223,6 +240,15 @@ snapshots record learning status and paths; learner-owned model, optimizer, and
 replay-buffer bytes remain in the candidate or promoted checkpoint.
 
 ## Recording presets and storage layout
+
+Use one run store for CLI and Python roles. Current CLI source accepts store
+schemas 1 and 2 without downgrading Python's version stamp. Released CLI 0.18.0
+rejects schema 2: upgrade to a release containing the compatibility fix before
+mixing writers. Never reset `PRAGMA user_version` or create a second data root
+to hide a schema failure; `checkpoint migrate` does not migrate SQLite stores.
+
+Follow [VX recording and acceptance](recording.md) for encoder preflight,
+fixed-argv recorder integration, synchronized labels, and finalized media QA.
 
 Run `glr --project . --json capture preset` to get the default `training-balanced`
 FFmpeg output arguments. They specify H.264/libx264, CRF 18, `fast`, 30 FPS CFR,

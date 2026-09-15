@@ -56,9 +56,13 @@ semantics and the tested synthetic example.
 
 Retry history survives Python store reopen, and concurrent state updates cannot
 silently overwrite each other. The projection is additive and leaves the
-Python store schema version at 2. Rust CLI store version 1 already differs from
-Python version 2; this change does not resolve that pre-existing incompatibility
-or promise that the CLI can read these records.
+Python store schema version at 2. The CLI now accepts additive Python schema 2
+stores while preserving their version and Python-owned tables. CLI-only stores
+remain version 1 until Python opens them. This fixes shared-store access without
+adding Rust rollout management APIs. Older CLIs (including 0.18.0) reject schema 2;
+upgrade the CLI instead of lowering the store version or splitting data roots.
+`scripts/check_store_interop.py` tests both creation orders with the real Python
+API and compiled CLI, including metrics and reports.
 
 This batch adds no automatic game retries, remote scheduler, model gateway,
 learner, or actor process supervisor. Durable attempt metadata does not restore

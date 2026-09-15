@@ -77,16 +77,24 @@ running a goal, transferring knowledge, or claiming reproduction.
 
 ## Keep the managed runtime current
 
+- Ordinary commands check for newer releases in the background and print a
+  `glr update` hint to stderr. Successful checks are cached for 24 hours;
+  failures cool down for one hour. Command completion waits at most one second
+  for the notice, and failures do not change the command exit code or JSON stdout.
+  Set `GLR_NO_UPDATE_CHECK=1` to disable; CI skips automatic checks.
 - `glr update --check` is a read-only release check and is safe to use when
   diagnosing version drift.
 - Run `glr update` only when the user explicitly asks to update GLR. It
   verifies the exact platform archive and `SHA256SUMS`, then updates the `glr`
-  executable, its sibling `glr-hostd`, and the repository-owned `glr-cli` and
-  `glr-adapter-builder` Skills.
+  executable, its sibling `glr-hostd`, and the repository-owned `glr-cli`,
+  `glr-adapter-builder`, and `glr-qa` Skills.
 - If the binaries are already current, `glr update` still synchronizes the
   configured project Skills from the verified release archive.
 - Use `--skills-dir` only for an explicitly selected project Skills directory.
   Use `--no-skills` when the user requested binary-only maintenance.
+- Without a discoverable project, update requires `--skills-dir` or the explicit
+  `--no-skills` opt-out; never report skills updated unless `skills_updated` is
+  true. Invalid or ambiguous project manifests must be fixed, not ignored.
 - The updater does not modify game code, project role dependencies, Python
   environments, models, datasets, project manifests, or trainer configuration.
 - SHA-256 protects same-release artifact integrity; it is not publisher
@@ -124,8 +132,12 @@ when scaffolding, migrating environments, or handing a project to another user.
 
 ## Recording and training data
 
+Read [VX recording and acceptance](references/recording.md) before configuring
+capture or declaring recorded material ready for training or agent QA. Run all
+FFmpeg/ffprobe operations through `vx ffmpeg` / `vx ffprobe`.
+
 When capture is configured, keep it enabled for `glr train` and `glr goal run` unless the user
-explicitly opts out. The recorder is a concurrent project-owned sidecar and must emit both a small
+explicitly opts out. The recorder is a concurrent project-owned sidecar and must emit both an
 H.264 MP4 and `glr.capture-frame.v1` step/frame index. A video without a valid checksummed index is
 review media, not supervised-learning data.
 
@@ -134,6 +146,21 @@ Before wiring or operating capture, run `glr --project . --json capture preset` 
 another preset. Keep video, frame index, logs, datasets, and reports below the returned run
 directory; durable model, loader, and knowledge exports belong below the returned
 `.glr/exports/` root. Do not invent game-specific recording, export, or report roots.
+
+The default `training-balanced` profile is 1920x1080, 30 FPS CFR, H.264/libx264,
+CRF 18, `fast`, yuv420p, GOP 30 with fixed keyframes, MP4 fast-start, and no audio.
+Treat `capture preset` output as authoritative and apply its output arguments to
+the recorder; config width/height/frame_rate fields alone do not configure a provider.
+Preserve the game aspect ratio when fitting the output canvas.
+
+Before training, verify the exact game-window binding and a nonblank captured frame.
+For DCC-CUA UI operations, report provider, runtime version, PID, and HWND before
+observation or input. Keep these machine-local identifiers out of public artifacts.
+After capture stops cleanly, inspect the actual stream with ffprobe for codec,
+dimensions, pixel format, frame rate, duration, and audio absence; inspect frames
+for readable UI and correct framing. Validate the checksummed step/frame index
+against the run before classifying video as training data. Configuration or an
+active recording flag alone is not successful recording evidence.
 
 Do not claim live-game acceptance from synthetic tests, process exit, video presence, run status,
 or model hashes. Report the exact remaining runtime acceptance boundary.

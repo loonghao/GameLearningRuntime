@@ -241,6 +241,12 @@ replay-buffer bytes remain in the candidate or promoted checkpoint.
 
 ## Recording presets and storage layout
 
+Use one run store for CLI and Python roles. Current CLI source accepts store
+schemas 1 and 2 without downgrading Python's version stamp. Released CLI 0.18.0
+rejects schema 2: upgrade to a release containing the compatibility fix before
+mixing writers. Never reset `PRAGMA user_version` or create a second data root
+to hide a schema failure; `checkpoint migrate` does not migrate SQLite stores.
+
 Follow [VX recording and acceptance](recording.md) for encoder preflight,
 fixed-argv recorder integration, synchronized labels, and finalized media QA.
 

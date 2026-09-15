@@ -17,6 +17,9 @@ use crate::error::{Error, Result};
 use crate::project::validate_identifier;
 
 pub const RUN_STORE_SCHEMA_VERSION: i64 = 1;
+// Python v2 adds nullable digest columns and project-owned projections.
+// CLI queries name their columns and can read/write both formats.
+pub const MAX_READABLE_RUN_STORE_SCHEMA_VERSION: i64 = 2;
 pub const MAX_TRANSACTION_STEPS: usize = 64;
 pub const MAX_TRANSACTION_RESUME_ATTEMPTS: u32 = 16;
 
@@ -166,16 +169,19 @@ impl Store {
     }
 
     fn initialize(&self) -> Result<()> {
-        let connection = self.connect()?;
+        let mut connection = self.connect()?;
+        connection.execute_batch("PRAGMA journal_mode = WAL;")?;
+        let connection =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if !matches!(version, 0 | RUN_STORE_SCHEMA_VERSION) {
+        if !(0..=MAX_READABLE_RUN_STORE_SCHEMA_VERSION).contains(&version) {
             return Err(Error::Contract(format!(
-                "unsupported run store schema version: {version}"
+                "unsupported run store schema version: {version} at {}; this CLI reads versions 0..={MAX_READABLE_RUN_STORE_SCHEMA_VERSION}; upgrade GLR before opening this store (do not lower PRAGMA user_version)",
+                self.path.display()
             )));
         }
         connection.execute_batch(
             r#"
-            PRAGMA journal_mode = WAL;
             CREATE TABLE IF NOT EXISTS runs (
                 run_id TEXT PRIMARY KEY,
                 environment_id TEXT NOT NULL,
@@ -335,9 +341,10 @@ impl Store {
                 trial_id TEXT NOT NULL,
                 updated_at_ns INTEGER NOT NULL
             );
-            PRAGMA user_version = 1;
             "#,
         )?;
+        connection.pragma_update(None, "user_version", version.max(RUN_STORE_SCHEMA_VERSION))?;
+        connection.commit()?;
         Ok(())
     }
 

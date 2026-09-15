@@ -114,6 +114,7 @@ ci-torchrl:
 ci-package: setup workflow-check build
 
 ci-runtime-host: setup lock-check rust-check provider-sdk-check
+    vx uv run --no-sync python scripts/check_store_interop.py
 
 release-check tag:
     vx uv run python scripts/verify_release.py {{tag}}
