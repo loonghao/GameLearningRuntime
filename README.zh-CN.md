@@ -21,6 +21,15 @@ TorchRL、自定义 PPO/IMPALA、行为克隆、离线数据集、评估与自�
 GLR 只适用于你拥有或已获授权进行集成的游戏与测试环境。项目不包含反作弊绕过、
 隐蔽注入或针对具体游戏的逆向代码。
 
+![GLR Agent 学习控制面](docs/assets/showcase/glr-agent-learning-hero.png)
+
+## 为什么采用接口优先的训练方式
+
+GLR 让 Agent 通过结构化环境接口学习：观察、动作、奖励、事件和 episode 边界都以紧凑
+数据交换。与纯像素控制相比，这种方式通常不需要在每个决策点都发送视觉帧和完整上下文，
+因此可以更快迭代，同时减少 token 使用量和推理成本。像素采集仍适合回顾和人类可读的证据，
+但不必成为每一步控制的必需输入。
+
 ## 查看 GLR 实际运行
 
 ![GLR collector 正在运行内置的合成计数器适配器](docs/assets/showcase/glr-counter-collector.gif)
@@ -29,6 +38,25 @@ GLR 只适用于你拥有或已获授权进行集成的游戏与测试环境。�
 明确标记为合成环境的计数器适配器。它在不暴露游戏账号、本机路径、进程/窗口标识
 或私有运行时数据的前提下展示公共契约。向仓库贡献真实适配器录像前，请先阅读
 [展示素材来源与采集规则](docs/assets/showcase/README.md)。
+
+## 我们实际使用 GLR 的游戏训练流程
+
+我们在已获授权的本地流程中，使用 GLR 风格的接口控制训练 **黑神话：悟空** 与
+**Vampire Survivors**。下面的短片是训练流程的视觉快照，不代表已经完成某个 benchmark、
+获得终局胜利或证明了通用模型质量。12×12 缩略图联系列展示了如何把长时间运行压缩成紧凑的
+进程回顾。
+
+| 黑神话：悟空 | Vampire Survivors |
+| --- | --- |
+| ![黑神话：悟空训练画面](docs/assets/showcase/wukong-training-clean.png) | ![Vampire Survivors 训练画面](docs/assets/showcase/vampire-survivors-training.png) |
+| [播放黑神话短片](docs/assets/showcase/wukong-training.mp4) | [播放 Vampire Survivors 短片](docs/assets/showcase/vampire-survivors-training.mp4) |
+
+<video controls preload="metadata" width="640" src="docs/assets/showcase/wukong-training-full.mp4"></video>
+
+上方为 7 分钟的黑神话：悟空训练流程录像（已静音并压缩到适合仓库播放的尺寸）。
+快速查看时可播放上面的短片。
+
+![Vampire Survivors 12×12 训练缩略图](docs/assets/showcase/training-contact-sheet-12x12.png)
 
 ## 一个边界，多种使用方
 

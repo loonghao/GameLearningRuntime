@@ -24,6 +24,17 @@ GLR is for games and test environments you own or are authorized to instrument.
 It does not include anti-cheat bypasses, stealth injection, or game-specific
 reverse-engineering code.
 
+![GLR agent-learning control plane](docs/assets/showcase/glr-agent-learning-hero.png)
+
+## Why interface-first training
+
+GLR lets an agent learn through a structured environment interface: observations,
+actions, rewards, events, and episode boundaries are exchanged as compact data.
+Compared with pixel-only control, this usually means fewer vision frames and less
+context per decision, so training can converge faster while using fewer tokens and
+lower inference cost. Pixel capture remains useful for review and human-facing
+evidence; it is not required for every control step.
+
 ## See GLR running
 
 ![GLR collector running against the bundled synthetic counter adapter](docs/assets/showcase/glr-counter-collector.gif)
@@ -34,6 +45,26 @@ public contract without exposing a game account, machine path, process/window
 identity, or proprietary runtime data. See the [showcase provenance and capture
 policy](docs/assets/showcase/README.md) before contributing footage from a live
 adapter.
+
+## Training footage from our game workflows
+
+We use GLR-style interface control in authorized local workflows for **Black Myth:
+Wukong** and **Vampire Survivors**. The short clips below are visual snapshots of
+those workflows, not claims of a completed benchmark, terminal win, or general
+model quality. The 12×12 contact sheet shows how a long run can be reviewed as a
+compact progression strip.
+
+| Black Myth: Wukong | Vampire Survivors |
+| --- | --- |
+| ![Black Myth: Wukong training frame](docs/assets/showcase/wukong-training-clean.png) | ![Vampire Survivors training frame](docs/assets/showcase/vampire-survivors-training.png) |
+| [Play the short Wukong clip](docs/assets/showcase/wukong-training.mp4) | [Play the short Vampire Survivors clip](docs/assets/showcase/vampire-survivors-training.mp4) |
+
+<video controls preload="metadata" width="640" src="docs/assets/showcase/wukong-training-full.mp4"></video>
+
+Full-length Black Myth: Wukong workflow recording (7 minutes, muted and resized
+for repository playback). Use the short clip above for a quick preview.
+
+![Vampire Survivors 12 by 12 training contact sheet](docs/assets/showcase/training-contact-sheet-12x12.png)
 
 ## One boundary, many consumers
 
