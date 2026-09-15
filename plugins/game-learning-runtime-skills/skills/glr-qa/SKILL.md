@@ -39,3 +39,11 @@ python -m game_learning_runtime.qa "inspect the whole game for bugs" `
 
 Do not claim release quality from this report alone. Keep proprietary traces and
 secrets out of artifacts; publish only evidence the project owner authorized.
+
+## Training capture profile
+
+Before configuring or running recorded training, read the sibling
+[GLR CLI recording contract](../glr-cli/SKILL.md#recording-and-training-data).
+Resolve `glr capture preset` and `glr capture layout` from the authorized project.
+Use `training-balanced` by default and verify the actual finalized video and
+checksummed frame index before claiming training-data readiness.
