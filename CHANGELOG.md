@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.18.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.17.0...v0.18.0) (2026-09-15)
+
+
+### Features
+
+* add declarative plugin extension system ([#131](https://github.com/loonghao/GameLearningRuntime/issues/131)) ([e2bd5df](https://github.com/loonghao/GameLearningRuntime/commit/e2bd5df94eaec1216c3fe94e908916e61b0ad341))
+* normalize managed project output layout ([8cbf92d](https://github.com/loonghao/GameLearningRuntime/commit/8cbf92d49a768000302909ab0af29070a4842695))
+
+
+### Bug Fixes
+
+* sync skills on current release ([84d48f5](https://github.com/loonghao/GameLearningRuntime/commit/84d48f522cb9e9dcbaad844d500c085fa35d395b))
+
 ## [0.17.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.16.0...v0.17.0) (2026-09-14)
 
 
