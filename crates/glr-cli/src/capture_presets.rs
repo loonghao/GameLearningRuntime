@@ -22,7 +22,7 @@ pub struct CapturePreset {
     pub scene_cut: bool,
     pub constant_frame_rate: bool,
     pub audio: bool,
-    pub ffmpeg_output_argv: [&'static str; 22],
+    pub ffmpeg_output_argv: [&'static str; 24],
 }
 
 const TRAINING: CapturePreset = CapturePreset {
@@ -42,6 +42,8 @@ const TRAINING: CapturePreset = CapturePreset {
     constant_frame_rate: true,
     audio: false,
     ffmpeg_output_argv: [
+        "-vf",
+        "scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30",
         "-c:v",
         "libx264",
         "-preset",
@@ -84,6 +86,8 @@ const REVIEW: CapturePreset = CapturePreset {
     constant_frame_rate: true,
     audio: false,
     ffmpeg_output_argv: [
+        "-vf",
+        "scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30",
         "-c:v",
         "libx264",
         "-preset",

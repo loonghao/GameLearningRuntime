@@ -14,7 +14,7 @@ SUPPORTED_TARGETS = {
     "x86_64-unknown-linux-gnu",
 }
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
-SKILLS = ("glr-adapter-builder", "glr-cli")
+SKILLS = ("glr-adapter-builder", "glr-cli", "glr-qa")
 
 
 def _entry(name: str, data: bytes, *, executable: bool) -> tuple[zipfile.ZipInfo, bytes]:
@@ -57,7 +57,7 @@ def package_cli(*, cli: Path, host: Path, target: str, version: str, output: Pat
 2. Put `glr{executable_suffix}` and `glr-hostd{executable_suffix}` on `PATH`.
 3. Run `glr --version` and `glr --project PATH doctor`.
 4. Copy `skills/*` into a project's `.agents/skills/`, or let `glr update`
-   synchronize them on the next release.
+   synchronize them, including when binaries are already current.
 
 The standalone CLI is the deployment and agent-control entrypoint. Install the
 Python `game-learning-runtime` package only in projects that use the Python

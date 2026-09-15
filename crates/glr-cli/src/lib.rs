@@ -13,6 +13,7 @@ mod run_context;
 mod store;
 mod task;
 pub mod update;
+mod update_notice;
 
 use std::ffi::OsString;
 
@@ -33,7 +34,12 @@ pub fn entrypoint(arguments: impl IntoIterator<Item = OsString>) -> i32 {
             return exit_code;
         }
     };
-    match execute(cli) {
+    let notice = if matches!(cli.command, crate::args::Command::Update(_)) {
+        None
+    } else {
+        update_notice::start()
+    };
+    let result = match execute(cli) {
         Ok(exit_code) => exit_code,
         Err(error) => {
             if json_requested {
@@ -51,5 +57,7 @@ pub fn entrypoint(arguments: impl IntoIterator<Item = OsString>) -> i32 {
             }
             2
         }
-    }
+    };
+    update_notice::finish(notice);
+    result
 }

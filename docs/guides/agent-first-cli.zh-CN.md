@@ -9,7 +9,7 @@
 
 从同一个 GitHub Release 下载当前平台对应的 `glr-{version}-{rust-target}.zip` 与
 `SHA256SUMS`。校验压缩包、解压，并把其中的 `glr` 和 `glr-hostd` 放入 `PATH`。
-压缩包同时包含 `glr-cli` 与 `glr-adapter-builder` Skills。Rust CLI 可以独立运行；
+压缩包同时包含 `glr-cli`、`glr-adapter-builder` 与 `glr-qa` Skills。Rust CLI 可以独立运行；
 只有项目角色需要 Python SDK 时才安装 Python 包。
 
 操作项目之前先检查部署：
@@ -73,15 +73,17 @@ GLR 不调用 shell。
     "video_file": "capture.mp4",
     "index_file": "capture-index.jsonl",
     "codec": "h264",
-    "frame_rate": 12,
-    "width": 640,
-    "height": 360
+    "frame_rate": 30,
+    "width": 1920,
+    "height": 1080
   }
 }
 ```
 
-录制器属于项目，因为只有项目知道经过审查的游戏窗口和采集接口。对于训练时的小窗，
-可以从 640×360、12 FPS 开始，以 UI 可辨认和训练可用为准，不追求展示级画质。
+录制器属于项目，因为只有项目知道经过审查的游戏窗口和采集接口。运行 `glr capture preset`，
+采用默认 `training-balanced`：1920×1080、30 FPS CFR、H.264/libx264、CRF 18、fast、
+yuv420p、GOP 30、MP4 fast-start、无音频。配置字段不会自动改变录制器参数；
+结束后必须核对实际视频流和帧索引。
 
 项目角色会收到 `GLR_PROJECT_ROOT`、`GLR_BRIDGE_PATH`、`GLR_RUN_ID`、`GLR_RUN_DIR`、
 `GLR_STORE_PATH`、环境身份、录制输出路径和 goal loop 路径。每个角色仍需独立验证准确的

@@ -279,3 +279,11 @@ Rust. Preserve Python reference behavior and cross-language fixtures.
 
 ## Evidence and recording
 Before any boss or elite combat action, start and verify the configured recording provider. Persist route transitions and combat outcomes using docs/knowledge/combat-route-evidence.v1.json; retain recording provenance and exact producer binding. Never publish local paths, PIDs, HWNDs, credentials, or private traces.
+
+## Training capture profile
+
+Before configuring or running recorded training, read the sibling
+[GLR CLI recording contract](../glr-cli/SKILL.md#recording-and-training-data).
+Resolve `glr capture preset` and `glr capture layout` from the authorized project.
+Use `training-balanced` by default and verify the actual finalized video and
+checksummed frame index before claiming training-data readiness.

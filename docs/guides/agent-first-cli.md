@@ -12,7 +12,7 @@ lifecycle, target binding, or post-action verification.
 Download the matching `glr-{version}-{rust-target}.zip` and `SHA256SUMS` from
 the same GitHub Release. Verify the checksum, extract the archive, and put its
 `glr` and `glr-hostd` executables on `PATH`. The archive includes the
-`glr-cli` and `glr-adapter-builder` Skills. The Rust CLI is standalone; install
+`glr-cli`, `glr-adapter-builder`, and `glr-qa` Skills. The Rust CLI is standalone; install
 the Python package only when project-owned roles use its SDK.
 
 Inspect the deployment before operating a project:
@@ -81,16 +81,18 @@ GLR never invokes a shell.
     "video_file": "capture.mp4",
     "index_file": "capture-index.jsonl",
     "codec": "h264",
-    "frame_rate": 12,
-    "width": 640,
-    "height": 360
+    "frame_rate": 30,
+    "width": 1920,
+    "height": 1080
   }
 }
 ```
 
 The recorder is project-owned because only the project knows the reviewed game window and capture
-API. For a small game window, 640×360 at 12 FPS is a practical starting profile. Tune it based on
-UI readability and learner needs rather than presentation quality.
+API. Run `glr capture preset` and apply the default `training-balanced` output arguments:
+1920x1080, 30 FPS CFR, H.264/libx264, CRF 18, fast, yuv420p, GOP 30, MP4 fast-start,
+and no audio. Verify the finalized stream and frame index; manifest dimensions alone
+do not configure the recorder.
 
 Project roles receive `GLR_PROJECT_ROOT`, `GLR_BRIDGE_PATH`, `GLR_RUN_ID`, `GLR_RUN_DIR`,
 `GLR_STORE_PATH`, environment identity, capture output paths, and goal-loop paths through
