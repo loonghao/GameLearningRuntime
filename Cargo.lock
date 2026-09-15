@@ -403,6 +403,7 @@ name = "glr-cli"
 version = "0.18.0" # x-release-please-version
 dependencies = [
  "clap",
+ "libc",
  "reqwest",
  "rusqlite",
  "self-replace",
@@ -414,6 +415,7 @@ dependencies = [
  "thiserror",
  "toml",
  "uuid",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

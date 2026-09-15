@@ -42,6 +42,10 @@ secrets out of artifacts; publish only evidence the project owner authorized.
 
 ## Training capture profile
 
+For imported projects, use the sibling [package workflow](../glr-cli/references/packages.md).
+Record package validity separately from dependency readiness, synthetic conformance,
+live acceptance and model quality. Import does not execute a QA check.
+
 Before configuring or running recorded training, read the sibling
 [GLR CLI recording contract](../glr-cli/SKILL.md#recording-and-training-data).
 Resolve `glr capture preset` and `glr capture layout` from the authorized project.

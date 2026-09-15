@@ -37,6 +37,7 @@ def test_unified_cli_archive_contains_host_manifest_and_agent_skills(tmp_path: P
         f"{root}/install.md",
         f"{root}/skills/glr-cli/SKILL.md",
         f"{root}/skills/glr-cli/references/recording.md",
+        f"{root}/skills/glr-cli/references/packages.md",
         f"{root}/skills/glr-qa/SKILL.md",
         f"{root}/skills/glr-adapter-builder/SKILL.md",
     } <= names
@@ -44,5 +45,7 @@ def test_unified_cli_archive_contains_host_manifest_and_agent_skills(tmp_path: P
     assert manifest["target"] == "x86_64-pc-windows-msvc"
 
     assert {entry["name"] for entry in manifest["skills"]} == {
-        "glr-cli", "glr-adapter-builder", "glr-qa"
+        "glr-cli",
+        "glr-adapter-builder",
+        "glr-qa",
     }

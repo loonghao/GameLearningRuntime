@@ -122,6 +122,9 @@ states. Knowledge-file presence is not a trigger or a hit; a hit is not learning
 
 ## Portable project handoff
 
+For offline source handoff, follow [source packages](references/packages.md).
+Package validation never authorizes setup, role execution, or cluster deployment.
+
 New projects use a single `glr-project.toml`. Before migration, verify the
 installed CLI and Python SDK support TOML; unreleased source changes do not
 upgrade installed tools. Never leave JSON and TOML manifests side by side.
