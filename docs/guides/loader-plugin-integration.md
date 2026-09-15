@@ -80,7 +80,7 @@ layout:
 vx run package-runtime
 ```
 
-The result under `.glr-dist/loader-package` contains `payload/` plus a
+The result under `.glr/exports/loader-packages/loader-package` contains `payload/` plus a
 checksummed manifest. Packaging never scans for a game or installs anything.
 An operator must select the exact authorized target and approve the copy.
 

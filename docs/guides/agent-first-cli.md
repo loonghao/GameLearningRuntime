@@ -274,13 +274,13 @@ action postcondition.
 Export previously observed entities and routes:
 
 ```powershell
-glr --project . --json knowledge export --output artifacts/spatial-knowledge.json
+glr --project . --json knowledge export --output .glr/exports/knowledge/spatial-knowledge.json
 ```
 
 Import them in another checkout or fresh game instance with the same environment and protocol:
 
 ```powershell
-glr --project . --json knowledge import --input artifacts/spatial-knowledge.json
+glr --project . --json knowledge import --input .glr/exports/knowledge/spatial-knowledge.json
 ```
 
 The optional `glr.spatial-knowledge.v2` graph uses the same import command. Query directed edges
@@ -295,7 +295,7 @@ coordinates or assume identical action semantics.
 Load a checksummed model bundle:
 
 ```powershell
-glr --project . --json play --bundle artifacts/model-bundle
+glr --project . --json play --bundle .glr/exports/model-bundles/model-bundle
 ```
 
 Checkpoint contract preflight and explicit migration:

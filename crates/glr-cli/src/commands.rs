@@ -1548,6 +1548,7 @@ fn register_goal_artifact(
 }
 
 fn export_knowledge(project: &Project, store: &Store, output: &Path, as_json: bool) -> Result<i32> {
+    ensure_export_path(project, output)?;
     if output.exists() || output.is_symlink() {
         return Err(Error::Invalid(format!(
             "knowledge export output already exists: {}",
@@ -1567,6 +1568,36 @@ fn export_knowledge(project: &Project, store: &Store, output: &Path, as_json: bo
         as_json,
     )?;
     Ok(0)
+}
+
+fn ensure_export_path(project: &Project, output: &Path) -> Result<()> {
+    let exports = project.data_dir.join("exports");
+    let normalized = normalize_path(output);
+    let normalized_exports = normalize_path(&exports);
+    if !normalized.starts_with(&normalized_exports)
+        || normalized == normalized_exports
+        || output.file_name().is_none()
+    {
+        return Err(Error::Invalid(format!(
+            "export output must stay inside the project export root: {}",
+            exports.display()
+        )));
+    }
+    Ok(())
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                result.pop();
+            }
+            other => result.push(other.as_os_str()),
+        }
+    }
+    result
 }
 
 fn import_knowledge(project: &Project, store: &Store, source: &Path, as_json: bool) -> Result<i32> {

@@ -255,13 +255,13 @@ Research 查询会合并当前游戏、同品类和通用结论，并排除 reje
 导出已经探索到的实体和路线：
 
 ```powershell
-glr --project . --json knowledge export --output artifacts/spatial-knowledge.json
+glr --project . --json knowledge export --output .glr/exports/knowledge/spatial-knowledge.json
 ```
 
 在同一环境/协议的新 checkout 或新游戏实例中导入：
 
 ```powershell
-glr --project . --json knowledge import --input artifacts/spatial-knowledge.json
+glr --project . --json knowledge import --input .glr/exports/knowledge/spatial-knowledge.json
 ```
 
 可选的 `glr.spatial-knowledge.v2` directed graph 也通过同一条导入命令处理。使用
@@ -276,7 +276,7 @@ authority。
 加载经过校验的模型包：
 
 ```powershell
-glr --project . --json play --bundle artifacts/model-bundle
+glr --project . --json play --bundle .glr/exports/model-bundles/model-bundle
 ```
 
 Checkpoint 合同预检与显式迁移：

@@ -75,7 +75,7 @@ UE4SS Lua 不需要编译。两种 Loader 都使用相同命令生成部署暂�
 vx run package-runtime
 ```
 
-`.glr-dist/loader-package` 只包含 `payload/` 和校验和清单。打包脚本不会
+`.glr/exports/loader-packages/loader-package` 只包含 `payload/` 和校验和清单。打包脚本不会
 扫描游戏，也不会执行安装；操作者必须单独选择并批准准确的授权目标。
 
 ## 训练和复现

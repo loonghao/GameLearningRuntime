@@ -366,7 +366,7 @@ def test_generated_training_smoke_produces_a_verifiable_reproduction_bundle(
         capture_output=True,
         text=True,
     )
-    run_dir = output / ".glr-runs/reference-model"
+    run_dir = output / ".glr/exports/model-bundles/reference-model"
     environment = os.environ | {
         "PYTHONPATH": os.pathsep.join([str(output / "src"), str(Path("src").resolve())])
     }
