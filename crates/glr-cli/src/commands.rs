@@ -108,6 +108,11 @@ pub fn execute(cli: Cli) -> Result<i32> {
     if let CliCommand::Update(arguments) = &cli.command {
         return run_update(&cli, arguments);
     }
+    if let CliCommand::Package { command } = &cli.command {
+        let result = crate::package::execute(&cli.project, command)?;
+        emit("package", &result, cli.json)?;
+        return Ok(0);
+    }
     if let CliCommand::Plugin { command } = &cli.command {
         return crate::plugin::execute(&absolute(&cli.project)?, command, cli.json);
     }
@@ -373,6 +378,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
             }
         },
         CliCommand::Update(_) => unreachable!("update handled before project loading"),
+        CliCommand::Package { .. } => unreachable!("package handled before project loading"),
         CliCommand::Checkpoint { .. } => unreachable!("checkpoint handled before project loading"),
         CliCommand::Transaction { .. } => {
             unreachable!("transaction handled before project loading")

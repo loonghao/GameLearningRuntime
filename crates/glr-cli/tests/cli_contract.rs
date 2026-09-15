@@ -136,6 +136,77 @@ fn run_raw(project: &Path, arguments: &[&str]) -> Output {
     run(project, arguments)
 }
 
+#[test]
+fn package_cli_plans_exports_and_imports_without_creating_a_run_store() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("glr-project.json"), serde_json::to_vec(&json!({
+        "schema_version": "glr.project.v1", "environment_id": "synthetic.package", "protocol_version": "1.0"
+    })).unwrap()).unwrap();
+    fs::write(root.path().join("uv.lock"), "version = 1\n").unwrap();
+    let manifest = root.path().join("selection.json");
+    fs::write(&manifest, serde_json::to_vec(&json!({
+        "schema_version": "glr.source-package.v1", "package_version": "1.0.0", "required_glr": ">=0.18.0, <1.0.0",
+        "environment_id": "synthetic.package", "protocol_version": "1.0", "contract_sha256": "a".repeat(64),
+        "source_revision": "synthetic", "redistribution_license": "MIT", "files": ["glr-project.json", "uv.lock"]
+    })).unwrap()).unwrap();
+    assert!(
+        run(
+            root.path(),
+            &["package", "plan", "--manifest", "selection.json"]
+        )
+        .status
+        .success()
+    );
+    let archive = root.path().join("source.zip");
+    assert!(
+        run(
+            root.path(),
+            &[
+                "package",
+                "export",
+                "--manifest",
+                "selection.json",
+                "--output",
+                archive.to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    let recipient = tempfile::tempdir().unwrap();
+    assert!(
+        run(
+            recipient.path(),
+            &["package", "inspect", archive.to_str().unwrap()]
+        )
+        .status
+        .success()
+    );
+    let destination = recipient.path().join("imported");
+    let output = run(
+        recipient.path(),
+        &[
+            "package",
+            "import",
+            archive.to_str().unwrap(),
+            "--destination",
+            destination.to_str().unwrap(),
+            "--expected-environment",
+            "synthetic.package",
+            "--expected-contract",
+            &"a".repeat(64),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(destination.join("uv.lock").is_file());
+    assert!(!root.path().join(".glr").exists());
+    assert!(!destination.join(".glr").exists());
+}
+
 fn checkpoint_contract(reward: &str, action: &str) -> Value {
     json!({
         "schema_version": "glr.checkpoint-contract.v1",

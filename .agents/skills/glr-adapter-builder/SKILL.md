@@ -282,6 +282,10 @@ Before any boss or elite combat action, start and verify the configured recordin
 
 ## Training capture profile
 
+For source redistribution, follow the sibling [package workflow](../glr-cli/references/packages.md).
+Keep game binaries, machine bindings, private data and dependency installation out
+of source import; validate the adapter separately after recipient setup.
+
 Before configuring or running recorded training, read the sibling
 [GLR CLI recording contract](../glr-cli/SKILL.md#recording-and-training-data).
 Resolve `glr capture preset` and `glr capture layout` from the authorized project.

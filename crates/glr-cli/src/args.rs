@@ -86,10 +86,41 @@ pub enum Command {
     },
     /// Check or apply a checksum-verified GLR distribution update.
     Update(UpdateArgs),
+    /// Plan, export, inspect, or import an offline source-only project package.
+    Package {
+        #[command(subcommand)]
+        command: PackageCommand,
+    },
     /// Inspect, install, and compose declarative project plugins.
     Plugin {
         #[command(subcommand)]
         command: PluginCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PackageCommand {
+    Plan {
+        #[arg(long)]
+        manifest: PathBuf,
+    },
+    Export {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    Inspect {
+        archive: PathBuf,
+    },
+    Import {
+        archive: PathBuf,
+        #[arg(long)]
+        destination: PathBuf,
+        #[arg(long)]
+        expected_environment: String,
+        #[arg(long)]
+        expected_contract: String,
     },
 }
 
