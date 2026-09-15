@@ -46,25 +46,32 @@ identity, or proprietary runtime data. See the [showcase provenance and capture
 policy](docs/assets/showcase/README.md) before contributing footage from a live
 adapter.
 
-## Training footage from our game workflows
+## Training workflows we use in practice
 
 We use GLR-style interface control in authorized local workflows for **Black Myth:
-Wukong** and **Vampire Survivors**. The short clips below are visual snapshots of
-those workflows, not claims of a completed benchmark, terminal win, or general
-model quality. The 12×12 contact sheet shows how a long run can be reviewed as a
-compact progression strip.
+Wukong** and **Vampire Survivors**. This section separates the visual demo from
+the engineering claim: the media shows what a run looks like, while the runtime
+contracts and run records remain the source of truth for observations, actions,
+rewards, and terminal outcomes.
 
 | Black Myth: Wukong | Vampire Survivors |
 | --- | --- |
 | ![Black Myth: Wukong training frame](docs/assets/showcase/wukong-training-clean.png) | ![Vampire Survivors training frame](docs/assets/showcase/vampire-survivors-training.png) |
 | [Play the short Wukong clip](docs/assets/showcase/wukong-training.mp4) | [Play the short Vampire Survivors clip](docs/assets/showcase/vampire-survivors-training.mp4) |
 
-<video controls preload="metadata" width="640" src="docs/assets/showcase/wukong-training-full.mp4"></video>
+### Full Black Myth: Wukong recording
 
-Full-length Black Myth: Wukong workflow recording (7 minutes, muted and resized
-for repository playback). Use the short clip above for a quick preview.
+[![Play the seven-minute Black Myth: Wukong recording](docs/assets/showcase/wukong-training-clean.png)](docs/assets/showcase/wukong-training-full.mp4)
+
+Click the image to open the seven-minute, muted recording in GitHub's media
+viewer. The repository copy is resized and compressed for web playback; use the
+short clip above for a quick preview.
 
 ![Vampire Survivors 12 by 12 training contact sheet](docs/assets/showcase/training-contact-sheet-12x12.png)
+
+The 12×12 contact sheet is a compact review of a longer Vampire Survivors run.
+These visuals are demonstrations, not claims of a completed benchmark, terminal
+win, or general model quality.
 
 ## One boundary, many consumers
 
