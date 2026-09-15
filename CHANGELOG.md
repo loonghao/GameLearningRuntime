@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.19.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.18.0...v0.19.0) (2026-09-15)
+
+
+### Features
+
+* add offline source package handoff ([6b77e9b](https://github.com/loonghao/GameLearningRuntime/commit/6b77e9bc8c24448c44a647cf9f8100451d188be4))
+* align recording skills and update notifications ([b9e6e36](https://github.com/loonghao/GameLearningRuntime/commit/b9e6e365ec216758dd4e0602dea86d0c373e5228))
+
+
+### Bug Fixes
+
+* preserve Python run store compatibility ([58d24e4](https://github.com/loonghao/GameLearningRuntime/commit/58d24e49d11c690909da4ee643d0e1f13530b963))
+
+
+### Documentation
+
+* add interface-first game training showcase ([35673d4](https://github.com/loonghao/GameLearningRuntime/commit/35673d43c56467927986c3d0bb1b97ddd0350c36))
+* improve training media playback ([30b724e](https://github.com/loonghao/GameLearningRuntime/commit/30b724e0c25a33257b239c9a15723e3e662d15f5))
+
 ## [0.18.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.17.0...v0.18.0) (2026-09-15)
 
 
