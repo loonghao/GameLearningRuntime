@@ -107,6 +107,29 @@ Dashboard 生成随机令牌，给它启动的进程注入 `GLR_TELEMETRY_URL` �
 令牌仅进入环境，不写入预设、任务回执或查询结果。它是项目级诊断写凭证，
 不是游戏动作授权；不要写入 URL、报告或版本库。
 
+### 由 GLR 托管的自主循环
+
+当策略循环是调用方自己的长生命周期进程（而不是 Dashboard 任务或工程角色）时，
+用 `glr host` 把它放进一个 GLR 拥有的 run：
+
+```powershell
+glr --json host -- python my_loop.py --episodes 500
+glr --json host --timeout-seconds 600 -- ./loop
+glr --json host --no-telemetry -- ./loop   # 只要 run，不要写入口
+```
+
+`--` 之后的命令行按原样执行，GLR 不展开占位符、不要求配置 trainer 角色。
+子进程会收到与角色一致的 `GLR_RUN_ID`、`GLR_RUN_DIR`、`GLR_STORE_PATH`、
+`GLR_CLI_PATH` 和环境身份，并在启用写入时额外收到 `GLR_TELEMETRY_URL` 和
+`GLR_TELEMETRY_TOKEN`，因此 `BridgeTelemetry.from_env("loop.example")` 可直接工作。
+令牌由 CLI 生成并只写入这一个子进程的环境，不进入 run 记录、日志、报告或预设；
+回执只报告写入通道是否可用，不回传令牌。run 结束时子进程被回收，终态 run 依旧
+拒绝新批次：托管提供写入通道，不提供事后补录。
+
+托管不等于授权：子进程以调用方权限运行，GLR 不沙箱化它，也不把它的退出码当作
+学习效果的证据。需要 planner、evaluator、晋升或 checkpoint 语义时仍应使用 goal loop。
+
+
 ```powershell
 $headers = @{ Authorization = "Bearer $env:GLR_TELEMETRY_TOKEN" }
 Invoke-RestMethod -Method Post -Uri $env:GLR_TELEMETRY_URL `

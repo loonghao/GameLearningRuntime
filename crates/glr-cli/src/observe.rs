@@ -124,6 +124,56 @@ pub fn serve(project: &Project, port: Option<u16>, as_json: bool, controls: bool
     Ok(0)
 }
 fn start(project: &Project, preferred: Option<u16>, controls: bool) -> Result<Observer> {
+    Ok(start_with_token(project, preferred, controls)?.0)
+}
+
+/// Reject a telemetry token that is not high-entropy-looking or not URL-safe.
+fn validate_telemetry_token(token: &str) -> Result<()> {
+    if !(32..=128).contains(&token.len())
+        || !token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+    {
+        return Err(Error::Invalid(
+            "GLR_TELEMETRY_TOKEN must contain 32..128 ASCII letters, digits, _, . or -".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Ingest binding published to a caller-hosted loop.
+///
+/// Holding this value is holding the write credential. It is returned in memory
+/// so a host command can place it in exactly one child's environment.
+pub struct IngestBinding {
+    pub url: String,
+    pub token: String,
+}
+
+/// Start the write endpoint used by `glr host` and return its ingest binding.
+pub fn host_ingest(
+    project: &Project,
+    enabled: bool,
+) -> Result<(Option<Observer>, Option<IngestBinding>)> {
+    if !enabled {
+        return Ok((None, None));
+    }
+    let (observer, telemetry) = start_with_token(project, None, true)?;
+    let binding = telemetry.map(|(url, token)| IngestBinding { url, token });
+    Ok((Some(observer), binding))
+}
+
+/// Start a server that accepts telemetry writes, and return its ingest binding.
+///
+/// The token is generated here and handed to the caller in memory. It is never
+/// read from the ambient environment and never written to a file, so hosting an
+/// external loop cannot leak the credential into a log, preset, report or
+/// package through the process environment it inherited.
+fn start_with_token(
+    project: &Project,
+    preferred: Option<u16>,
+    controls: bool,
+) -> Result<(Observer, Option<(String, String)>)> {
     let (listener, port) = instance::bind(preferred, &project.data_dir)?;
     let url = format!("http://127.0.0.1:{port}/");
     let identity = Arc::new(Instance::new(project, port, !controls));
@@ -140,34 +190,33 @@ fn start(project: &Project, preferred: Option<u16>, controls: bool) -> Result<Ob
         };
     let stop = Arc::new(AtomicBool::new(false));
     let shutdown = stop.clone();
+    let telemetry = if controls {
+        // An operator may pin the token before start; otherwise generate one.
+        // Either way it is validated here, and only the generated form is
+        // guaranteed absent from the ambient environment.
+        let token = match std::env::var("GLR_TELEMETRY_TOKEN") {
+            Ok(token) => token,
+            Err(_) => format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            ),
+        };
+        validate_telemetry_token(&token)?;
+        Some((format!("{url}api/v1/telemetry"), token))
+    } else {
+        None
+    };
     let state = WebState {
         observation: Arc::new(Observation {
             data_dir: project.data_dir.clone(),
             environment_id: project.environment_id.clone(),
         }),
-        dashboard: if controls {
-            let token = std::env::var("GLR_TELEMETRY_TOKEN").unwrap_or_else(|_| {
-                format!(
-                    "{}{}",
-                    uuid::Uuid::new_v4().simple(),
-                    uuid::Uuid::new_v4().simple()
-                )
-            });
-            if !(32..=128).contains(&token.len())
-                || !token
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
-            {
-                return Err(Error::Invalid(
-                    "GLR_TELEMETRY_TOKEN must contain 32..128 ASCII letters, digits, _, . or -"
-                        .into(),
-                ));
-            }
-            Some(Arc::new(
-                Dashboard::new(project)?.with_telemetry(format!("{url}api/v1/telemetry"), token),
-            ))
-        } else {
-            None
+        dashboard: match &telemetry {
+            Some((endpoint, token)) => Some(Arc::new(
+                Dashboard::new(project)?.with_telemetry(endpoint.clone(), token.clone()),
+            )),
+            None => None,
         },
         identity: identity.clone(),
         port,
@@ -199,14 +248,17 @@ fn start(project: &Project, preferred: Option<u16>, controls: bool) -> Result<Ob
                     .await;
             });
         })?;
-    Ok(Observer {
-        stop,
-        worker: Some(worker),
-        url,
-        port,
-        identity: (*identity).clone(),
-        _lease: lease,
-    })
+    Ok((
+        Observer {
+            stop,
+            worker: Some(worker),
+            url,
+            port,
+            identity: (*identity).clone(),
+            _lease: lease,
+        },
+        telemetry,
+    ))
 }
 async fn handle(
     State(state): State<WebState>,

@@ -101,12 +101,13 @@ pub fn execute(cli: Cli) -> Result<i32> {
             CliCommand::Doctor
                 | CliCommand::Runtime { .. }
                 | CliCommand::Train { .. }
+                | CliCommand::Host { .. }
                 | CliCommand::Goal { .. }
                 | CliCommand::Play { .. }
         )
     {
         return Err(Error::Invalid(
-            "--context is supported only by doctor, runtime, train, goal, and play".into(),
+            "--context is supported only by doctor, runtime, train, host, goal, and play".into(),
         ));
     }
     if let CliCommand::Update(arguments) = &cli.command {
@@ -263,6 +264,18 @@ pub fn execute(cli: Cli) -> Result<i32> {
             let _observer = crate::observe::start_default(&project, !no_observe);
             run_training(&project, &store, cli.json, !no_capture)
         }
+        CliCommand::Host {
+            no_telemetry,
+            timeout_seconds,
+            argv,
+        } => run_host(
+            &project,
+            &store,
+            &argv,
+            timeout_seconds,
+            !no_telemetry,
+            cli.json,
+        ),
         CliCommand::Goal {
             command:
                 GoalCommand::Run {
@@ -599,6 +612,115 @@ fn update_skills_directory(cli: &Cli, arguments: &UpdateArgs) -> Result<Option<P
                 .join(".agents/skills"),
         ))
     }
+}
+
+/// Host a caller-owned long-lived process inside a GLR run.
+///
+/// The child is not a project role. GLR owns the run record, the run directory
+/// and the telemetry ingest binding; the caller owns the loop's own lifecycle and
+/// policy. This exists because an adapter whose policy loop is its own long-lived
+/// process otherwise has to masquerade as the project trainer to obtain a run and
+/// an ingest endpoint.
+fn run_host(
+    project: &Project,
+    store: &Store,
+    argv: &[String],
+    timeout_seconds: Option<f64>,
+    telemetry: bool,
+    as_json: bool,
+) -> Result<i32> {
+    let (program, _) = argv
+        .split_first()
+        .ok_or_else(|| Error::Invalid("host requires a child command line".into()))?;
+    let timeout = match timeout_seconds {
+        Some(seconds) if !seconds.is_finite() || seconds <= 0.0 => {
+            return Err(Error::Invalid(
+                "host timeout_seconds must be finite and positive".into(),
+            ));
+        }
+        Some(seconds) => Some(Duration::from_secs_f64(seconds)),
+        None => None,
+    };
+    let run = store.create_run(
+        &project.environment_id,
+        &project.protocol_version,
+        "hosted",
+        json!({
+            "environment_family": project.environment_family,
+            "dashboard_job_id": std::env::var("GLR_DASHBOARD_JOB_ID").ok(),
+            "run_context": crate::run_context::metadata(project)?,
+            "status_scope": "process_execution",
+            "hosted_program": program,
+            "learning_status": "unverified",
+            "improvement_status": "unverified"
+        }),
+    )?;
+    let run_dir = project.data_dir.join("runs").join(&run.run_id);
+    fs::create_dir_all(&run_dir)?;
+    crate::run_context::persist(project, store, &run.run_id, &run_dir)?;
+    let log_path = run_dir.join("hosted.log");
+    let (observer, binding) = match crate::observe::host_ingest(project, telemetry) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = store.finish_run(&run.run_id, "failed", Some(1));
+            return Err(error);
+        }
+    };
+    // The binding reaches exactly one child. It is written into that child's
+    // environment and nowhere else: not into the run record, the log, the run
+    // context, or the emitted receipt. `BridgeTelemetry::from_env` picks it up.
+    let mut extra = HashMap::new();
+    if let Some(binding) = &binding {
+        extra.insert("telemetry_url".into(), PathBuf::from(&binding.url));
+        extra.insert("telemetry_token".into(), PathBuf::from(&binding.token));
+    }
+    // The caller's command line is used verbatim; GLR expands no placeholders in
+    // it, so an external loop cannot borrow the project role template.
+    let hosted = ProjectCommand {
+        argv: argv.to_vec(),
+    };
+    let outcome = run_command(CommandInvocation {
+        command: &hosted,
+        project,
+        run_id: &run.run_id,
+        run_dir: &run_dir,
+        log_path: &log_path,
+        bundle: None,
+        extra: &extra,
+        timeout,
+    });
+    let exit_code = match outcome {
+        Ok(code) => code,
+        Err(error) => {
+            let _ = store.finish_run(&run.run_id, "failed", Some(1));
+            return Err(error);
+        }
+    };
+    drop(observer);
+    store.register_artifact(
+        &run.run_id,
+        "hosted.log",
+        &log_path,
+        "run-log",
+        "text/plain",
+    )?;
+    let succeeded = exit_code == 0;
+    let finished = store.finish_run(
+        &run.run_id,
+        if succeeded { "succeeded" } else { "failed" },
+        Some(exit_code),
+    )?;
+    let mut output = serde_json::to_value(&finished)?;
+    let object = output
+        .as_object_mut()
+        .expect("RunRecord serializes as an object");
+    // Report that ingest was available, never the credential itself.
+    object.insert(
+        "telemetry".into(),
+        json!({"available": binding.is_some(), "ingest_path": binding.as_ref().map(|_| "api/v1/telemetry")}),
+    );
+    emit("host", &output, as_json)?;
+    Ok(exit_code)
 }
 
 fn run_transaction(store: &Store, command: TransactionCommand, as_json: bool) -> Result<i32> {

@@ -52,6 +52,22 @@ pub enum Command {
         #[arg(long)]
         no_observe: bool,
     },
+    /// Host a caller-owned long-lived loop inside a GLR run.
+    ///
+    /// The child is an ordinary process, not a project role: GLR owns the run and
+    /// the telemetry ingest bindings, the caller owns the loop. Everything after
+    /// `--` is the child command line.
+    Host {
+        /// Run the child without opening a telemetry ingest endpoint.
+        #[arg(long)]
+        no_telemetry: bool,
+        /// Stop the child after this many seconds; omit to run until it exits.
+        #[arg(long)]
+        timeout_seconds: Option<f64>,
+        /// The child command line; the first token is the program.
+        #[arg(last = true, required = true)]
+        argv: Vec<String>,
+    },
     /// Serve the bundled live dashboard and read-only observation API.
     Observe {
         /// Loopback port. Omit to try 7432, then this project's own slot, then

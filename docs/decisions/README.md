@@ -32,6 +32,7 @@
 - [ADR-0029: Bound the runtime start readiness window in the project contract](0029-bound-runtime-start-readiness.md)
 - [ADR-0030: Give each workbench server an instance identity](0030-give-workbench-servers-an-instance-identity.md)
 - [ADR-0031: Bind every training role to one trial identity](0031-bind-roles-to-one-trial-identity.md)
+- [ADR-0032: Host an externally driven loop inside a run](0032-host-an-externally-driven-loop.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.
