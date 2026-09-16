@@ -38,6 +38,15 @@ core-check:
 rust-format-check:
     vx cargo fmt --all -- --check
 
+# Build once before Cargo. CI downloads this same checked artifact for every target.
+dashboard-build:
+    vx npm --prefix dashboard-ui ci --ignore-scripts
+    vx npm --prefix dashboard-ui run build
+
+dashboard-check:
+    vx npm --prefix dashboard-ui run format:check
+    vx npm --prefix dashboard-ui test
+
 rust-clippy:
     vx cargo clippy --workspace --all-targets --locked -- -D warnings
 

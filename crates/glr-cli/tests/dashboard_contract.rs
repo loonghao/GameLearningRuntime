@@ -201,13 +201,41 @@ fn observer_paginates_live_history_logs_and_enforces_read_only_loopback() {
             .status(),
         403
     );
-    let response = server.get("/app.js");
+    let html = server.get("/").text().unwrap();
+    assert!(html.contains("id=\"root\""));
+    let health: Value = server.get("/api/v1/health").json().unwrap();
+    assert_eq!(
+        health["dashboard_source_sha256"].as_str().unwrap().len(),
+        64
+    );
+    let style = html
+        .split("href=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
+    assert!(style.starts_with("/assets/") && style.ends_with(".css"));
+    let css = server.get(style);
+    assert_eq!(css.status(), 200);
+    assert_eq!(css.headers()["content-type"], "text/css; charset=utf-8");
+    assert_eq!(server.get("/assets/missing.js").status(), 404);
+    let script = html
+        .split("src=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
+    assert!(script.starts_with("/assets/"));
+    let response = server.get(script);
+    assert_eq!(response.status(), 200);
     assert!(response.headers().contains_key("content-security-policy"));
     let etag = response.headers()["etag"].clone();
     assert_eq!(
         server
             .client
-            .get(format!("{}/app.js", server.url))
+            .get(format!("{}{script}", server.url))
             .header("If-None-Match", etag)
             .send()
             .unwrap()

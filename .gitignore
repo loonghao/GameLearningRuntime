@@ -10,6 +10,7 @@ __pycache__/
 .venv-glr/
 build/
 dist/
+node_modules/
 htmlcov/
 target/
 sdk/godot/.godot/

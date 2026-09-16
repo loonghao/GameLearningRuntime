@@ -6,12 +6,13 @@ Thanks for helping make game-learning infrastructure reusable.
 
 Prerequisites: Git and [vx](https://github.com/loonghao/vx). The committed
 `vx.toml`, `vx.lock`, `rust-toolchain.toml`, and `global.json` select Python,
-uv, just, rustup/Rust, and .NET inputs for local and CI use.
+Node.js, uv, just, rustup/Rust, and .NET inputs for local and CI use.
 
 ```powershell
 git clone https://github.com/loonghao/GameLearningRuntime.git
 cd GameLearningRuntime
 vx setup
+vx just dashboard-build dashboard-check
 vx just ci
 ```
 

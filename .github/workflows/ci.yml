@@ -14,6 +14,28 @@ permissions:
   contents: read
 
 jobs:
+  dashboard:
+    name: React dashboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
+        with:
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "node just"
+          cache: "true"
+      - run: vx just dashboard-build dashboard-check
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dashboard-ui
+          path: dashboard-ui/dist/
+          if-no-files-found: error
+          retention-days: 7
+
   godot-provider:
     name: Godot native provider
     runs-on: ubuntu-latest
@@ -100,6 +122,7 @@ jobs:
 
   runtime-host:
     name: Runtime Host and provider SDKs
+    needs: dashboard
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -117,6 +140,10 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dashboard-ui
+          path: dashboard-ui/dist/
       - run: vx just ci-runtime-host
 
   package:
@@ -135,6 +162,10 @@ jobs:
           github-token: ${{ github.token }}
           tools: "uv just"
           cache: "true"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dashboard-ui
+          path: dashboard-ui/dist/
       - run: vx just ci-package
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

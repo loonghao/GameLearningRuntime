@@ -3,6 +3,7 @@ name = "game-learning-runtime"
 description = "Reproducible local and CI toolchain for Game Learning Runtime"
 
 [tools]
+node = "22.22.0"
 actionlint = "1.7.12"
 dotnet = "10.0.400"
 python = "3.12.13"

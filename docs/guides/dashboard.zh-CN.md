@@ -7,6 +7,16 @@ glr --project . dashboard
 打开输出的 localhost 地址即可。后端 Axum 和页面资源都在 `glr` 二进制中，
 不需要部署 Node/Python Web 服务。默认端口为 7432，`--port 0` 自动选空闲端口。
 
+前端采用 React、TypeScript、shadcn/ui（Radix）与 Tailwind。Vite 构建的 HTML、
+带内容哈希的 JS/CSS 在 CI 中生成，再编译进各平台 CLI。所有资源由同一个 localhost
+服务提供，保持现有 CSP，安装后的 GLR 不需要 Node.js 或外部 CDN。
+
+从源码开发时，先执行 `vx just dashboard-build dashboard-check`，再运行 Cargo 或
+`just check/build`。修改前端后需要重新构建；Cargo 会校验源码指纹，拒绝缺失或过期
+的资源。生成的 `dist/` 不入库。CI 将 `dashboard-ui` 产物传给 Rust 和打包任务，
+发布时 Linux、Windows、macOS 共用不可变 release tag 对应的前端产物。
+`/api/v1/health` 的 `dashboard_source_sha256` 可追溯内嵌源码版本。
+
 - **Training presets**：点击预设开始训练；保存、导出、导入预设。默认预设使用工程已有
   trainer 和录制配置。不同算法、预算等通过工程的 `task run ... --set` 预设表达。
 - **GLR operations**：表单直接来自 CLI 参数定义，支持训练、报告、模型播放、查询、
