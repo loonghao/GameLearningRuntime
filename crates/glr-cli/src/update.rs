@@ -226,7 +226,17 @@ impl Updater {
                 "glr-hostd"
             };
             atomic_copy(&host, &executable_dir.join(host_name))?;
-            self_replace::self_replace(&cli)?;
+            // A running image cannot be replaced, and the raw OS error names
+            // neither the reason nor the process holding it. The workbench
+            // registry already knows which servers started from this path, so
+            // report them, and say plainly which half of the update did apply.
+            self_replace::self_replace(&cli).map_err(|error| {
+                Error::Contract(blocked_executable_report(
+                    &current_executable,
+                    skills_dir,
+                    &error,
+                ))
+            })?;
         }
         let host_updated = plan.version_update_available;
         Ok(UpdateResult {
@@ -273,6 +283,54 @@ impl Updater {
 fn update_work_required(plan: &UpdatePlan, skills_dir: Option<&Path>) -> bool {
     plan.version_update_available
         || (skills_dir.is_some() && plan.current_version == plan.latest_version)
+}
+
+/// The whole message for a running image that could not be replaced.
+///
+/// Two things the bare `os error 5` withheld: which half of the update already
+/// happened, and which live servers are plausible holders of the file.
+fn blocked_executable_report(
+    executable: &Path,
+    skills_dir: Option<&Path>,
+    error: &std::io::Error,
+) -> String {
+    let mut lines = vec![
+        format!(
+            "cannot replace the running GLR executable at {}: {error}",
+            executable.display()
+        ),
+        match skills_dir {
+            Some(directory) => format!(
+                "The skills in {} were already synchronized; only the executable was blocked.",
+                directory.display()
+            ),
+            None => "No skills were requested; only the executable was blocked.".into(),
+        },
+    ];
+    let held = crate::instance::lease_dir()
+        .map(|directory| crate::instance::holders(&directory, executable))
+        .unwrap_or_default();
+    if held.is_empty() {
+        lines.push(
+            "No live GLR workbench server reports this executable, so another process -- an \
+             editor, a file indexer, or a server started before instance leases existed -- may \
+             be holding it. Stop every glr process and retry."
+                .into(),
+        );
+    } else {
+        lines.push("These live servers were started from it and must stop first:".into());
+        lines.extend(held.into_iter().map(|report| {
+            format!(
+                "  instance {} pid {} {} (up {}s) -- glr dashboard stop --instance {}",
+                report.instance.instance_id,
+                report.instance.pid,
+                report.instance.url,
+                report.age_seconds,
+                report.instance.instance_id,
+            )
+        }));
+    }
+    lines.join("\n")
 }
 
 fn read_response(response: Response, maximum: usize) -> Result<Vec<u8>> {
@@ -574,6 +632,9 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
 mod tests {
     use semver::Version;
 
+    use super::blocked_executable_report;
+    use std::path::Path;
+
     use super::{BUILD_TARGET, UpdatePlan, Updater, checksum_for, release_asset_for_target};
 
     #[test]
@@ -690,5 +751,33 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("multiple GLR archives"));
+    }
+
+    #[test]
+    fn a_blocked_executable_reports_the_half_that_succeeded() {
+        // The bare OS error said neither which half of the update applied nor
+        // what to do next. Both are in the message now.
+        let blocked = || std::io::Error::other("Access is denied. (os error 5)");
+        let with_skills = blocked_executable_report(
+            Path::new("/opt/glr/glr"),
+            Some(Path::new("/home/u/skills")),
+            &blocked(),
+        );
+        assert!(with_skills.contains("/opt/glr/glr"), "{with_skills}");
+        assert!(with_skills.contains("os error 5"), "{with_skills}");
+        assert!(with_skills.contains("/home/u/skills"), "{with_skills}");
+        assert!(
+            with_skills.contains("already synchronized"),
+            "{with_skills}"
+        );
+        // An executable nothing was started from has to say so rather than
+        // invent a holder.
+        assert!(
+            with_skills.contains("Stop every glr process"),
+            "{with_skills}"
+        );
+
+        let without = blocked_executable_report(Path::new("/opt/glr/glr"), None, &blocked());
+        assert!(without.contains("No skills were requested"), "{without}");
     }
 }

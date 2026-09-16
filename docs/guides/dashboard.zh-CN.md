@@ -38,7 +38,35 @@ glr --project . dashboard
 ```
 
 打开输出的 localhost 地址即可。后端 Axum 和页面资源都在 `glr` 二进制中，
-不需要部署 Node/Python Web 服务。默认端口为 7432，`--port 0` 自动选空闲端口。
+不需要部署 Node/Python Web 服务。不带 `--port` 时依次尝试 7432、由本项目数据目录
+派生的固定端口、任意空闲端口；`--port 0` 交给系统选择。显式给出的 `--port`
+按原样使用、绝不改道——若已被占用则直接报错。
+
+## 谁在哪个端口上
+
+每个运行中的服务会把自身身份（实例 ID、项目根、数据目录摘要、可执行文件、PID、
+端口、URL、模式、版本、启动时间）作为 *instance lease* 写入用户级注册表；
+`/api/v1/health` 的 `instance` 字段返回同一份身份，因此调用方可以证明"是这个服务
+在应答"，而不是仅凭端口号猜测。
+
+```powershell
+glr --json dashboard instances          # 本项目在跑的服务
+glr --json dashboard instances --all    # 本用户启动过的全部服务
+glr --json dashboard instances --all --prune   # 同时忘记已失效的租约
+glr --json dashboard stop --instance ID
+glr --json dashboard stop --port 7432
+glr --json dashboard stop --all
+```
+
+租约只是线索、不是事实：`instances` 会去问每个端口的 health 并按实例 ID 比对。
+不答的记为 `stale`（进程已退出，或该版本还没有身份）；端口被别的服务占着则记为
+`foreign`——既不算作你的，也不会被停止。`stop` 只是发起一次关闭请求，由服务自己
+走与所属命令退出时相同的优雅路径退场，不杀进程；因此 foreign 或无响应的目标只会
+被报告出来。当本项目存在多个在线服务且未用 `--instance` / `--all` 指明时，`stop`
+会拒绝执行。
+
+同一项目允许同时有两个服务，且可以区分：它们的 `environment_id` 与
+`data_dir_sha256` 相同，但实例 ID 与端口不同。
 
 前端采用 React、TypeScript、shadcn/ui（Radix）与 Tailwind。Vite 构建的 HTML、
 带内容哈希的 JS/CSS 在 CI 中生成，再编译进各平台 CLI。所有资源由同一个 localhost

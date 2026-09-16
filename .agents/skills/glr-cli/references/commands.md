@@ -370,7 +370,14 @@ glr --json dashboard run train.example
 glr --json dashboard jobs
 glr --json dashboard jobs --before JOB_ID
 glr --json dashboard job-log JOB_ID --stream stderr
+glr --json dashboard instances
+glr --json dashboard instances --all
+glr --json dashboard instances --all --prune
+glr --json dashboard stop --instance INSTANCE_ID
+glr --json dashboard stop --port 7432
+glr --json dashboard stop --all
 glr observe --port 7432
+glr --json observe
 glr --json runs trace RUN_ID --events-after 1000 --metrics-after 500 --limit 250
 glr --json runs log RUN_ID --path capture.log --offset 0
 glr --json backup create --output ../backups/run-history
@@ -384,6 +391,25 @@ and `argv` (train, goal run, or task run). Presets and job receipts persist in
 SQLite. Operation forms reuse CLI argument definitions; requests never run a
 shell or change the server project. Jobs use stable request IDs and one project
 lock. A nonterminal record after service restart is unverified, not resumable.
+
+Ports are no longer a single shared literal. Without `--port`, a server prefers
+7432, then a stable per-project port derived from the data directory, then any
+free port; `--port 0` asks the OS. An explicit `--port` is used exactly as given
+and fails rather than silently moving. Start a second project without `--port`
+to give it its own address.
+
+Each running server publishes an instance lease (instance ID, project root, data
+directory digest, executable, PID, port, URL, read-only flag, version, start
+time) into a per-user registry (`GLR_STATE_DIR` overrides it), and
+`/api/v1/health` returns the same object under `instance`. `glr.dashboard.instances.v1`
+lists them: `dashboard instances` scopes to the current project, `--all` covers
+everything this user started, `--prune` also drops stale leases. A lease is only
+a hint — liveness is decided by asking the port and comparing `instance_id`. A
+non-answering lease is `stale`; a port answering as another instance is `foreign`
+and is never listed as yours or stopped. `dashboard stop` requires one explicit
+target (`--instance`, `--port`, or `--all`) when the project has several live
+servers; it asks the server to shut down gracefully and never kills a process,
+so a foreign or unresponsive target is reported, not terminated.
 
 Read-only HTTP: `/api/v1/health`, `/api/v1/runs?before=RUN_ID`,
 `/api/v1/snapshot?run=ID&events_after=-1&metrics_after=0&limit=250`,

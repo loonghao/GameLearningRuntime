@@ -478,6 +478,20 @@ pub fn catalog() -> Value {
 }
 
 pub fn execute(project: &Project, command: &DashboardCommand, as_json: bool) -> Result<i32> {
+    // The lifecycle commands describe servers this process does not own, so
+    // they run before `Dashboard::new` -- which opens the project store, and
+    // creating tables is not an acceptable side effect of asking who is up.
+    match command {
+        DashboardCommand::Instances { all, prune } => {
+            return lifecycle_instances(project, *all, *prune, as_json);
+        }
+        DashboardCommand::Stop {
+            instance,
+            port,
+            all,
+        } => return lifecycle_stop(project, instance.as_deref(), *port, *all, as_json),
+        _ => {}
+    }
     let dashboard = Dashboard::new(project)?;
     let value = match command {
         DashboardCommand::Catalog => catalog(),
@@ -495,6 +509,11 @@ pub fn execute(project: &Project, command: &DashboardCommand, as_json: bool) -> 
             },
             false,
         )?,
+        // Routed above; listed so adding a lifecycle command cannot silently
+        // fall through to the store-opening path.
+        DashboardCommand::Instances { .. } | DashboardCommand::Stop { .. } => {
+            unreachable!("lifecycle commands are handled before the store is opened")
+        }
     };
     crate::commands::emit(
         "dashboard",
@@ -511,4 +530,107 @@ pub fn execute(project: &Project, command: &DashboardCommand, as_json: bool) -> 
                 0
             }
         }) as i32)
+}
+
+/// List live workbench servers: this project's by default, this user's with
+/// `--all`.
+fn lifecycle_instances(project: &Project, all: bool, prune: bool, as_json: bool) -> Result<i32> {
+    let directory = crate::instance::lease_dir()?;
+    let survey =
+        crate::instance::survey(&directory, if all { None } else { Some(project) }, prune)?;
+    crate::commands::emit("dashboard.instances", &survey, as_json)?;
+    Ok(0)
+}
+
+/// Ask live servers to stop.
+///
+/// Selection is scoped to this project unless `--instance` or `--port` names a
+/// server outright -- an id is a choice the caller made, while "the live server
+/// for this project" must not silently pick one of several. Every target has to
+/// prove its identity before a request is sent, and the request only asks: the
+/// server retires itself, so nothing is killed from here.
+fn lifecycle_stop(
+    project: &Project,
+    instance: Option<&str>,
+    port: Option<u16>,
+    all: bool,
+    as_json: bool,
+) -> Result<i32> {
+    let directory = crate::instance::lease_dir()?;
+    let targets = if let Some(id) = instance {
+        vec![crate::instance::find(&directory, id)?]
+    } else if let Some(port) = port {
+        vec![crate::instance::find_by_port(&directory, port)?]
+    } else {
+        let live = crate::instance::live_for(&directory, project)?;
+        if live.is_empty() {
+            return Err(Error::Invalid(
+                "no live workbench server serves this project; `glr dashboard instances --all` \
+                 lists every server this user has"
+                    .into(),
+            ));
+        }
+        if !all && live.len() > 1 {
+            return Err(Error::Invalid(format!(
+                "{} live servers serve this project; name one with --instance <id>, or pass --all",
+                live.len()
+            )));
+        }
+        live
+    };
+    let mut requested = Vec::new();
+    let mut failed = Vec::new();
+    for target in &targets {
+        if let Err(error) = crate::instance::request_stop(target) {
+            failed.push(format!("{}: {error}", target.instance_id));
+            continue;
+        }
+        // The server answers before it has actually retired, so the receipt
+        // reports what was observed afterwards instead of asserting an exit
+        // nobody saw.
+        requested.push(json!({
+            "instance_id": target.instance_id,
+            "url": target.url,
+            "pid": target.pid,
+            "environment_id": target.environment_id,
+            "confirmed": wait_for_exit(target),
+        }));
+    }
+    let confirmed = requested
+        .iter()
+        .filter(|row| row["confirmed"] == true)
+        .count();
+    crate::commands::emit(
+        "dashboard.stop",
+        &json!({"schema_version": crate::instance::SCHEMA,
+            "requested": requested,
+            "failed": failed,
+            "confirmed": confirmed,
+            "note": "The server retires itself after answering this request; nothing is killed. \
+                     `confirmed` means its address stopped answering health before the wait \
+                     expired."}),
+        as_json,
+    )?;
+    Ok(if failed.is_empty() && confirmed == requested.len() {
+        0
+    } else {
+        1
+    })
+}
+
+/// Wait until `instance`'s address stops answering as itself.
+///
+/// Probed rather than read from the lease file, so the confirmation holds even
+/// for a server that never managed to publish one.
+fn wait_for_exit(instance: &crate::instance::Instance) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if crate::instance::probe(instance).0 != crate::instance::State::Live {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
