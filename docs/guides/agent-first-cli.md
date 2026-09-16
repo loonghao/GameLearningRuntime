@@ -98,6 +98,19 @@ Project roles receive `GLR_PROJECT_ROOT`, `GLR_BRIDGE_PATH`, `GLR_RUN_ID`, `GLR_
 `GLR_STORE_PATH`, environment identity, capture output paths, and goal-loop paths through
 environment variables. They must stay bounded and validate the exact game target independently.
 
+The CLI owns the `GLR_` environment namespace. It clears inherited `GLR_*` variables before
+publishing the values an invocation owns, so a role never observes a stale or forged binding from
+an outer run or the ambient environment. Declare role inputs through the project manifest context
+instead of the ambient environment.
+
+A role invocation always describes the trial it serves. `glr goal run` issues `GLR_TRIAL_ID` and
+`GLR_TRIAL_PATH` to its planner and trainer, and `glr train` issues the same pair for its single
+implicit trial (`trial-1` under `trials/trial-1/`), so `{trial_id}` and `{trial_path}` expand under
+either command. `GLR_RUN_DIR` stays the run-scoped output root `.glr/runs/<run-id>/`; a trial
+directory is a child of it. Roles that own no trial, such as `runtime start` and `play`, receive no
+trial identity. `glr train` reserves the trial plan path but never writes plan content: only the
+goal loop plans.
+
 Progress detection is opt-in. When `progress` is declared, a completed trainer must include this
 shape in `trainer.result.json`:
 

@@ -658,13 +658,21 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
     fs::create_dir_all(&run_dir)?;
     crate::run_context::persist(project, store, &run.run_id, &run_dir)?;
+    // `glr train` runs one implicit trial. `glr-project.json` may declare
+    // `{trial_id}` and `{trial_path}`, and the goal loop already issues both to
+    // its roles, so a standalone training run binds the same identity instead of
+    // leaving the placeholders unexpandable and the trainer unable to locate the
+    // trial it is working on. The directory layout mirrors the goal loop.
+    let (trial_id, trial_dir) = training_trial(&run_dir);
+    fs::create_dir_all(&trial_dir)?;
+    let trial_path = trial_dir.join("plan.json");
     let trainer_log = run_dir.join("trainer.log");
     let capture_session = if capture && project.capture.is_some() {
         Some(start_capture(project, &run.run_id, &run_dir)?)
     } else {
         None
     };
-    let extra = HashMap::new();
+    let extra = training_trial_context(&trial_id, &trial_path);
     let result = run_command(CommandInvocation {
         command: &project.trainer,
         project,
@@ -1567,6 +1575,31 @@ fn portable_run_path(run_dir: &Path, path: &Path) -> Result<String> {
         Error::Contract("learning checkpoint state path must remain inside the run".into())
     })?;
     Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+/// Identity and directory of the single implicit trial owned by `glr train`.
+///
+/// A standalone training run is exactly one trial, so it reuses the goal loop's
+/// `trials/<trial_id>` layout and the same `trial-1` identifier. Keeping one
+/// layout for both entrypoints means a trainer written for a trial can run under
+/// either command without a second convention.
+fn training_trial(run_dir: &Path) -> (String, PathBuf) {
+    let trial_id = "trial-1".to_string();
+    let trial_dir = run_dir.join("trials").join(&trial_id);
+    (trial_id, trial_dir)
+}
+
+/// Role context binding a `glr train` invocation to its implicit trial.
+///
+/// These keys are uppercased and prefixed with `GLR_` by the process layer, so
+/// they publish `GLR_TRIAL_ID` and `GLR_TRIAL_PATH` to the trainer. Both are
+/// already valid `glr-project.json` placeholders and are issued by the goal
+/// loop, so a role sees one contract whether training is standalone or planned.
+fn training_trial_context(trial_id: &str, trial_path: &Path) -> HashMap<String, PathBuf> {
+    HashMap::from([
+        ("trial_id".into(), PathBuf::from(trial_id)),
+        ("trial_path".into(), trial_path.to_path_buf()),
+    ])
 }
 
 fn run_goal_role(
