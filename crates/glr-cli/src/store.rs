@@ -1763,7 +1763,7 @@ fn enum_string<T: Serialize>(value: &T) -> Result<String> {
         .ok_or_else(|| Error::Invalid("enum did not serialize as text".into()))
 }
 
-fn now_ns() -> Result<i64> {
+pub(crate) fn now_ns() -> Result<i64> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| Error::Invalid("system clock is before the Unix epoch".into()))?

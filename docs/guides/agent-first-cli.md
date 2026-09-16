@@ -121,6 +121,31 @@ and aborts the goal with exit code `76` after the configured consecutive-round t
 verdict includes the signal, first/last values, and unchanged-step count. Without `progress`, no
 signal is invented and no stall detection runs.
 
+Startup readiness is opt-in and belongs to the runtime role:
+
+```json
+"runtime": {
+  "argv": ["python", "tools/runtime.py", "{bridge_path}"],
+  "readiness": {"timeout_seconds": 300, "poll_interval_seconds": 5}
+}
+```
+
+`timeout_seconds` is required, must be positive, and cannot exceed one hour. `poll_interval_seconds`
+and `file` default to `5` and `runtime-readiness.json`. An undeclared window keeps today's behavior:
+one invocation, and the role exit code decides the run.
+
+While `runtime start` holds a declared window open, it re-invokes the role and reads the
+`glr.environment-readiness.v1` receipt that the role publishes at `GLR_READINESS_PATH`, receiving
+`GLR_READINESS_ATTEMPT` so a re-probe can tell itself apart from a cold launch. Only an explicit
+`not_ready` receipt is retried; a missing, unreadable, off-schema, or `unavailable` receipt is
+terminal on first observation, so a crash is never retried. This is how a role that brings up a cold
+GUI host reports "still starting" instead of being recorded as broken.
+
+The window is durable evidence. Each invocation appends a `readiness.attempt` event and the verdict
+appends one `readiness.outcome` event, both carrying the receipt verbatim; `runtime.start` also
+returns the same summary under `readiness`. An exhausted window returns exit code `78` — the host was
+still parking and the caller should retry — while every other verdict keeps the role exit code.
+
 ## Start the runtime and train
 
 ```powershell

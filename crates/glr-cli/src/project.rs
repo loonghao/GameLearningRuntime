@@ -42,6 +42,80 @@ pub struct ProjectCommand {
     pub argv: Vec<String>,
 }
 
+/// A bounded startup readiness window declared for the runtime role.
+///
+/// The role may publish a `glr.environment-readiness.v1` receipt in the run
+/// directory. While that receipt says `not_ready`, `runtime start` re-invokes
+/// the role until the window expires. Nothing is retried without an explicit
+/// retryable receipt, and an absent declaration keeps the historical
+/// single-invocation behavior.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeReadinessConfig {
+    pub timeout_seconds: f64,
+    #[serde(default = "default_readiness_poll_interval_seconds")]
+    pub poll_interval_seconds: f64,
+    #[serde(default = "default_readiness_file")]
+    pub file: String,
+}
+
+fn default_readiness_poll_interval_seconds() -> f64 {
+    5.0
+}
+
+fn default_readiness_file() -> String {
+    "runtime-readiness.json".into()
+}
+
+impl RuntimeReadinessConfig {
+    fn validate(&self) -> Result<()> {
+        if !self.timeout_seconds.is_finite()
+            || self.timeout_seconds <= 0.0
+            || self.timeout_seconds > 3600.0
+        {
+            return Err(Error::Invalid(
+                "project.runtime.readiness.timeout_seconds must be finite and between 0 and 3600 seconds"
+                    .into(),
+            ));
+        }
+        if !self.poll_interval_seconds.is_finite()
+            || self.poll_interval_seconds <= 0.0
+            || self.poll_interval_seconds > self.timeout_seconds
+        {
+            return Err(Error::Invalid(
+                "project.runtime.readiness.poll_interval_seconds must be finite, positive, and no greater than timeout_seconds"
+                    .into(),
+            ));
+        }
+        portable_relative(&self.file, "project.runtime.readiness.file")?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeConfig {
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub readiness: Option<RuntimeReadinessConfig>,
+}
+
+impl RuntimeConfig {
+    pub fn command(&self) -> ProjectCommand {
+        ProjectCommand {
+            argv: self.argv.clone(),
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        self.command().validate("project.runtime")?;
+        if let Some(readiness) = &self.readiness {
+            readiness.validate()?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigReference {
@@ -369,7 +443,7 @@ struct ProjectFile {
     protocol_version: String,
     data_dir: String,
     bridge_path: String,
-    runtime: ProjectCommand,
+    runtime: RuntimeConfig,
     trainer: ProjectCommand,
     player: ProjectCommand,
     researcher: Option<ProjectCommand>,
@@ -400,6 +474,7 @@ pub struct Project {
     pub data_dir: PathBuf,
     pub bridge_path: PathBuf,
     pub runtime: ProjectCommand,
+    pub runtime_readiness: Option<RuntimeReadinessConfig>,
     pub trainer: ProjectCommand,
     pub player: ProjectCommand,
     pub researcher: Option<ProjectCommand>,
@@ -491,7 +566,7 @@ pub fn load_project(requested: &Path) -> Result<Project> {
     validate_identifier(&value.environment_id, "project.environment_id")?;
     validate_identifier(&value.environment_family, "project.environment_family")?;
     validate_text(&value.protocol_version, "project.protocol_version")?;
-    value.runtime.validate("project.runtime")?;
+    value.runtime.validate()?;
     value.trainer.validate("project.trainer")?;
     value.player.validate("project.player")?;
     for (name, command) in [
@@ -511,8 +586,9 @@ pub fn load_project(requested: &Path) -> Result<Project> {
     }
     if let Some(lifecycle) = &value.lifecycle {
         lifecycle.validate(&root, value.evaluator.is_some())?;
+        let runtime_command = value.runtime.command();
         let roles = [
-            ("runtime", &value.runtime),
+            ("runtime", &runtime_command),
             ("trainer", &value.trainer),
             ("player", &value.player),
         ];
@@ -564,7 +640,8 @@ pub fn load_project(requested: &Path) -> Result<Project> {
         protocol_version: value.protocol_version,
         data_dir,
         bridge_path,
-        runtime: value.runtime,
+        runtime: value.runtime.command(),
+        runtime_readiness: value.runtime.readiness,
         trainer: value.trainer,
         player: value.player,
         researcher: value.researcher,

@@ -31,7 +31,19 @@ from game_learning_runtime.plugins import (
     PluginProfile,
     PluginProfileRef,
 )
-from game_learning_runtime.project import GLRProject, ProjectCommand, load_project
+from game_learning_runtime.project import (
+    GLRProject,
+    ProjectCommand,
+    RuntimeReadinessConfig,
+    load_project,
+)
+from game_learning_runtime.readiness import (
+    ReadinessAttempt,
+    ReadinessResult,
+    ReadinessWindowOutcome,
+    readiness_from_mapping,
+    run_readiness_window,
+)
 from game_learning_runtime.run_store import (
     ArtifactRecord,
     MetricRecord,
@@ -46,6 +58,8 @@ from game_learning_runtime.run_store import (
 from game_learning_runtime.spatial_knowledge import SpatialKnowledgeBundle
 
 CLI_OUTPUT_SCHEMA_VERSION = "glr.cli-output.v1"
+RUNTIME_NOT_READY_EXIT_CODE = 78
+_MAX_READINESS_RECEIPT_BYTES = 64 * 1024
 
 
 def _run_value(run: RunRecord) -> dict[str, Any]:
@@ -604,6 +618,37 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
     return exit_code
 
 
+def _read_readiness_receipt(path: Path) -> ReadinessResult | None:
+    """Read one role-published readiness receipt, or None when unusable.
+
+    An absent, oversized, symlinked, unreadable, or off-schema receipt is
+    treated as "no receipt", which keeps the start verb fail-closed and never
+    turns a role crash into a retryable host transition.
+    """
+
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        if path.stat().st_size > _MAX_READINESS_RECEIPT_BYTES:
+            return None
+        return readiness_from_mapping(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _readiness_exit_code(outcome: ReadinessWindowOutcome) -> int:
+    """Name the window verdict through the documented exit code.
+
+    Only an exhausted window replaces the role's exit code, because "the host
+    is still starting" is the one verdict a caller must be able to tell apart
+    from a refusal or a crash without parsing logs.
+    """
+
+    if outcome.exhausted:
+        return RUNTIME_NOT_READY_EXIT_CODE
+    return outcome.last_attempt.exit_code
+
+
 def _run_project_role(
     project: GLRProject,
     *,
@@ -613,6 +658,7 @@ def _run_project_role(
     as_json: bool,
     bundle: Path | None = None,
     metadata: dict[str, Any] | None = None,
+    readiness: RuntimeReadinessConfig | None = None,
 ) -> int:
     store = _store(project)
     run = store.create_run(
@@ -623,35 +669,75 @@ def _run_project_role(
     )
     run_dir = project.data_dir / "runs" / run.run_id
     run_dir.mkdir(parents=True, exist_ok=False)
-    log_path = run_dir / f"{kind}.log"
-    try:
-        exit_code = _run_command(
+    logs: list[Path] = []
+    readiness_outcome: ReadinessWindowOutcome | None = None
+
+    def invoke(attempt: int) -> int:
+        log_path = run_dir / (f"{kind}.log" if attempt == 1 else f"{kind}-attempt{attempt}.log")
+        logs.append(log_path)
+        extra: dict[str, str | Path] = {}
+        if readiness is not None:
+            extra = {
+                "readiness_path": run_dir / readiness.file,
+                "readiness_attempt": str(attempt),
+            }
+        return _run_command(
             command,
             project=project,
             run_id=run.run_id,
             run_dir=run_dir,
             log_path=log_path,
             bundle=bundle,
+            extra=extra,
         )
+
+    def probe(attempt: int) -> ReadinessAttempt:
+        if readiness is None:
+            raise AssertionError("readiness probing requires a declared window")
+        receipt_path = run_dir / readiness.file
+        receipt_path.unlink(missing_ok=True)
+        exit_code = invoke(attempt)
+        result = _read_readiness_receipt(receipt_path)
+        record = ReadinessAttempt(index=attempt, exit_code=exit_code, result=result)
+        store.append_event(run.run_id, kind="readiness.attempt", payload=record.to_mapping())
+        return record
+
+    try:
+        if readiness is None:
+            exit_code = invoke(1)
+        else:
+            readiness_outcome = run_readiness_window(
+                timeout_seconds=readiness.timeout_seconds,
+                poll_interval_seconds=readiness.poll_interval_seconds,
+                attempt=probe,
+            )
+            store.append_event(
+                run.run_id, kind="readiness.outcome", payload=readiness_outcome.to_mapping()
+            )
+            exit_code = _readiness_exit_code(readiness_outcome)
     except KeyboardInterrupt:
         store.finish_run(run.run_id, status=RunStatus.INTERRUPTED, exit_code=None)
         raise
     except BaseException:
         store.finish_run(run.run_id, status=RunStatus.FAILED, exit_code=1)
         raise
-    store.register_artifact(
-        run.run_id,
-        path=log_path.name,
-        source=log_path,
-        role="run-log",
-        media_type="text/plain",
-    )
+    for log_path in logs:
+        store.register_artifact(
+            run.run_id,
+            path=log_path.name,
+            source=log_path,
+            role="run-log",
+            media_type="text/plain",
+        )
     finished = store.finish_run(
         run.run_id,
         status=RunStatus.SUCCEEDED if exit_code == 0 else RunStatus.FAILED,
         exit_code=exit_code,
     )
-    _emit(output_command, _run_value(finished), as_json=as_json)
+    output = _run_value(finished)
+    if readiness_outcome is not None:
+        output["readiness"] = readiness_outcome.to_mapping()
+    _emit(output_command, output, as_json=as_json)
     return exit_code
 
 
@@ -1314,7 +1400,13 @@ def _parser() -> argparse.ArgumentParser:
     train.add_argument("--no-capture", action="store_true")
     runtime = commands.add_parser("runtime", help="start the configured game/runtime bridge")
     runtime_commands = runtime.add_subparsers(dest="runtime_command", required=True)
-    runtime_commands.add_parser("start")
+    runtime_commands.add_parser(
+        "start",
+        help=(
+            "start the runtime role and, when project.runtime.readiness is declared, "
+            "re-invoke it until the host reports ready"
+        ),
+    )
     play = commands.add_parser("play", help="verify and load a trained model bundle")
     play.add_argument("--bundle", required=True)
     goal = commands.add_parser("goal", help="run a bounded agent-first learning objective")
@@ -1408,6 +1500,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             kind="runtime",
             output_command="runtime.start",
             as_json=arguments.json,
+            readiness=project.runtime_readiness,
         )
     if arguments.command == "play":
         bundle = Path(arguments.bundle).resolve()
@@ -1540,4 +1633,4 @@ def entrypoint() -> None:  # pragma: no cover - exercised by package smoke tests
         raise SystemExit(2) from error
 
 
-__all__ = ["CLI_OUTPUT_SCHEMA_VERSION", "entrypoint", "main"]
+__all__ = ["CLI_OUTPUT_SCHEMA_VERSION", "RUNTIME_NOT_READY_EXIT_CODE", "entrypoint", "main"]

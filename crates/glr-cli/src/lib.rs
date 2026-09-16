@@ -15,6 +15,7 @@ mod package;
 mod plugin;
 mod process;
 mod project;
+mod readiness;
 mod report;
 mod run_context;
 mod store;

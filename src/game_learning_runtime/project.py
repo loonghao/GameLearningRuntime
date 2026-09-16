@@ -307,6 +307,51 @@ class CaptureConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeReadinessConfig:
+    """A bounded startup readiness window declared by the project.
+
+    The runtime role may publish a ``glr.environment-readiness.v1`` receipt in
+    the run directory. While that receipt says ``not_ready``, the start verb
+    re-invokes the role until the window expires. Nothing is retried without an
+    explicit retryable receipt, and an absent declaration keeps the historical
+    single-invocation behavior.
+    """
+
+    timeout_seconds: float
+    poll_interval_seconds: float = 5.0
+    file: str = "runtime-readiness.json"
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> RuntimeReadinessConfig:
+        _reject_unknown(
+            value,
+            allowed=frozenset({"timeout_seconds", "poll_interval_seconds", "file"}),
+            path="project.runtime.readiness",
+            required=frozenset({"timeout_seconds"}),
+        )
+        timeout = float(value["timeout_seconds"])
+        poll_interval = float(value.get("poll_interval_seconds", 5.0))
+        if not math.isfinite(timeout) or not 0 < timeout <= 3600:
+            raise ValueError(
+                "project.runtime.readiness.timeout_seconds must be finite and between 0 "
+                "and 3600 seconds"
+            )
+        if not math.isfinite(poll_interval) or not 0 < poll_interval <= timeout:
+            raise ValueError(
+                "project.runtime.readiness.poll_interval_seconds must be finite, positive, "
+                "and no greater than timeout_seconds"
+            )
+        return cls(
+            timeout_seconds=timeout,
+            poll_interval_seconds=poll_interval,
+            file=_portable_relative(
+                value.get("file", "runtime-readiness.json"),
+                path="project.runtime.readiness.file",
+            ).as_posix(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class GLRProject:
     """Resolved project contract used by local CLI orchestration."""
 
@@ -324,6 +369,7 @@ class GLRProject:
     evaluator: ProjectCommand | None
     capture: CaptureConfig | None
     game: GameLaunchConfig | None
+    runtime_readiness: RuntimeReadinessConfig | None = None
     schema_version: str = PROJECT_SCHEMA_VERSION
     manifest_path: Path | None = None
     extensions: Mapping[str, Path] = field(default_factory=lambda: MappingProxyType({}))
@@ -463,6 +509,7 @@ def load_project(path: str | Path = ".") -> GLRProject:
         _portable_relative(value["data_dir"], path="project.data_dir"),
         path="project.data_dir",
     )
+    runtime_value = _mapping(value["runtime"], path="project.runtime")
     return GLRProject(
         root=root,
         manifest_path=config_path,
@@ -475,7 +522,15 @@ def load_project(path: str | Path = ".") -> GLRProject:
         data_dir=data_dir,
         bridge_path=bridge_path,
         runtime=ProjectCommand.from_mapping(
-            _mapping(value["runtime"], path="project.runtime"), path="project.runtime"
+            {key: item for key, item in runtime_value.items() if key != "readiness"},
+            path="project.runtime",
+        ),
+        runtime_readiness=(
+            None
+            if runtime_value.get("readiness") is None
+            else RuntimeReadinessConfig.from_mapping(
+                _mapping(runtime_value["readiness"], path="project.runtime.readiness")
+            )
         ),
         trainer=ProjectCommand.from_mapping(
             _mapping(value["trainer"], path="project.trainer"), path="project.trainer"
@@ -527,6 +582,7 @@ __all__ = [
     "CaptureSessionConfig",
     "GLRProject",
     "ProjectCommand",
+    "RuntimeReadinessConfig",
     "find_project",
     "load_project",
     "resolve_game_directory",

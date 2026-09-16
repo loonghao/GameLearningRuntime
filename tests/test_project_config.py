@@ -242,3 +242,96 @@ def test_project_rejects_invalid_content_liveness_configuration(tmp_path: Path) 
     config.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(ValueError, match="unexpected"):
         load_project(config)
+
+
+def test_project_leaves_the_startup_window_undeclared_by_default(tmp_path: Path) -> None:
+    (tmp_path / "bridge").mkdir()
+    config = tmp_path / "glr-project.json"
+    config.write_text(json.dumps(_project_value()), encoding="utf-8")
+
+    project = load_project(config)
+
+    assert project.runtime_readiness is None
+    assert project.runtime.argv == ("python", "runtime.py")
+
+
+def test_project_loads_a_declared_startup_readiness_window(tmp_path: Path) -> None:
+    (tmp_path / "bridge").mkdir()
+    value = _project_value()
+    value["runtime"] = {
+        "argv": ["python", "runtime.py"],
+        "readiness": {"timeout_seconds": 300, "poll_interval_seconds": 5, "file": "ready.json"},
+    }
+    config = tmp_path / "glr-project.json"
+    config.write_text(json.dumps(value), encoding="utf-8")
+
+    project = load_project(config)
+
+    assert project.runtime.argv == ("python", "runtime.py")
+    assert project.runtime_readiness is not None
+    assert project.runtime_readiness.timeout_seconds == 300
+    assert project.runtime_readiness.poll_interval_seconds == 5
+    assert project.runtime_readiness.file == "ready.json"
+
+
+def test_project_defaults_the_startup_window_poll_and_receipt(tmp_path: Path) -> None:
+    value = {
+        "schema_version": "glr.project.v1",
+        "environment_id": "example.adventure-v1",
+        "environment_family": "action-rpg",
+        "protocol_version": "1.0",
+        "data_dir": ".glr",
+        "bridge_path": "bridge",
+        "runtime": {"argv": ["python", "runtime.py"], "readiness": {"timeout_seconds": 240}},
+        "trainer": {"argv": ["python", "train.py"]},
+        "player": {"argv": ["python", "play.py", "{bundle}"]},
+    }
+    (tmp_path / "bridge").mkdir()
+    config = tmp_path / "glr-project.json"
+    config.write_text(json.dumps(value), encoding="utf-8")
+
+    project = load_project(config)
+
+    assert project.runtime_readiness is not None
+    assert project.runtime_readiness.poll_interval_seconds == 5.0
+    assert project.runtime_readiness.file == "runtime-readiness.json"
+
+
+@pytest.mark.parametrize(
+    ("readiness", "message"),
+    [
+        ({}, "missing="),
+        ({"timeout_seconds": 0}, "between 0 and 3600"),
+        ({"timeout_seconds": 3601}, "between 0 and 3600"),
+        ({"timeout_seconds": 10, "poll_interval_seconds": 0}, "poll_interval_seconds"),
+        ({"timeout_seconds": 10, "poll_interval_seconds": 11}, "poll_interval_seconds"),
+        ({"timeout_seconds": 10, "file": "../ready.json"}, "project-relative"),
+        ({"timeout_seconds": 10, "window": 3}, "unexpected="),
+    ],
+)
+def test_project_rejects_invalid_startup_windows(
+    tmp_path: Path, readiness: dict[str, object], message: str
+) -> None:
+    (tmp_path / "bridge").mkdir()
+    value = _project_value()
+    value["runtime"] = {"argv": ["python", "runtime.py"], "readiness": readiness}
+    config = tmp_path / "glr-project.json"
+    config.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises((TypeError, ValueError), match=message):
+        load_project(config)
+
+
+def test_project_rejects_an_unknown_runtime_field_alongside_the_window(tmp_path: Path) -> None:
+    (tmp_path / "bridge").mkdir()
+    value = _project_value()
+    value["runtime"] = {
+        "argv": ["python", "runtime.py"],
+        "readiness": {"timeout_seconds": 10},
+        "settle_seconds": 240,
+    }
+    config = tmp_path / "glr-project.json"
+    config.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unexpected"):
+        load_project(config)

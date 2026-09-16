@@ -110,6 +110,29 @@ yuv420p、GOP 30、MP4 fast-start、无音频。配置字段不会自动改变�
 `76` 中止 goal。结果包含 signal、首末值和未变化步数。没有 `progress` 时不会猜测信号，
 也不会执行 stall 检测。
 
+启动就绪窗口是可选项，并归属于 runtime 角色：
+
+```json
+"runtime": {
+  "argv": ["python", "tools/runtime.py", "{bridge_path}"],
+  "readiness": {"timeout_seconds": 300, "poll_interval_seconds": 5}
+}
+```
+
+`timeout_seconds` 必填、必须为正且不超过一小时；`poll_interval_seconds` 与 `file` 默认分别为
+`5` 和 `runtime-readiness.json`。未声明窗口时行为与现在完全一致：只调用一次，由角色退出码
+决定这次运行的结果。
+
+当 `runtime start` 持有声明的窗口时，它会重新调用角色，并读取角色写在 `GLR_READINESS_PATH`
+的 `glr.environment-readiness.v1` 回执；角色同时收到 `GLR_READINESS_ATTEMPT`，以便区分重新探测
+与冷启动。只有显式的 `not_ready` 回执会被重试；缺失、不可读、schema 不符或 `unavailable`
+的回执在第一次观察时即为终态，因此崩溃永远不会被重试。需要拉起冷启动 GUI 宿主的角色因此可以
+报告"宿主仍在启动"，而不会被记录成故障。
+
+窗口是一份持久证据。每次调用追加一个 `readiness.attempt` 事件，判决追加一个
+`readiness.outcome` 事件，两者都原样携带回执；`runtime.start` 也在 `readiness` 下返回同样的摘要。
+窗口耗尽返回退出码 `78`——宿主仍在启动，调用方应稍后重试；其它判决保留角色自身的退出码。
+
 ## 启动与训练
 
 ```powershell
