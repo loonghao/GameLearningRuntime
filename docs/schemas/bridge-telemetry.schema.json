@@ -86,7 +86,29 @@
             "minimum": 0,
             "maximum": 9223372036854775807
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "bridge.state"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "payload": {
+                  "properties": {
+                    "workbench": {
+                      "$ref": "#/$defs/workbench"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     },
     "metrics": {
@@ -120,5 +142,10 @@
       }
     }
   },
-  "description": "At most 64 KiB per request and 1..64 events + metrics combined. Runtime validates aggregate limits and kind-specific payloads. Every batch commits atomically and deduplicates on run_id/source/batch_id."
+  "description": "At most 64 KiB per request and 1..64 events + metrics combined. Runtime validates aggregate limits and kind-specific payloads. Every batch commits atomically and deduplicates on run_id/source/batch_id.",
+  "$defs": {
+    "workbench": {
+      "$ref": "workbench.schema.json"
+    }
+  }
 }

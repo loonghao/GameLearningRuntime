@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TrainingControls } from "@/components/TrainingControls";
 import { MediaWorkspace } from "@/components/MediaWorkspace";
+import { AgentWorkbench } from "@/components/AgentWorkbench";
+import { ProcessTrace } from "@/components/ProcessTrace";
 import {
   BridgePanel,
   EventPanel,
@@ -18,6 +20,7 @@ import { download, get, type Event } from "@/lib/api";
 import { useObservation, useRuns } from "@/lib/use-observation";
 
 export default function App() {
+  const [workspaceTab, setWorkspaceTab] = useState("observe");
   const [health, setHealth] = useState<{
       read_only: boolean;
       environment_id: string;
@@ -90,7 +93,7 @@ export default function App() {
           </span>
           <div>
             <strong>GLR</strong>
-            <small>TRAINING WORKSPACE</small>
+            <small>AGENT TRAINING WORKBENCH</small>
           </div>
         </div>
         <div className="sidebar-heading">
@@ -154,19 +157,23 @@ export default function App() {
       <main>
         <header className="workspace-header">
           <div>
-            <div className="eyebrow">OBSERVE / LEARN / TRACE</div>
-            <h1>Training workspace</h1>
+            <div className="eyebrow">GOAL / DECIDE / EXECUTE / LEARN</div>
+            <h1>Agent training workbench</h1>
             <p className="muted">
               {health?.environment_id ?? "Connecting to GLR…"}
             </p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
             <Badge variant={problem ? "destructive" : "outline"}>
-              {problem ? "Connection interrupted" : paused ? "Paused" : "Live"}
+              {problem
+                ? "Connection interrupted"
+                : paused
+                  ? "Feed paused"
+                  : "Observing"}
             </Badge>
             <Button variant="outline" onClick={() => setPaused((p) => !p)}>
               {paused ? <Play /> : <Pause />}
-              {paused ? "Resume" : "Pause"}
+              {paused ? "Resume feed" : "Pause feed"}
             </Button>
             <Button
               variant="outline"
@@ -196,10 +203,14 @@ export default function App() {
             {problem}
           </p>
         )}
-        <Tabs defaultValue="observe" className="workspace-tabs">
+        <Tabs
+          value={workspaceTab}
+          onValueChange={setWorkspaceTab}
+          className="workspace-tabs"
+        >
           <TabsList>
             <TabsTrigger value="observe">
-              <Activity size={15} /> Observation
+              <Activity size={15} /> Agent activity
             </TabsTrigger>
             {health && !health.read_only && (
               <TabsTrigger value="training">
@@ -213,10 +224,34 @@ export default function App() {
             className="data-[state=inactive]:hidden"
           >
             {health && !health.read_only && (
-              <TrainingControls onSelectJob={setFollowJob} />
+              <TrainingControls
+                onSelectJob={(id) => {
+                  setFollowJob(id);
+                  setWorkspaceTab("observe");
+                }}
+              />
             )}
           </TabsContent>
           <TabsContent value="observe">
+            <AgentWorkbench
+              key={`agent-${runId}`}
+              run={view.run}
+              events={view.events}
+              bridge={view.bridge}
+              onInspect={inspect}
+              onOperate={
+                health && !health.read_only
+                  ? () => setWorkspaceTab("training")
+                  : undefined
+              }
+            />
+            <ProcessTrace
+              key={`process-${runId}`}
+              events={view.events}
+              run={view.run}
+              selectedEvent={selectedEvent}
+              onInspect={inspect}
+            />
             <section className="run-summary">
               <div>
                 <span className="eyebrow">SELECTED RUN</span>
@@ -284,7 +319,9 @@ export default function App() {
               <small>Persisted observations from the selected run</small>
             </div>
             <div className="signal-grid">
-              <RoutePanel events={view.events} onInspect={inspect} />
+              {view.events.some(
+                (e) => e.kind === "navigation.route_sample",
+              ) && <RoutePanel events={view.events} onInspect={inspect} />}
               <MetricPanel metrics={view.metrics} />
             </div>
             <BridgePanel bridge={view.bridge} onInspect={inspect} />
@@ -309,7 +346,11 @@ export default function App() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <pre className="inspector" tabIndex={0}>
+                  <pre
+                    className="inspector"
+                    tabIndex={0}
+                    aria-label="Evidence payload"
+                  >
                     {detail
                       ? JSON.stringify(detail, null, 2)
                       : "Select an event, Bridge card or route sample to inspect its persisted payload."}

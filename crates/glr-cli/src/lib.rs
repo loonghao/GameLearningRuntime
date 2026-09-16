@@ -22,6 +22,7 @@ mod task;
 mod telemetry;
 pub mod update;
 mod update_notice;
+mod workbench;
 
 use std::ffi::OsString;
 

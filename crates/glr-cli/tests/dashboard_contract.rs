@@ -801,3 +801,57 @@ fn bridge_ingress_is_authenticated_atomic_idempotent_and_shared_with_cli() {
     let observer = Service::start(project.path(), "observe");
     assert_eq!(observer.post("/api/v1/telemetry", &batch).status(), 405);
 }
+
+#[test]
+fn workbench_views_are_validated_atomically_and_readable_by_agents() {
+    let project = project();
+    let id = seed(project.path());
+    let db = Connection::open(project.path().join(".glr/runs.sqlite3")).unwrap();
+    db.execute("UPDATE runs SET status='running' WHERE run_id=?", [&id])
+        .unwrap();
+    let fixtures: Value =
+        serde_json::from_str(include_str!("../../../docs/examples/workbench-views.json")).unwrap();
+    let server = Service::start(project.path(), "dashboard");
+    let post = |value: &Value| {
+        server
+            .client
+            .post(format!("{}/api/v1/telemetry", server.url))
+            .bearer_auth("test-bridge-token-01234567890123456789")
+            .json(value)
+            .send()
+            .unwrap()
+    };
+    let mut batch = json!({"schema_version":"glr.bridge-telemetry.v1","run_id":id,"source":"bridge.custom","batch_id":"batch-view", "events":[{"kind":"bridge.state","step_id":4,"payload":{"workbench":fixtures["invalid"][0]}}],"metrics":[{"name":"custom.reward","value":1.0}]});
+    assert_eq!(post(&batch).status(), 400);
+    let before = success(run(project.path(), &["runs", "trace", &id]));
+    assert!(before["data"]["events"].as_array().unwrap().is_empty());
+    assert!(before["data"]["metrics"].as_array().unwrap().is_empty());
+    batch["events"][0]["payload"]["workbench"] = fixtures["valid"][1].clone();
+    assert_eq!(post(&batch).status(), 200);
+    let latest = success(run(project.path(), &["telemetry", "state", &id]));
+    assert_eq!(
+        latest["data"]["states"][0]["payload"]["workbench"],
+        fixtures["valid"][1]
+    );
+    let path = project.path().join("view.json");
+    batch["batch_id"] = "batch-view-next".into();
+    batch["events"][0]["payload"]["workbench"] = fixtures["valid"][2].clone();
+    fs::write(&path, serde_json::to_vec(&batch).unwrap()).unwrap();
+    success(run(
+        project.path(),
+        &["telemetry", "ingest", "--file", path.to_str().unwrap()],
+    ));
+    let latest: Value = server
+        .get(&format!("/api/v1/telemetry/state?run={id}"))
+        .json()
+        .unwrap();
+    assert_eq!(
+        latest["states"][0]["payload"]["workbench"],
+        fixtures["valid"][2]
+    );
+    let schema: Value = server.get("/api/v1/telemetry/schema").json().unwrap();
+    assert_eq!(
+        schema["$defs"]["workbench"]["properties"]["schema_version"]["const"],
+        "glr.workbench.v1"
+    );
+}

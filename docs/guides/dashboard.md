@@ -162,6 +162,14 @@ Export preset JSON into that selection to transfer presets with source code.
 Import does not execute roles or install dependencies. **Back up history /
 Restore history** operate on recorded data using the contracts above.
 
+## Agent-first views
+
+The default view follows the agent's goal, decisions, execution and learning.
+Its process timeline includes source/category filters and input/output details.
+Adapters can declare game-neutral stats, tables and notes through durable
+`bridge.state` payloads. See [Agent workbench](agent-workbench.md) for the versioned
+contract, examples for different training genres, bounds and provenance rules.
+
 ## Media and evidence workspace
 
 The run view includes MP4/WebM playback, an image gallery, Markdown notes, and
