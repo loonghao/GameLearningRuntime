@@ -338,6 +338,7 @@ from game_learning_runtime.supervision import (
     StopResult,
     SupervisionError,
 )
+from game_learning_runtime.telemetry import Telemetry
 from game_learning_runtime.training import (
     TRAINING_SCHEMA_VERSION,
     BridgeConfig,
@@ -654,6 +655,7 @@ __all__ = [
     "SuccessCriterion",
     "SupervisionError",
     "SyncCollector",
+    "Telemetry",
     "TensorSpec",
     "TimeStep",
     "TrainingConfig",

@@ -1,0 +1,510 @@
+:root {
+  color-scheme: dark;
+  --canvas: #111719;
+  --surface: #171f22;
+  --control: #202b2e;
+  --line: #2c393d;
+  --ink: #e1eae8;
+  --secondary: #a1b3b4;
+  --muted: #82999b;
+  --signal: #79d9c0;
+  --active: #e3ba70;
+  --danger: #f29688;
+  --unit: 4px;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+header {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.brand {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  margin-right: auto;
+}
+.brand span {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--secondary);
+  margin-left: 16px;
+  font-weight: 500;
+}
+button,
+input,
+select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--control);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  min-height: 40px;
+  padding: 8px 12px;
+}
+button {
+  cursor: pointer;
+}
+button:hover,
+select:hover {
+  border-color: var(--muted);
+}
+button:active {
+  background: var(--line);
+}
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+button:disabled,
+input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+input {
+  width: 100%;
+}
+label {
+  display: block;
+  color: var(--secondary);
+  font-size: 12px;
+}
+label input,
+label select {
+  display: block;
+  margin-top: 8px;
+}
+select {
+  max-width: 100%;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+aside {
+  padding: 24px 16px;
+  border-right: 1px solid var(--line);
+}
+.section-title,
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+#runs {
+  margin: 20px 0;
+  max-height: 70vh;
+  overflow: auto;
+}
+.run-button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  margin: 4px 0;
+  padding: 12px;
+  overflow-wrap: anywhere;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+.run-button.selected {
+  border-color: var(--signal);
+  background: var(--surface);
+}
+.run-button small {
+  display: block;
+  color: var(--muted);
+  margin-top: 8px;
+}
+main {
+  padding: 28px 32px;
+  min-width: 0;
+}
+.run-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.eyebrow {
+  color: var(--signal);
+  margin-bottom: 8px;
+}
+h1 {
+  font-size: 23px;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.muted,
+footer {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.badge {
+  font-size: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--active);
+}
+.toolbar {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin: 28px 0 20px;
+  flex-wrap: wrap;
+}
+.toolbar label:first-child {
+  flex: 1;
+  min-width: 180px;
+}
+.toolbar label:nth-child(2) {
+  width: 100px;
+}
+.toolbar > span {
+  padding-bottom: 10px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 16px;
+}
+.panel {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 16px;
+  min-width: 0;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.panel-head label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.panel-head label select {
+  margin: 0;
+}
+.panel svg {
+  width: 100%;
+  display: block;
+  margin-top: 16px;
+  min-height: 140px;
+  background: var(--canvas);
+  border-radius: 4px;
+}
+.panel svg polyline {
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 2;
+}
+.panel svg circle {
+  fill: var(--active);
+  cursor: pointer;
+  stroke: var(--canvas);
+  stroke-width: 2;
+}
+.panel svg text {
+  fill: var(--secondary);
+  font-size: 13px;
+}
+.metric-value {
+  font:
+    600 36px Consolas,
+    monospace;
+  color: var(--signal);
+  margin: 20px 0 8px;
+}
+.table-scroll {
+  max-height: 320px;
+  overflow: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+th {
+  color: var(--muted);
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+th,
+td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+}
+td button {
+  min-height: 40px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 4px;
+  color: var(--signal);
+  overflow-wrap: anywhere;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    12px/1.7 Consolas,
+    "Cascadia Code",
+    monospace;
+  background: var(--canvas);
+  padding: 12px;
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  color: var(--secondary);
+}
+.logs-panel {
+  grid-column: 1/-1;
+}
+#log-text {
+  min-height: 180px;
+  max-height: 340px;
+  margin-top: 12px;
+}
+footer {
+  padding: 20px 0;
+}
+#connection {
+  font-size: 12px;
+  color: var(--signal);
+}
+#connection.error {
+  color: var(--danger);
+}
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  main {
+    padding: 24px 20px;
+  }
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .logs-panel {
+    grid-column: auto;
+  }
+}
+@media (max-width: 650px) {
+  header {
+    padding: 12px 16px;
+    gap: 8px;
+  }
+  .brand {
+    width: 100%;
+  }
+  .workspace {
+    display: block;
+  }
+  aside {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 16px;
+  }
+  #runs {
+    max-height: 160px;
+    margin: 12px 0;
+  }
+  main {
+    padding: 20px 16px;
+  }
+  .run-heading {
+    display: block;
+  }
+  .badge {
+    display: inline-block;
+    margin-top: 12px;
+  }
+  .panel-head {
+    flex-wrap: wrap;
+  }
+  .brand span {
+    margin-left: 8px;
+  }
+}
+:root {
+  --control-room-width: 1560px;
+}
+#controls {
+  padding: 28px 32px;
+  border-bottom: 1px solid var(--line);
+  max-width: var(--control-room-width);
+  margin: auto;
+}
+.control-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+}
+.quick-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.control-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.4fr);
+  gap: 16px;
+  margin: 16px 0;
+}
+.preset {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.preset:first-child {
+  padding-top: 0;
+}
+.preset h3 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+.preset-actions,
+.form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.primary {
+  background: var(--signal);
+  color: var(--canvas);
+  font-weight: 600;
+}
+.primary:hover {
+  filter: brightness(1.1);
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.form-grid label.flag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.form-grid input[type="checkbox"] {
+  width: 20px;
+  margin: 0;
+}
+.form-grid textarea {
+  display: block;
+  margin-top: 8px;
+  width: 100%;
+  min-height: 80px;
+  color: var(--ink);
+  background: var(--control);
+  border: 1px solid var(--line);
+  padding: 8px;
+  font:
+    12px Consolas,
+    monospace;
+}
+.file-button {
+  max-width: 180px;
+  cursor: pointer;
+}
+.file-button input {
+  font-size: 11px;
+  max-width: 180px;
+}
+.jobs-panel {
+  margin-top: 16px;
+}
+.job-list {
+  display: flex;
+  gap: 8px;
+  overflow: auto;
+  max-height: 160px;
+  padding-bottom: 12px;
+}
+.job-list button {
+  min-width: 220px;
+  max-width: 300px;
+  text-align: left;
+  font-size: 12px;
+}
+.job-list small {
+  display: block;
+  color: var(--muted);
+  margin-top: 8px;
+}
+details {
+  margin-top: 16px;
+  color: var(--secondary);
+}
+summary {
+  cursor: pointer;
+  min-height: 40px;
+}
+details label {
+  margin: 8px 0;
+}
+#command-preview {
+  margin-top: 12px;
+  max-height: 100px;
+}
+#job-output {
+  max-height: 240px;
+}
+#job-message.error {
+  color: var(--danger);
+}
+@media (max-width: 850px) {
+  .control-grid {
+    grid-template-columns: 1fr;
+  }
+  .control-heading {
+    display: block;
+  }
+  .quick-actions {
+    margin-top: 16px;
+  }
+}
+@media (max-width: 650px) {
+  #controls {
+    padding: 20px 16px;
+  }
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}

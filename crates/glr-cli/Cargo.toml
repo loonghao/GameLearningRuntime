@@ -29,6 +29,8 @@ sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+axum = "0.8.9"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "signal"] }
 uuid.workspace = true
 zip.workspace = true
 

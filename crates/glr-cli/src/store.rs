@@ -146,6 +146,7 @@ pub struct EntityQuery<'a> {
 
 pub struct Store {
     path: PathBuf,
+    read_only: bool,
 }
 
 impl Store {
@@ -156,16 +157,85 @@ impl Store {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let store = Self { path };
+        let store = Self {
+            path,
+            read_only: false,
+        };
         store.initialize()?;
         Ok(store)
     }
 
     fn connect(&self) -> Result<Connection> {
-        let connection = Connection::open(&self.path)?;
-        connection.busy_timeout(Duration::from_secs(30))?;
+        let connection = if self.read_only {
+            Connection::open_with_flags(&self.path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?
+        } else {
+            Connection::open(&self.path)?
+        };
+        connection.busy_timeout(Duration::from_secs(if self.read_only { 1 } else { 30 }))?;
         connection.execute_batch("PRAGMA foreign_keys = ON;")?;
         Ok(connection)
+    }
+
+    /// Observation never creates, migrates, or writes the training database.
+    pub fn read_only(path: PathBuf) -> Result<Self> {
+        if path.is_symlink() || !path.is_file() {
+            return Err(Error::Missing(path));
+        }
+        let store = Self {
+            path,
+            read_only: true,
+        };
+        let version: i64 = store
+            .connect()?
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if !(1..=MAX_READABLE_RUN_STORE_SCHEMA_VERSION).contains(&version) {
+            return Err(Error::Contract(format!(
+                "unsupported run store schema version: {version}"
+            )));
+        }
+        Ok(store)
+    }
+
+    /// Bounded, resumable projection. Oversized records retain their cursor with
+    /// an explicit marker rather than silently dropping data or allocating it.
+    pub fn observation_page(
+        &self,
+        run_id: &str,
+        table: &str,
+        after: i64,
+        limit: u32,
+    ) -> Result<Vec<Value>> {
+        let (sql, id, payload) = match table {
+            "events" => (
+                "SELECT sequence_id, timestamp_ns, kind, episode_id, step_id, CASE WHEN length(CAST(payload_json AS BLOB)) <= 16384 THEN payload_json ELSE '{\"observation_truncated\":true}' END AS data FROM events WHERE run_id = ? AND sequence_id > ? ORDER BY sequence_id LIMIT ?",
+                "sequence_id",
+                "payload",
+            ),
+            "metrics" => (
+                "SELECT metric_id, timestamp_ns, name, value, step_id, CASE WHEN length(CAST(metadata_json AS BLOB)) <= 16384 THEN metadata_json ELSE '{\"observation_truncated\":true}' END AS data FROM metrics WHERE run_id = ? AND metric_id > ? ORDER BY metric_id LIMIT ?",
+                "metric_id",
+                "metadata",
+            ),
+            _ => return Err(Error::Invalid("unknown observation table".into())),
+        };
+        let connection = self.connect()?;
+        let mut query = connection.prepare(sql)?;
+        Ok(query
+            .query_map(params![run_id, after, limit.clamp(1, 250)], |row| {
+                let mut item = json!({"run_id": run_id, id: row.get::<_, i64>(id)?,
+                "timestamp_ns": row.get::<_, i64>("timestamp_ns")?,
+                "step_id": row.get::<_, Option<i64>>("step_id")?,
+                payload: parse_json_row(row.get::<_, String>("data")?)?});
+                if table == "events" {
+                    item["kind"] = row.get::<_, String>("kind")?.into();
+                    item["episode_id"] = row.get::<_, Option<String>>("episode_id")?.into();
+                } else {
+                    item["name"] = row.get::<_, String>("name")?.into();
+                    item["value"] = row.get::<_, f64>("value")?.into();
+                }
+                Ok(item)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     fn initialize(&self) -> Result<()> {
@@ -586,12 +656,24 @@ impl Store {
     pub fn get_run(&self, run_id: &str) -> Result<RunRecord> {
         self.connect()?
             .query_row(
-                "SELECT * FROM runs WHERE run_id = ?",
+                if self.read_only { "SELECT run_id, environment_id, protocol_version, kind, status, started_at_ns, finished_at_ns, exit_code, CASE WHEN length(CAST(metadata_json AS BLOB)) <= 16384 THEN metadata_json ELSE '{\"observation_truncated\":true}' END AS metadata_json FROM runs WHERE run_id = ?" } else { "SELECT * FROM runs WHERE run_id = ?" },
                 [run_id],
                 run_from_row,
             )
             .optional()?
             .ok_or_else(|| Error::Contract(format!("unknown run_id: {run_id}")))
+    }
+
+    pub fn observation_runs(
+        &self,
+        environment_id: &str,
+        before: Option<&str>,
+    ) -> Result<Vec<RunRecord>> {
+        let connection = self.connect()?;
+        let mut query = connection.prepare("SELECT run_id, environment_id, protocol_version, kind, status, started_at_ns, finished_at_ns, exit_code, CASE WHEN length(CAST(metadata_json AS BLOB)) <= 16384 THEN metadata_json ELSE '{\"observation_truncated\":true}' END AS metadata_json FROM runs WHERE environment_id = ?1 AND (?2 IS NULL OR (started_at_ns,run_id) < (SELECT started_at_ns,run_id FROM runs WHERE run_id=?2 AND environment_id=?1)) ORDER BY started_at_ns DESC, run_id DESC LIMIT 100")?;
+        Ok(query
+            .query_map(params![environment_id, before], run_from_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     pub fn list_runs(
@@ -648,11 +730,15 @@ impl Store {
     }
 
     pub fn list_events(&self, run_id: &str) -> Result<Vec<EventRecord>> {
+        self.events_after(run_id, -1)
+    }
+
+    pub fn events_after(&self, run_id: &str, after: i64) -> Result<Vec<EventRecord>> {
         let connection = self.connect()?;
         let mut statement = connection
-            .prepare("SELECT * FROM events WHERE run_id = ? ORDER BY sequence_id ASC LIMIT 1000")?;
+            .prepare("SELECT * FROM events WHERE run_id = ? AND sequence_id > ? ORDER BY sequence_id ASC LIMIT 1000")?;
         Ok(statement
-            .query_map([run_id], |row| {
+            .query_map(params![run_id, after], |row| {
                 Ok(EventRecord {
                     run_id: row.get("run_id")?,
                     sequence_id: row.get("sequence_id")?,
@@ -667,11 +753,15 @@ impl Store {
     }
 
     pub fn list_metrics(&self, run_id: &str) -> Result<Vec<MetricRecord>> {
+        self.metrics_after(run_id, 0)
+    }
+
+    pub fn metrics_after(&self, run_id: &str, after: i64) -> Result<Vec<MetricRecord>> {
         let connection = self.connect()?;
         let mut statement = connection
-            .prepare("SELECT * FROM metrics WHERE run_id = ? ORDER BY metric_id ASC LIMIT 1000")?;
+            .prepare("SELECT * FROM metrics WHERE run_id = ? AND metric_id > ? ORDER BY metric_id ASC LIMIT 1000")?;
         Ok(statement
-            .query_map([run_id], |row| {
+            .query_map(params![run_id, after], |row| {
                 Ok(MetricRecord {
                     run_id: row.get("run_id")?,
                     metric_id: row.get("metric_id")?,

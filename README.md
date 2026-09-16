@@ -670,3 +670,11 @@ python -m game_learning_runtime.qa "inspect the whole game for bugs" --project .
 ```
 
 Each run is written to `.glr-qa/YYYY-MM-DD/<UTC-time>/` with `result.json` and `index.html`. Checks are command based so an adapter can attach deterministic training, replay, or live-host probes while GLR keeps the goal, evidence, timeout, and report contract stable.
+
+## Training dashboard and durable history
+
+```powershell
+glr --project . dashboard
+```
+
+[Training dashboard and durable history](docs/guides/dashboard.md)

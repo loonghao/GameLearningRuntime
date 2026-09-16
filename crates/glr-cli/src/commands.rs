@@ -139,6 +139,60 @@ pub fn execute(cli: Cli) -> Result<i32> {
         let project = load_project(&cli.project)?;
         return crate::task::execute(&project, command.clone(), cli.json);
     }
+    if let CliCommand::Backup { command } = &cli.command {
+        let result = crate::backup::execute(&cli.project, command)?;
+        emit("backup", &result, cli.json)?;
+        return Ok(0);
+    }
+    if let CliCommand::Dashboard { port, command } = &cli.command {
+        let project = load_project(&cli.project)?;
+        return match command {
+            Some(command) => crate::dashboard::execute(&project, command, cli.json),
+            None => crate::observe::serve(&project, *port, cli.json, true),
+        };
+    }
+    if let CliCommand::Observe { port, archive } = &cli.command {
+        let mut project = load_project(&cli.project)?;
+        if let Some(archive) = archive {
+            crate::backup::verify(archive)?;
+            project.data_dir = fs::canonicalize(archive)?;
+        }
+        return crate::observe::serve(&project, *port, cli.json, false);
+    }
+    if let CliCommand::Runs { command } = &cli.command {
+        match command {
+            RunsCommand::Trace {
+                run_id,
+                events_after,
+                metrics_after,
+                limit,
+                archive,
+            } => {
+                let observation = observation_source(&cli.project, archive.as_deref())?;
+                emit(
+                    "runs.trace",
+                    &observation.snapshot(run_id, *events_after, *metrics_after, *limit)?,
+                    cli.json,
+                )?;
+                return Ok(0);
+            }
+            RunsCommand::Log {
+                run_id,
+                path,
+                offset,
+                archive,
+            } => {
+                let observation = observation_source(&cli.project, archive.as_deref())?;
+                emit(
+                    "runs.log",
+                    &observation.log(run_id, path, *offset)?,
+                    cli.json,
+                )?;
+                return Ok(0);
+            }
+            _ => {}
+        }
+    }
     let mut project = load_project(&cli.project)?;
     project.run_context = cli
         .context
@@ -188,10 +242,24 @@ pub fn execute(cli: Cli) -> Result<i32> {
                 metadata: json!({}),
             },
         ),
-        CliCommand::Train { no_capture } => run_training(&project, &store, cli.json, !no_capture),
+        CliCommand::Train {
+            no_capture,
+            no_observe,
+        } => {
+            let _observer = crate::observe::start_default(&project, !no_observe);
+            run_training(&project, &store, cli.json, !no_capture)
+        }
         CliCommand::Goal {
-            command: GoalCommand::Run { goal, no_capture },
-        } => run_goal(&project, &store, &absolute(&goal)?, cli.json, !no_capture),
+            command:
+                GoalCommand::Run {
+                    goal,
+                    no_capture,
+                    no_observe,
+                },
+        } => {
+            let _observer = crate::observe::start_default(&project, !no_observe);
+            run_goal(&project, &store, &absolute(&goal)?, cli.json, !no_capture)
+        }
         CliCommand::Play { bundle } => {
             let bundle = absolute(&bundle)?;
             let manifest = verify_model_bundle(&bundle)?;
@@ -223,6 +291,9 @@ pub fn execute(cli: Cli) -> Result<i32> {
             )
         }
         CliCommand::Runs { command } => match command {
+            RunsCommand::Trace { .. } | RunsCommand::Log { .. } => {
+                unreachable!("read-only queries handled before store loading")
+            }
             RunsCommand::List { status, limit } => {
                 let runs = store.list_runs(
                     &project.environment_id,
@@ -385,7 +456,27 @@ pub fn execute(cli: Cli) -> Result<i32> {
         }
         CliCommand::Task { .. } => unreachable!("task handled before store loading"),
         CliCommand::Plugin { .. } => unreachable!("plugin handled before project loading"),
+        CliCommand::Observe { .. } => unreachable!("observe handled before store loading"),
+        CliCommand::Backup { .. } => unreachable!("backup handled before store loading"),
+        CliCommand::Dashboard { .. } => unreachable!("dashboard handled before store loading"),
     }
+}
+
+fn observation_source(
+    project: &Path,
+    archive: Option<&Path>,
+) -> Result<crate::observation::Observation> {
+    let project = load_project(project)?;
+    let data_dir = if let Some(archive) = archive {
+        crate::backup::verify(archive)?;
+        fs::canonicalize(archive)?
+    } else {
+        project.data_dir
+    };
+    Ok(crate::observation::Observation {
+        data_dir,
+        environment_id: project.environment_id,
+    })
 }
 
 fn doctor(project: &Project, as_json: bool) -> Result<i32> {
@@ -541,6 +632,7 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         json!({
             "environment_family": project.environment_family,
             "lifecycle": lifecycle,
+            "dashboard_job_id": std::env::var("GLR_DASHBOARD_JOB_ID").ok(),
             "run_context": crate::run_context::metadata(project)?,
             "status_scope": "process_execution",
             "learning_status": "unverified",
@@ -636,6 +728,10 @@ fn run_project_role(
     invocation: ProjectRoleInvocation<'_>,
 ) -> Result<i32> {
     let mut combined_metadata = invocation.metadata.as_object().cloned().unwrap_or_default();
+    combined_metadata.insert(
+        "dashboard_job_id".into(),
+        std::env::var("GLR_DASHBOARD_JOB_ID").ok().into(),
+    );
     combined_metadata.insert(
         "environment_family".into(),
         Value::String(project.environment_family.clone()),
@@ -738,6 +834,7 @@ fn run_goal(
         json!({
             "environment_family": project.environment_family,
             "goal_id": goal.goal_id,
+            "dashboard_job_id": std::env::var("GLR_DASHBOARD_JOB_ID").ok(),
             "objective": goal.objective,
             "lifecycle": lifecycle,
             "run_context": crate::run_context::metadata(project)?,

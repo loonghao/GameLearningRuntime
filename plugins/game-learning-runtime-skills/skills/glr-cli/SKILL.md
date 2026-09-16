@@ -191,3 +191,26 @@ Reports are projections over the run store, not a second source of truth. They
 do not mutate training data, infer missing unlocks or wins, widen action masks,
 or establish live-game acceptance. Keep unsupported panels empty and return to
 the adapter/runtime boundary when authoritative evidence is missing.
+
+## Dashboard, telemetry, and durable history
+
+- Start `glr dashboard` for human controls; agent commands remain the same CLI
+  contracts. Dashboard forms are derived from clap. `train` and `goal run` start
+  a command-lifetime read-only observation server unless `--no-observe` is explicit.
+- Inspect `glr dashboard presets`, `glr dashboard jobs`, and `glr runs trace RUN_ID`.
+  Continue independent event/metric cursors until `more` is false; the browser's
+  5000-record window is not a complete export. `runs log` supports byte offsets.
+- Python learners can use `Telemetry.from_env()` for explicit learning updates
+  and routes. `execute_decision(..., step_id=...)` records choices/receipts when
+  GLR run bindings exist. Diagnostic metrics never establish runtime success.
+- Keep recorder stderr connected so capture.log exposes FFmpeg diagnostics.
+  `GLR_LOG_STDERR=0` only disables terminal mirroring, not durable storage.
+- Use `backup create --output PATH`, `backup verify PATH`, and `backup restore PATH
+  --output NEW_PATH` for history. Active runs are database-only; make another
+  backup after completion for finalized capture/checkpoint files. No automatic
+  deletion, scheduling, live-state restore, or retraining is implied.
+- Use `observe --archive PATH` and `runs trace RUN_ID --archive PATH` for verified
+  archive inspection. Source project packaging remains `package export/import`;
+  include exported preset JSON explicitly in the source selection.
+- A crashed Dashboard can leave an unverified job and active child. Inspect and
+  reconcile, never resubmit automatically or treat process exit as learning success.

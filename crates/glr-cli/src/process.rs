@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -76,6 +80,7 @@ pub struct CaptureLifecycle {
 }
 
 pub struct CaptureSession {
+    _log_mirror: LogMirror,
     child: Option<Child>,
     log_path: PathBuf,
     status_path: PathBuf,
@@ -165,6 +170,7 @@ fn configure_command(
         .env("GLR_ENVIRONMENT_ID", &project.environment_id)
         .env("GLR_ENVIRONMENT_FAMILY", &project.environment_family)
         .env("GLR_PROTOCOL_VERSION", &project.protocol_version)
+        .env("PYTHONUNBUFFERED", "1")
         .env("GLR_CAPTURE_VIDEO", &context["capture_video"])
         .env("GLR_CAPTURE_INDEX", &context["capture_index"])
         .env("GLR_CAPTURE_STATUS", &context["capture_status"]);
@@ -214,6 +220,7 @@ pub fn run_command(invocation: CommandInvocation<'_>) -> Result<i32> {
         fs::create_dir_all(parent)?;
     }
     let log = File::create(invocation.log_path)?;
+    let _log_mirror = LogMirror::start(invocation.log_path);
     let stderr = log.try_clone()?;
     let mut process = configure_command(
         invocation.command,
@@ -269,6 +276,7 @@ pub fn start_capture(project: &Project, run_id: &str, run_dir: &Path) -> Result<
     };
     write_json_file(&receipt_path, &receipt)?;
     let log = File::create(&log_path)?;
+    let log_mirror = LogMirror::start(&log_path);
     let stderr = log.try_clone()?;
     let command = capture.command();
     let mut process = configure_command(&command, project, run_id, run_dir, None, &HashMap::new())?;
@@ -296,6 +304,7 @@ pub fn start_capture(project: &Project, run_id: &str, run_dir: &Path) -> Result<
         Err(error) => (None, Some(format!("recorder failed to start: {error}"))),
     };
     Ok(CaptureSession {
+        _log_mirror: log_mirror,
         child,
         log_path,
         status_path,
@@ -304,6 +313,81 @@ pub fn start_capture(project: &Project, run_id: &str, run_dir: &Path) -> Result<
         config: capture.session.clone(),
         startup_error,
     })
+}
+
+/// Keep the durable file as the source of truth. A bounded tail mirrors output
+/// to stderr without piping (and potentially blocking) the learner or recorder.
+struct LogMirror {
+    stop: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl LogMirror {
+    fn start(path: &Path) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        if std::env::var("GLR_LOG_STDERR").as_deref() == Ok("0") {
+            return Self { stop, worker: None };
+        }
+        let path = path.to_path_buf();
+        let shutdown = stop.clone();
+        let worker = thread::spawn(move || {
+            let mut offset = 0;
+            loop {
+                let done = shutdown.load(Ordering::Relaxed);
+                if let Ok(mut file) = File::open(&path) {
+                    let size = file.metadata().map_or(offset, |m| m.len());
+                    if offset > size {
+                        offset = 0;
+                    }
+                    // Console backpressure never causes unbounded memory growth.
+                    if size.saturating_sub(offset) > 65536 {
+                        eprintln!("[GLR log] console skipped bytes; complete output is persisted");
+                        offset = size - 65536;
+                    }
+                    if file.seek(SeekFrom::Start(offset)).is_ok() {
+                        let mut bytes = Vec::new();
+                        if file.take(65536).read_to_end(&mut bytes).is_ok() && !bytes.is_empty() {
+                            offset += bytes.len() as u64;
+                            // Remove terminal escape/control injection from raw child output.
+                            let output: String = String::from_utf8_lossy(&bytes)
+                                .chars()
+                                .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
+                                .collect();
+                            let _ = writeln!(
+                                std::io::stderr(),
+                                "[{}] {output}",
+                                path.file_name().unwrap_or_default().to_string_lossy()
+                            );
+                        }
+                    }
+                }
+                if done {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        });
+        Self {
+            stop,
+            worker: Some(worker),
+        }
+    }
+}
+
+impl Drop for LogMirror {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        // Drain short outputs on normal exit, but never hang a run on stderr.
+        for _ in 0..12 {
+            if self.worker.as_ref().is_none_or(|w| w.is_finished()) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        if self.worker.as_ref().is_some_and(|w| w.is_finished()) {
+            let _ = self.worker.take().unwrap().join();
+        }
+    }
 }
 
 pub fn finish_capture(

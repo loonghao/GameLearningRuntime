@@ -22,6 +22,13 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Open the local training dashboard, or manage its persisted presets/jobs.
+    Dashboard {
+        #[arg(long, default_value_t = 7432)]
+        port: u16,
+        #[command(subcommand)]
+        command: Option<DashboardCommand>,
+    },
     /// Validate a GLR project and its local deployment dependencies.
     Doctor,
     /// Start the configured game/runtime bridge.
@@ -33,6 +40,23 @@ pub enum Command {
     Train {
         #[arg(long)]
         no_capture: bool,
+        /// Disable the automatic localhost observation server.
+        #[arg(long)]
+        no_observe: bool,
+    },
+    /// Serve the bundled live dashboard and read-only observation API.
+    Observe {
+        /// Loopback port; use 0 to select a free port.
+        #[arg(long, default_value_t = 7432)]
+        port: u16,
+        /// Inspect a verified backup without modifying or restoring it.
+        #[arg(long)]
+        archive: Option<PathBuf>,
+    },
+    /// Create, verify, or restore durable observation backups.
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommand,
     },
     /// Pursue a bounded agent-first learning objective.
     Goal {
@@ -259,6 +283,8 @@ pub enum GoalCommand {
         goal: PathBuf,
         #[arg(long)]
         no_capture: bool,
+        #[arg(long)]
+        no_observe: bool,
     },
 }
 
@@ -283,6 +309,28 @@ impl RunStatusArg {
 
 #[derive(Debug, Subcommand)]
 pub enum RunsCommand {
+    /// Read a resumable event/metric page, from disk or a verified backup.
+    Trace {
+        run_id: String,
+        #[arg(long, default_value_t = -1, allow_hyphen_values = true, value_parser = clap::value_parser!(i64).range(-1..))]
+        events_after: i64,
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(i64).range(0..))]
+        metrics_after: i64,
+        #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u32).range(1..=250))]
+        limit: u32,
+        #[arg(long)]
+        archive: Option<PathBuf>,
+    },
+    /// Tail a durable managed role log using a byte cursor.
+    Log {
+        run_id: String,
+        #[arg(long, default_value = "trainer.log")]
+        path: String,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        archive: Option<PathBuf>,
+    },
     List {
         #[arg(long)]
         status: Option<RunStatusArg>,
@@ -291,6 +339,49 @@ pub enum RunsCommand {
     },
     Show {
         run_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DashboardCommand {
+    /// Show the same command forms exposed in the web dashboard.
+    Catalog,
+    /// List validated training presets.
+    Presets,
+    /// Save a declarative preset from a JSON file.
+    SavePreset {
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Page through durable dashboard job receipts.
+    Jobs {
+        #[arg(long)]
+        before: Option<String>,
+    },
+    /// Read persisted stdout/stderr from one dashboard operation.
+    JobLog {
+        id: String,
+        #[arg(long, default_value = "stdout", value_parser = ["stdout", "stderr"])]
+        stream: String,
+    },
+    /// Run a preset in the foreground with a durable dashboard receipt.
+    Run { preset: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BackupCommand {
+    /// Snapshot SQLite and archive completed-run files; active runs are DB-only.
+    Create {
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Verify every recorded file digest and the SQLite integrity check.
+    Verify { archive: PathBuf },
+    /// Copy a verified archive to a new directory; never overwrite live storage.
+    Restore {
+        archive: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
     },
 }
 

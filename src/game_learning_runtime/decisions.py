@@ -10,6 +10,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from game_learning_runtime.telemetry import decision_event
+
 
 def _text(value: object, name: str) -> None:
     if not isinstance(value, str) or not value.strip():
@@ -70,11 +72,12 @@ class Decision:
 def execute_decision(
     decision: Decision,
     execute: Callable[[str, Mapping[str, Any]], Mapping[str, Any]],
+    *,
+    step_id: int | None = None,
 ) -> dict[str, Any]:
     """Submit precisely the policy selection, retaining rejected receipts too."""
     selected = decision.selected
-    receipt = deepcopy(dict(execute(selected.command, selected.parameters)))
-    return {
+    record = {
         "state": decision.state,
         "selected_key": selected.key,
         "command": selected.command,
@@ -86,8 +89,24 @@ def execute_decision(
             {"key": item.key, "command": item.command, "parameters": item.parameters}
             for item in decision.candidates
         ],
-        "receipt": receipt,
     }
+    decision_event("agent.decision", record, step_id)
+    try:
+        receipt = deepcopy(dict(execute(selected.command, selected.parameters)))
+    except Exception as error:
+        decision_event(
+            "agent.execution_failed",
+            {
+                "selected_key": selected.key,
+                "error_type": type(error).__name__,
+                "outcome": "unknown",
+            },
+            step_id,
+        )
+        raise
+    record["receipt"] = receipt
+    decision_event("agent.execution", record, step_id)
+    return record
 
 
 def learning_status(

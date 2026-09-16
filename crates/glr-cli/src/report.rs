@@ -67,11 +67,47 @@ pub fn build(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let mut events = Vec::new();
+    let mut metrics = Vec::new();
+    loop {
+        let page = store.events_after(
+            run_id,
+            events
+                .last()
+                .map_or(-1, |e: &crate::store::EventRecord| e.sequence_id),
+        )?;
+        if page.is_empty() {
+            break;
+        }
+        events.extend(page);
+        if events.len() > 100_000 {
+            return Err(Error::Invalid(
+                "offline report exceeds 100000 events; use runs trace cursors".into(),
+            ));
+        }
+    }
+    loop {
+        let page = store.metrics_after(
+            run_id,
+            metrics
+                .last()
+                .map_or(0, |m: &crate::store::MetricRecord| m.metric_id),
+        )?;
+        if page.is_empty() {
+            break;
+        }
+        metrics.extend(page);
+        if metrics.len() > 100_000 {
+            return Err(Error::Invalid(
+                "offline report exceeds 100000 metrics; use runs trace cursors".into(),
+            ));
+        }
+    }
     let data = json!({
         "schema_version": RUN_REPORT_SCHEMA_VERSION,
         "run": run,
-        "events": store.list_events(run_id)?,
-        "metrics": store.list_metrics(run_id)?,
+        "events": events,
+        "metrics": metrics,
         "artifacts": artifacts,
     });
     let data_json = serde_json::to_string(&data)?
