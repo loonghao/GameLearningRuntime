@@ -98,10 +98,12 @@ Project roles receive `GLR_PROJECT_ROOT`, `GLR_BRIDGE_PATH`, `GLR_RUN_ID`, `GLR_
 `GLR_STORE_PATH`, environment identity, capture output paths, and goal-loop paths through
 environment variables. They must stay bounded and validate the exact game target independently.
 
-The CLI owns the `GLR_` environment namespace. It clears inherited `GLR_*` variables before
-publishing the values an invocation owns, so a role never observes a stale or forged binding from
-an outer run or the ambient environment. Declare role inputs through the project manifest context
-instead of the ambient environment.
+The CLI owns the `GLR_` environment namespace. Every child process it starts — project roles,
+capture sessions, hosted children, `glr task` children, and dashboard jobs — clears inherited
+`GLR_*` variables before the CLI publishes the values that child owns, so a child never observes a
+stale or forged binding from an outer run or the ambient environment. Declare inputs through the
+project manifest context instead of the ambient environment. Each child still receives only its own
+bindings: a task child gets a task identity and no run identity.
 
 A role invocation always describes the trial it serves. `glr goal run` issues `GLR_TRIAL_ID` and
 `GLR_TRIAL_PATH` to its planner and trainer, and `glr train` issues the same pair for its single

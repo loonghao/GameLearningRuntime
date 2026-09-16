@@ -430,7 +430,10 @@ fn run_step(
     let stdout = File::create(&log_path)?;
     let stderr = stdout.try_clone()?;
     let started = Instant::now();
-    let mut child = Command::new(&program)
+    let mut command = Command::new(&program);
+    // A task child owns no run binding, so it must not inherit one.
+    crate::process::clear_inherited_glr_environment(&mut command);
+    let mut child = command
         .args(&expanded)
         .current_dir(cwd)
         .env("GLR_PROJECT_ROOT", &project.root)

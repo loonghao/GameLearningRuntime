@@ -89,9 +89,11 @@ yuv420p、GOP 30、MP4 fast-start、无音频。配置字段不会自动改变�
 `GLR_STORE_PATH`、环境身份、录制输出路径和 goal loop 路径。每个角色仍需独立验证准确的
 游戏目标，不能依赖 CLI 猜测进程或窗口。
 
-`GLR_` 环境变量命名空间由 CLI 独占。CLI 会先清除继承来的 `GLR_*` 变量，再写入本次调用真正
-拥有的值，因此角色不会读到来自外层 run 或外部环境的过期、伪造绑定。角色输入应通过工程
-manifest 上下文声明，不要依赖外部环境。
+`GLR_` 环境变量命名空间由 CLI 独占。CLI 启动的每一个子进程——工程角色、录制会话、hosted
+子进程、`glr task` 子进程、Dashboard job——都会先清除继承来的 `GLR_*` 变量，再由 CLI 写入
+该子进程真正拥有的值，因此子进程不会读到来自外层 run 或外部环境的过期、伪造绑定。角色输入
+应通过工程 manifest 上下文声明，不要依赖外部环境。每个子进程仍只拿到属于自己的绑定：
+task 子进程只有 task 身份，没有 run 身份。
 
 角色调用始终描述它所服务的 trial。`glr goal run` 会向 planner 和 trainer 注入
 `GLR_TRIAL_ID` 与 `GLR_TRIAL_PATH`；`glr train` 为其唯一的隐式 trial 注入同一对变量
