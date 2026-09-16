@@ -298,14 +298,14 @@ impl Dashboard {
             ],
         )?;
         let mut process = Command::new(std::env::current_exe()?);
+        // A dashboard job starts a fresh CLI invocation, so it must not inherit a
+        // binding that belonged to the launcher's own run. Its run identity comes
+        // from the job's own command line, not from the ambient environment.
+        crate::process::clear_inherited_glr_environment(&mut process);
         if let Some((url, token)) = &self.telemetry {
             process
                 .env("GLR_TELEMETRY_URL", url)
                 .env("GLR_TELEMETRY_TOKEN", token);
-        } else {
-            process
-                .env_remove("GLR_TELEMETRY_URL")
-                .env_remove("GLR_TELEMETRY_TOKEN");
         }
         let spawn = process
             .arg("--project")

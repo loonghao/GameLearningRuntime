@@ -33,10 +33,18 @@ forged `GLR_TRIAL_ID`, and a nested or resumed invocation could observe a stale
 `GLR_RUN_ID` from an outer run.
 
 The CLI now clears every inherited `GLR_*` variable before publishing the values
-an invocation actually owns. The namespace is CLI-owned: a role's GLR
-environment states what the CLI decided, not what the ambient environment
-happened to contain. Parent-environment values that were never scrubbed are no
-longer an input to role behavior.
+an invocation actually owns, and it does so for every child process it starts:
+project roles, capture sessions, hosted children (ADR-0032), `glr task` children,
+and dashboard jobs. The namespace is CLI-owned: a child's GLR environment states
+what the CLI decided, not what the ambient environment happened to contain.
+Parent-environment values that were never scrubbed are no longer an input to
+child behavior.
+
+Each child still receives only the bindings it owns. A task child receives its
+task identity and no run identity; a dashboard job receives the telemetry binding
+its launcher resolved and re-publishes it explicitly. Clearing the namespace
+removes inherited values; it does not by itself grant a binding, and a child that
+wants its own `GLR_*` value must declare it through the project manifest context.
 
 ## Consequences
 
@@ -56,8 +64,8 @@ checkpoint is promotable, or that a goal was met. Those remain separate
 authoritative verdicts owned by the existing evaluation and promotion contracts.
 
 Clearing the `GLR_*` namespace is a behavior change for any deployment that
-relied on injecting its own `GLR_*` variables into a role. Such a variable must
-now be declared through the project manifest context (explicit `extra` keys,
-placeholders, or a run context) instead of the ambient environment. Variables
-outside the `GLR_` prefix, including engine- and adapter-owned configuration, are
-untouched.
+relied on injecting its own `GLR_*` variables into a child process. Such a
+variable must now be declared through the project manifest context (explicit
+`extra` keys, placeholders, or a run context) instead of the ambient environment.
+Variables outside the `GLR_` prefix, including engine- and adapter-owned
+configuration, are untouched.

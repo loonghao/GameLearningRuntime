@@ -234,3 +234,59 @@ required = true
     assert_eq!(executed["data"]["steps"][0]["exit_code"], 0);
     assert!(executed["data"]["steps"][0]["result_path"].is_string());
 }
+
+/// A task child owns no run binding, so it must not inherit one.
+///
+/// `glr task` historically passed the parent environment through unchanged, and
+/// only `configure_command` scrubbed the `GLR_` namespace. A forged
+/// `GLR_TRIAL_ID`, or a stale `GLR_RUN_ID` left by an outer run, therefore reached
+/// a task child even though the task owns no such binding.
+#[test]
+fn a_task_child_cannot_inherit_a_forged_or_stale_glr_binding() {
+    let project = create_project();
+    let probe = std::env::current_exe()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    fs::write(
+        project.path().join("glr.toml"),
+        format!(
+            "schema_version = \"glr.tasks.v1\"\n\n[tasks.probe]\ndescription = \"record GLR bindings\"\nargv = ['{probe}', \"--ignored\", \"--exact\", \"task_environment_probe_child\"]\ncwd = \".\"\n"
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(binary())
+        .arg("--project")
+        .arg(project.path())
+        .arg("--json")
+        .arg("task")
+        .arg("run")
+        .arg("probe")
+        .env("GLR_TRIAL_ID", "forged")
+        .env("GLR_TRIAL_PATH", "forged")
+        .env("GLR_RUN_ID", "stale-outer-run")
+        .env("GLR_RUN_DIR", "stale-outer-dir")
+        .output()
+        .unwrap();
+    success(&output);
+}
+
+#[test]
+#[ignore]
+fn task_environment_probe_child() {
+    for name in [
+        "GLR_TRIAL_ID",
+        "GLR_TRIAL_PATH",
+        "GLR_RUN_ID",
+        "GLR_RUN_DIR",
+    ] {
+        assert!(
+            std::env::var_os(name).is_none(),
+            "{name} survived into a task child that owns no run binding"
+        );
+    }
+    // The task's own bindings must still be present.
+    assert!(std::env::var_os("GLR_TASK_NAME").is_some());
+    assert!(std::env::var_os("GLR_PROJECT_ROOT").is_some());
+}

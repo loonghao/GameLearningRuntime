@@ -141,6 +141,25 @@ pub fn command_context(
     values
 }
 
+/// Clear every inherited `GLR_*` variable from a child process.
+///
+/// A GLR child's environment must state what the CLI decided for that child, not
+/// what the ambient environment happened to contain. `Command` inherits the parent
+/// environment by default, so without this an inherited `GLR_*` variable outlives
+/// the value the CLI publishes — or survives where the CLI publishes nothing. That
+/// let a forged `GLR_TRIAL_ID`, or a stale `GLR_RUN_ID` from an outer run, reach a
+/// child that owns no such binding.
+///
+/// Call this before setting the values the invocation actually owns. Variables
+/// outside the `GLR_` prefix are untouched.
+pub fn clear_inherited_glr_environment(process: &mut Command) {
+    for (key, _) in std::env::vars_os() {
+        if key.to_str().is_some_and(|name| name.starts_with("GLR_")) {
+            process.env_remove(&key);
+        }
+    }
+}
+
 fn configure_command(
     command: &ProjectCommand,
     project: &Project,
@@ -158,17 +177,7 @@ fn configure_command(
         .split_first()
         .ok_or_else(|| Error::Invalid("project command is empty".into()))?;
     let mut process = Command::new(program);
-    // A role's GLR environment is owned by the CLI. `Command` inherits the parent
-    // environment by default, so any inherited `GLR_*` variable would otherwise
-    // outlive the value the CLI publishes, or survive when the CLI publishes
-    // nothing. That let a forged `GLR_TRIAL_ID`, or a stale `GLR_RUN_ID` from an
-    // outer run, reach a role that owns no such binding. Scrub the namespace
-    // first, then set the values this invocation actually owns.
-    for (key, _) in std::env::vars_os() {
-        if key.to_str().is_some_and(|name| name.starts_with("GLR_")) {
-            process.env_remove(&key);
-        }
-    }
+    clear_inherited_glr_environment(&mut process);
     process
         .args(arguments)
         .current_dir(&project.root)
