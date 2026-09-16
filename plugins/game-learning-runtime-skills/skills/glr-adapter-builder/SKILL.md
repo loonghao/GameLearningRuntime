@@ -209,6 +209,19 @@ make an adapter depend on the CLI implementation.
 
 ## Emit bounded review evidence
 
+For proactive Bridge diagnostics, use `BridgeTelemetry.from_env(source)` or the
+versioned `glr.bridge-telemetry.v1` JSON batch through localhost HTTP or
+`glr telemetry ingest --file FILE [--jsonl]`. Discover the contract with
+`glr --json telemetry schema`. Keep a stable source and batch ID until the
+durable receipt is acknowledged; retry identical diagnostic batches only.
+Use `bridge.status`, `bridge.state`, and `bridge.progress` for Dashboard cards,
+named metrics for charts, and existing route events for route views. Query
+`glr telemetry state RUN_ID` or `runs trace` from Agent workflows. All ingress
+data has diagnostic authority and must never promote itself to action or reward
+authority. Publish from a bounded worker, never block the engine main thread;
+keep payloads under 12 KiB, batches under 64 KiB / 64 records. Terminal runs
+reject new batches. Drain any explicit JSONL spool before ending the run.
+
 Adapters may expose review projections as namespaced run-store events, but
 evidence never becomes action authority or replaces an authoritative terminal
 receipt. Keep the event vocabulary stable and learner-neutral:

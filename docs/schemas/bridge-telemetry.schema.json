@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GLR Bridge Telemetry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "source",
+    "batch_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "glr.bridge-telemetry.v1"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]*$",
+      "maxLength": 128
+    },
+    "source": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]*$",
+      "maxLength": 128
+    },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]*$",
+      "maxLength": 128
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "payload"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]*$",
+            "maxLength": 128
+          },
+          "payload": {
+            "type": "object",
+            "description": "At most 12 KiB UTF-8 JSON; authority and _glr are reserved. navigation.route_sample requires position: 2-3 finite numbers. bridge.progress requires fraction: 0..1.",
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "authority"
+                  ]
+                },
+                {
+                  "required": [
+                    "_glr"
+                  ]
+                }
+              ]
+            }
+          },
+          "step_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "episode_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[A-Za-z0-9_.-]+$",
+            "maxLength": 128
+          },
+          "observed_at_ns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]*$",
+            "maxLength": 128
+          },
+          "value": {
+            "type": "number"
+          },
+          "step_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          }
+        }
+      }
+    }
+  },
+  "description": "At most 64 KiB per request and 1..64 events + metrics combined. Runtime validates aggregate limits and kind-specific payloads. Every batch commits atomically and deduplicates on run_id/source/batch_id."
+}

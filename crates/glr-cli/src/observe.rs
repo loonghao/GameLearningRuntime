@@ -89,7 +89,26 @@ fn start(project: &Project, port: u16, controls: bool) -> Result<Observer> {
             environment_id: project.environment_id.clone(),
         }),
         dashboard: if controls {
-            Some(Arc::new(Dashboard::new(project)?))
+            let token = std::env::var("GLR_TELEMETRY_TOKEN").unwrap_or_else(|_| {
+                format!(
+                    "{}{}",
+                    uuid::Uuid::new_v4().simple(),
+                    uuid::Uuid::new_v4().simple()
+                )
+            });
+            if !(32..=128).contains(&token.len())
+                || !token
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+            {
+                return Err(Error::Invalid(
+                    "GLR_TELEMETRY_TOKEN must contain 32..128 ASCII letters, digits, _, . or -"
+                        .into(),
+                ));
+            }
+            Some(Arc::new(
+                Dashboard::new(project)?.with_telemetry(format!("{url}api/v1/telemetry"), token),
+            ))
         } else {
             None
         },
@@ -143,6 +162,7 @@ async fn handle(
     let origin_ok =
         header("origin").is_none_or(|o| allowed.iter().any(|a| o == format!("http://{a}")));
     let site_ok = header("sec-fetch-site").is_none_or(|s| s == "same-origin" || s == "none");
+    let ingest = method == Method::POST && uri.path() == "/api/v1/telemetry";
     let mut result = if !host_ok || !origin_ok || !site_ok {
         (
             403,
@@ -155,8 +175,24 @@ async fn handle(
             "application/json",
             b"{\"error\":\"method unavailable\"}".to_vec(),
         )
+    } else if ingest
+        && !state
+            .dashboard
+            .as_ref()
+            .is_some_and(|d| d.telemetry_authorized(header("authorization")))
+    {
+        (
+            401,
+            "application/json",
+            b"{\"error\":\"bridge telemetry requires a bearer token\"}".to_vec(),
+        )
     } else if method == Method::POST
-        && (header("origin").is_none() || header("content-type") != Some("application/json"))
+        && ((!ingest && header("origin").is_none())
+            || !header("content-type").is_some_and(|v| {
+                v.split(';')
+                    .next()
+                    .is_some_and(|mime| mime.trim() == "application/json")
+            }))
     {
         (
             403,
@@ -174,6 +210,18 @@ async fn handle(
         let state = state.clone();
         let task = tokio::task::spawn_blocking(move || {
             let _permit = permit;
+            if ingest {
+                let receipt = crate::telemetry::ingest(
+                    &state.observation.data_dir,
+                    &state.observation.environment_id,
+                    &body,
+                )?;
+                return Ok((
+                    200,
+                    "application/json; charset=utf-8",
+                    serde_json::to_vec(&receipt)?,
+                ));
+            }
             if path.starts_with("/api/v1/control/") {
                 if let Some(dashboard) = state.dashboard {
                     let value = dashboard.route(method.as_str(), &path, &body)?;
@@ -279,6 +327,12 @@ fn route(url: &str, observation: &Observation) -> Result<WebResult> {
         })
     };
     let data: Value = match url.path() {
+        "/api/v1/telemetry/schema" => crate::telemetry::schema(),
+        "/api/v1/telemetry/state" => crate::telemetry::latest(
+            &observation.data_dir,
+            &observation.environment_id,
+            field("run")?,
+        )?,
         "/" => {
             return Ok((
                 200,

@@ -22,6 +22,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Publish or inspect passive, persistent bridge diagnostics.
+    Telemetry {
+        #[command(subcommand)]
+        command: TelemetryCommand,
+    },
     /// Open the local training dashboard, or manage its persisted presets/jobs.
     Dashboard {
         #[arg(long, default_value_t = 7432)]
@@ -120,6 +125,22 @@ pub enum Command {
         #[command(subcommand)]
         command: PluginCommand,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TelemetryCommand {
+    /// Print the versioned bridge batch JSON Schema.
+    Schema,
+    /// Ingest one JSON batch, or JSONL batches (atomic per line).
+    Ingest {
+        /// JSON file, or - for stdin. At most 64 KiB per batch.
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        jsonl: bool,
+    },
+    /// Inspect latest bridge status/state/progress by producer.
+    State { run_id: String },
 }
 
 #[derive(Debug, Subcommand)]

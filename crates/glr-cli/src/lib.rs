@@ -18,6 +18,7 @@ mod report;
 mod run_context;
 mod store;
 mod task;
+mod telemetry;
 pub mod update;
 mod update_notice;
 

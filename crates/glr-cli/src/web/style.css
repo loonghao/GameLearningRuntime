@@ -508,3 +508,20 @@ details label {
     grid-template-columns: 1fr;
   }
 }
+/* Bridge producers publish data; these cards never execute their payloads. */
+.bridge-states {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.bridge-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.bridge-card progress {
+  width: 100%;
+  accent-color: var(--signal);
+}

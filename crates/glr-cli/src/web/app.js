@@ -6,6 +6,7 @@ const state = {
   run: null,
   events: [],
   metrics: [],
+  bridgeStates: [],
   cursor: { events_after: -1, metrics_after: 0 },
   paused: false,
   generation: 0,
@@ -54,6 +55,7 @@ function selectRun(run) {
   state.run = run;
   state.events = [];
   state.metrics = [];
+  state.bridgeStates = [];
   state.cursor = { events_after: -1, metrics_after: 0 };
   state.logOffset = null;
   state.logPath = "";
@@ -275,6 +277,47 @@ function renderEvents() {
     `${state.events.length} events · ${state.metrics.length} metrics${state.dropped ? " · older rows retained on disk" : ""}`,
   );
 }
+function renderBridge() {
+  const sources = [...new Set(state.bridgeStates.map((s) => s.source))];
+  options("bridge-source", ["", ...sources], "All sources");
+  $("bridge-source").options[0].textContent = "All sources";
+  $("bridge-states").replaceChildren();
+  for (const event of state.bridgeStates) {
+    if ($("bridge-source").value && event.source !== $("bridge-source").value)
+      continue;
+    const card = document.createElement("button");
+    card.className = "bridge-card";
+    const title = document.createElement("strong");
+    title.textContent = `${event.source} · ${event.kind.replace("bridge.", "")}`;
+    const content = document.createElement("span");
+    const payload = event.payload;
+    const summary =
+      payload.message ??
+      payload.state ??
+      payload.label ??
+      "Inspect structured state";
+    content.textContent =
+      typeof summary === "string" ? summary : JSON.stringify(summary);
+    const recorded = document.createElement("small");
+    recorded.textContent = `Reported ${new Date(event.timestamp_ns / 1e6).toLocaleString()} · step ${event.step_id ?? "—"} · diagnostic`;
+    card.append(title, content, recorded);
+    if (event.kind === "bridge.progress" && Number.isFinite(payload.fraction)) {
+      const progress = document.createElement("progress");
+      progress.max = 1;
+      progress.value = payload.fraction;
+      progress.setAttribute("aria-label", `${event.source} progress`);
+      card.append(progress);
+    }
+    card.onclick = () => inspect(event);
+    $("bridge-states").append(card);
+  }
+  if (!state.bridgeStates.length)
+    text(
+      "bridge-states",
+      "No bridge status reported. Custom events and logs appear in the timeline.",
+    );
+}
+$("bridge-source").onchange = renderBridge;
 function render() {
   if (state.run) {
     text("run-title", state.run.run_id);
@@ -288,6 +331,7 @@ function render() {
   renderRoute();
   renderMetrics();
   renderEvents();
+  renderBridge();
 }
 async function poll() {
   if (state.paused) {
@@ -330,6 +374,13 @@ async function poll() {
         }
       }
       options("log", page.logs, "No log files");
+      const bridge = await api("telemetry/state", { run });
+      if (generation !== state.generation) return;
+      state.bridgeStates = bridge.states;
+      text(
+        "bridge-note",
+        `${bridge.truncated ? "First 100 states shown. " : ""}Latest persisted reports by source. Reported time is not a live connection check.`,
+      );
       render();
       const path = $("log").value;
       if (path) {

@@ -1,5 +1,10 @@
 # Training dashboard and durable history
 
+Bridge producers can use the `BridgeTelemetry` Python SDK, authenticated local
+HTTP batches, or CLI JSON/JSONL ingestion. See the [bridge integration guide](bridge-telemetry.md)
+and [versioned JSON Schema](../schemas/bridge-telemetry.schema.json) for source provenance,
+idempotent receipts, state/progress panels, and shared Agent queries.
+
 ```powershell
 glr --project . dashboard
 ```
