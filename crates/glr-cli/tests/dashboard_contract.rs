@@ -7,7 +7,218 @@ use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+
+fn register_media(project: &Path, run_id: &str, path: &str, role: &str, data: &[u8]) -> String {
+    let target = project.join(".glr/runs").join(run_id).join(path);
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    fs::write(&target, data).unwrap();
+    let digest = format!("{:x}", Sha256::digest(data));
+    let db = Connection::open(project.join(".glr/runs.sqlite3")).unwrap();
+    db.execute("INSERT INTO artifacts(run_id,path,role,media_type,sha256,size_bytes,metadata_json) VALUES(?,?,?,'application/octet-stream',?,?,'{}')",params![run_id,path,role,digest,data.len() as i64]).unwrap();
+    digest
+}
+
+#[test]
+fn media_streams_registered_artifacts_and_fences_ranges_paths_and_frame_bindings() {
+    let project = project();
+    let id = seed(project.path());
+    let digest = register_media(
+        project.path(),
+        &id,
+        "recording.mp4",
+        "review-video",
+        b"0123456789",
+    );
+    register_media(
+        project.path(),
+        &id,
+        "notes.md",
+        "notes",
+        b"# Training notes\n\nRecorded result.",
+    );
+    register_media(
+        project.path(),
+        &id,
+        "unsafe.html",
+        "report",
+        b"<script>alert(1)</script>",
+    );
+    let manifest = json!({"schema_version":"glr.capture.v1","environment_id":"test.dashboard","run_id":id,"video":{"path":"recording.mp4","sha256":digest,"size_bytes":10},"index":{"path":"capture-index.jsonl","sha256":"unused","size_bytes":0},"codec":"h264","frame_rate":30.0,"width":100,"height":100,"frames":[{"schema_version":"glr.capture-frame.v1","run_id":id,"episode_id":"ep-one","step_id":4,"frame_index":0,"pts_ns":1_000_000_000u64,"observation_timestamp_ns":1}]});
+    register_media(
+        project.path(),
+        &id,
+        "capture.manifest.json",
+        "capture-manifest",
+        &serde_json::to_vec(&manifest).unwrap(),
+    );
+    let server = Service::start(project.path(), "observe");
+    let url = format!(
+        "{}/api/v1/media/file?run={id}&path=recording.mp4",
+        server.url
+    );
+    let head = server.client.head(&url).send().unwrap();
+    assert_eq!(head.status(), 200);
+    assert_eq!(head.headers()["content-length"], "10");
+    assert_eq!(head.headers()["accept-ranges"], "bytes");
+    assert_eq!(head.text().unwrap(), "");
+    for (range, expected, content_range) in [
+        ("bytes=2-5", "2345", "bytes 2-5/10"),
+        ("bytes=-3", "789", "bytes 7-9/10"),
+        ("bytes=8-", "89", "bytes 8-9/10"),
+    ] {
+        let response = server
+            .client
+            .get(&url)
+            .header("Range", range)
+            .send()
+            .unwrap();
+        assert_eq!(response.status(), 206);
+        assert_eq!(response.headers()["content-range"], content_range);
+        assert_eq!(response.headers()["content-type"], "video/mp4");
+        assert_eq!(response.text().unwrap(), expected);
+    }
+    for range in ["bytes=10-", "bytes=6-2", "bytes=0-1,4-5", "bytes=-0"] {
+        let response = server
+            .client
+            .get(&url)
+            .header("Range", range)
+            .send()
+            .unwrap();
+        assert_eq!(response.status(), 416);
+        assert_eq!(response.headers()["content-range"], "bytes */10");
+    }
+    let full = server
+        .client
+        .get(&url)
+        .header("Range", "bytes=2-5")
+        .header("If-Range", "\"old\"")
+        .send()
+        .unwrap();
+    assert_eq!(full.status(), 200);
+    assert_eq!(full.text().unwrap(), "0123456789");
+    assert_eq!(
+        server
+            .client
+            .get(&url)
+            .header("Origin", "https://foreign.invalid")
+            .send()
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(server.client.post(&url).send().unwrap().status(), 405);
+    for path in [
+        "unregistered.png",
+        "..%2F..%2Fruns.sqlite3",
+        "recording.mp4&path=notes.md",
+    ] {
+        assert_eq!(
+            server
+                .get(&format!("/api/v1/media/file?run={id}&path={path}"))
+                .status(),
+            400
+        );
+    }
+    let html = server.get(&format!("/api/v1/media/file?run={id}&path=unsafe.html"));
+    assert_eq!(html.headers()["content-disposition"], "attachment");
+    assert_eq!(html.headers()["content-type"], "application/octet-stream");
+    let document: Value = server
+        .get(&format!("/api/v1/media/document?run={id}&path=notes.md"))
+        .json()
+        .unwrap();
+    assert!(
+        document["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("# Training notes")
+    );
+    let frames_url =
+        format!("/api/v1/media/frames?run={id}&manifest=capture.manifest.json&video=recording.mp4");
+    let frames: Value = server.get(&frames_url).json().unwrap();
+    assert_eq!(frames["frames"][0]["step_id"], 4);
+    assert_eq!(frames["frames"][0]["seconds"], 1.0);
+    fs::write(
+        project
+            .path()
+            .join(".glr/runs")
+            .join(&id)
+            .join("capture.manifest.json"),
+        serde_json::to_string(&manifest)
+            .unwrap()
+            .replace("ep-one", "ep-two"),
+    )
+    .unwrap();
+    assert_eq!(server.get(&frames_url).status(), 400);
+    let mut wrong_run = manifest.clone();
+    wrong_run["run_id"] = "run-other".into();
+    register_media(
+        project.path(),
+        &id,
+        "other.manifest.json",
+        "capture-manifest",
+        &serde_json::to_vec(&wrong_run).unwrap(),
+    );
+    assert_eq!(
+        server
+            .get(&format!(
+                "/api/v1/media/frames?run={id}&manifest=other.manifest.json&video=recording.mp4"
+            ))
+            .status(),
+        400
+    );
+    register_media(
+        project.path(),
+        &id,
+        "long.txt",
+        "notes",
+        &vec![b'x'; 300 * 1024],
+    );
+    let bounded: Value = server
+        .get(&format!("/api/v1/media/document?run={id}&path=long.txt"))
+        .json()
+        .unwrap();
+    assert_eq!(bounded["text"].as_str().unwrap().len(), 256 * 1024);
+    assert_eq!(bounded["truncated"], true);
+    // A large registered file must stream beyond the JSON response cap.
+    let big = vec![b'x'; 9 * 1024 * 1024];
+    register_media(project.path(), &id, "large.webm", "review-video", &big);
+    let response = server.get(&format!("/api/v1/media/file?run={id}&path=large.webm"));
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.bytes().unwrap().len(), big.len());
+    // Catalog pagination is bounded even for a run with many images.
+    for index in 0..105 {
+        register_media(
+            project.path(),
+            &id,
+            &format!("frames/{index:03}.png"),
+            "frame",
+            b"image",
+        );
+    }
+    let page: Value = server
+        .get(&format!("/api/v1/media?run={id}"))
+        .json()
+        .unwrap();
+    assert_eq!(page["items"].as_array().unwrap().len(), 100);
+    assert!(page["next_after"].is_string());
+    let second: Value = server
+        .get(&format!(
+            "/api/v1/media?run={id}&after={}",
+            page["next_after"].as_str().unwrap()
+        ))
+        .json()
+        .unwrap();
+    assert!(second["items"].as_array().unwrap().len() < 100);
+    let db = Connection::open(project.path().join(".glr/runs.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE runs SET environment_id='another.environment' WHERE run_id=?",
+        [&id],
+    )
+    .unwrap();
+    assert_eq!(server.client.get(&url).send().unwrap().status(), 400);
+}
 
 fn binary() -> PathBuf {
     env!("CARGO_BIN_EXE_glr").into()

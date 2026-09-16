@@ -1019,6 +1019,29 @@ impl Store {
             .collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    pub fn media_artifacts(
+        &self,
+        run_id: &str,
+        path: Option<&str>,
+        after: &str,
+    ) -> Result<Vec<ArtifactRecord>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare("SELECT run_id,path,role,media_type,sha256,size_bytes FROM artifacts WHERE run_id=? AND (? IS NULL OR path=?) AND path>? ORDER BY path LIMIT 101")?;
+        Ok(statement
+            .query_map(params![run_id, path, path, after], |row| {
+                Ok(ArtifactRecord {
+                    run_id: row.get(0)?,
+                    path: row.get(1)?,
+                    role: row.get(2)?,
+                    media_type: row.get(3)?,
+                    sha256: row.get(4)?,
+                    size_bytes: row.get(5)?,
+                    metadata: json!({}),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     pub fn query_entities(&self, query: EntityQuery<'_>) -> Result<Vec<SpatialEntity>> {
         let mut clauses = vec!["environment_id = ?".to_string(), "world_id = ?".to_string()];
         let mut parameters = vec![

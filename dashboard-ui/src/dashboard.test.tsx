@@ -57,6 +57,8 @@ function mocks(
         environment_id: "test.react",
         version: "test",
       });
+    if (path.endsWith("/media"))
+      return response({ items: [], next_after: null });
     if (path.endsWith("/runs"))
       return response({ runs: [run()], next_before: null });
     if (path.endsWith("/snapshot"))

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TrainingControls } from "@/components/TrainingControls";
+import { MediaWorkspace } from "@/components/MediaWorkspace";
 import {
   BridgePanel,
   EventPanel,
@@ -27,6 +28,7 @@ export default function App() {
     [runId, setRunId] = useState<string | null>(null),
     [search, setSearch] = useState("");
   const [detail, setDetail] = useState<unknown>(null),
+    [selectedEvent, setSelectedEvent] = useState<Event | null>(null),
     [step, setStep] = useState(""),
     [followJob, setFollowJob] = useState<string | null>(null),
     [historyError, setHistoryError] = useState("");
@@ -70,10 +72,12 @@ export default function App() {
   }, [history.runs, runId, followJob]);
   useEffect(() => {
     setDetail(null);
+    setSelectedEvent(null);
     setStep("");
   }, [runId]);
   const inspect = (event: Event) => {
     setDetail(event);
+    setSelectedEvent(event);
     if (event.step_id != null) setStep(String(event.step_id));
   };
   const problem = healthError || history.error || view.error || historyError;
@@ -230,6 +234,55 @@ export default function App() {
                 </span>
               </div>
             </section>
+            <div className="run-facts" aria-label="Run context">
+              <div>
+                <span>Started</span>
+                <strong>
+                  {view.run
+                    ? new Date(view.run.started_at_ns / 1e6).toLocaleString()
+                    : "—"}
+                </strong>
+              </div>
+              <div>
+                <span>Run duration</span>
+                <strong>
+                  {view.run
+                    ? `${Math.max(0, Math.floor(((view.run.finished_at_ns ?? Date.now() * 1e6) - view.run.started_at_ns) / 1e9 / 60))} min`
+                    : "—"}
+                </strong>
+              </div>
+              <div>
+                <span>Episodes in window</span>
+                <strong>
+                  {
+                    new Set(
+                      view.events.map((e) => e.episode_id).filter(Boolean),
+                    ).size
+                  }
+                </strong>
+              </div>
+              <div>
+                <span>Latest recorded signal</span>
+                <strong>
+                  {view.events.at(-1)?.kind ?? "Waiting for events"}
+                </strong>
+              </div>
+            </div>
+            <MediaWorkspace
+              key={runId}
+              run={view.run}
+              events={view.events}
+              selectedEvent={selectedEvent}
+              onInspect={inspect}
+              onFrame={(frame) => {
+                setStep(String(frame.step_id));
+                setDetail({ kind: "capture.frame", ...frame });
+              }}
+            />
+            <div className="section-divider">
+              <span>Signals & spatial context</span>
+              <small>Persisted observations from the selected run</small>
+            </div>
             <div className="signal-grid">
               <RoutePanel events={view.events} onInspect={inspect} />
               <MetricPanel metrics={view.metrics} />

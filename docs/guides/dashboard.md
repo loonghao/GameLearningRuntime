@@ -162,9 +162,40 @@ Export preset JSON into that selection to transfer presets with source code.
 Import does not execute roles or install dependencies. **Back up history /
 Restore history** operate on recorded data using the contracts above.
 
+## Media and evidence workspace
+
+The run view includes MP4/WebM playback, an image gallery, Markdown notes, and
+plain-text logs. Decision moments open the inspector. A registered capture manifest
+enables episode/step navigation; ambiguous steps never seek. Without a manifest,
+playback is review-only. Playback depends on browser codecs; no transcoding occurs.
+
+Only registered files beneath `.glr/runs/RUN_ID` are served. Producers write files
+there, then call `TrainingStore.register_artifact` with a run-relative `path`, actual
+file `source`, `role`, and `media_type`. Registration records hashes and metadata;
+it does not copy files. Existing archives include these run files.
+
+**Preview local media** opens a browser-local video/image without uploading,
+persisting, or associating it with the selected run. Markdown resolves relative
+links only to loaded, registered artifacts. External resources and raw HTML are
+not rendered; HTML/SVG are download-only.
+
+Catalog pages contain 100 artifacts at most; text previews stop at 256 KiB.
+Capture manifests are capped at 8 MiB and mappings at 25,000 frames. Manifest
+checksums, run/environment binding, monotonic frames, and video registry identity
+are checked. Browsing does not rehash the video: `not_reverified` is explicit;
+archive/report verification remains separate. Media streams support single byte
+ranges beyond the JSON response limit, using `no-store` without ETag validators.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/media?run=ID&after=PATH` | Registered artifact catalog and cursor |
+| GET/HEAD | `/api/v1/media/file?run=ID&path=PATH` | Original bytes and Range playback |
+| GET | `/api/v1/media/document?run=ID&path=PATH` | Bounded text preview |
+| GET | `/api/v1/media/frames?run=ID&manifest=PATH&video=PATH` | Capture-step mapping |
+
 ## Local API
 
-All responses are versioned; data reads support ETag/If-None-Match. No CORS is
+JSON responses are versioned; JSON data reads support ETag/If-None-Match. No CORS is
 enabled. Reads reject non-loopback Host and foreign Origin/Fetch Metadata;
 POST requires exact local Origin and `Content-Type: application/json`.
 

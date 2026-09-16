@@ -167,6 +167,16 @@ async fn handle(
         header("origin").is_none_or(|o| allowed.iter().any(|a| o == format!("http://{a}")));
     let site_ok = header("sec-fetch-site").is_none_or(|s| s == "same-origin" || s == "none");
     let ingest = method == Method::POST && uri.path() == "/api/v1/telemetry";
+    if host_ok
+        && origin_ok
+        && site_ok
+        && uri.path() == "/api/v1/media/file"
+        && (method == Method::GET || method == Method::HEAD)
+    {
+        let mut response = media_response(&state, &method, &uri, &headers).await;
+        security_headers(&mut response);
+        return response;
+    }
     let mut result = if !host_ok || !origin_ok || !site_ok {
         (
             403,
@@ -287,16 +297,155 @@ async fn handle(
         ("content-type", content_type),
         ("cache-control", "no-cache"),
         ("etag", etag.as_str()),
-        ("x-content-type-options", "nosniff"),
-        ("referrer-policy", "no-referrer"),
-        (
-            "content-security-policy",
-            "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-        ),
     ] {
         response.headers_mut().insert(
             axum::http::header::HeaderName::from_static(name),
             value.parse().expect("valid response header"),
+        );
+    }
+    security_headers(&mut response);
+    response
+}
+
+fn security_headers(response: &mut Response) {
+    for (name, value) in [
+        ("x-content-type-options", "nosniff"),
+        ("referrer-policy", "no-referrer"),
+        (
+            "content-security-policy",
+            "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        ),
+    ] {
+        response.headers_mut().insert(
+            axum::http::header::HeaderName::from_static(name),
+            value.parse().unwrap(),
+        );
+    }
+}
+
+struct MediaReader {
+    file: tokio::io::Take<tokio::fs::File>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+impl tokio::io::AsyncRead for MediaReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.file).poll_read(context, buffer)
+    }
+}
+async fn media_response(
+    state: &WebState,
+    method: &Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+) -> Response {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let permit = match state.permits.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => return (StatusCode::TOO_MANY_REQUESTS, "media busy; retry").into_response(),
+    };
+    let observation = state.observation.clone();
+    let url = uri.to_string();
+    let opened = tokio::task::spawn_blocking(move || -> Result<crate::media::MediaFile> {
+        if url.len() > 4096 {
+            return Err(Error::Invalid("media URL is too long".into()));
+        }
+        let url = reqwest::Url::parse(&format!("http://localhost{url}"))
+            .map_err(|_| Error::Invalid("invalid media URL".into()))?;
+        let pairs: Vec<_> = url.query_pairs().collect();
+        let query: HashMap<_, _> = pairs.iter().cloned().collect();
+        if pairs.len() != 2 || query.len() != 2 {
+            return Err(Error::Invalid(
+                "media requires unique run and path parameters".into(),
+            ));
+        }
+        crate::media::open(
+            &observation,
+            query
+                .get("run")
+                .ok_or_else(|| Error::Invalid("missing run".into()))?,
+            query
+                .get("path")
+                .ok_or_else(|| Error::Invalid("missing path".into()))?,
+        )
+    })
+    .await;
+    let opened = match opened {
+        Ok(Ok(file)) => file,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({"error":"registered artifact unavailable for this run"})),
+            )
+                .into_response();
+        }
+    };
+    let mut status = StatusCode::OK;
+    let mut start = 0;
+    let mut length = opened.size;
+    // If-Range without a verified validator conservatively returns the full file.
+    if method == Method::GET
+        && !headers.contains_key("if-range")
+        && let Some(range) = headers.get("range").and_then(|v| v.to_str().ok())
+    {
+        match crate::media::byte_range(range, opened.size) {
+            Some((first, last)) => {
+                start = first;
+                length = last - first + 1;
+                status = StatusCode::PARTIAL_CONTENT;
+            }
+            None => {
+                let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+                response.headers_mut().insert(
+                    "content-range",
+                    format!("bytes */{}", opened.size).parse().unwrap(),
+                );
+                return response;
+            }
+        }
+    }
+    let body = if method == Method::HEAD {
+        axum::body::Body::empty()
+    } else {
+        let mut file = tokio::fs::File::from_std(opened.file);
+        if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(MediaReader {
+            file: file.take(length),
+            _permit: permit,
+        }))
+    };
+    let mut response = (status, body).into_response();
+    for (name, value) in [
+        ("content-type", opened.mime.to_string()),
+        ("content-length", length.to_string()),
+        ("accept-ranges", "bytes".into()),
+        ("cache-control", "no-store".into()),
+        (
+            "content-disposition",
+            if opened.download {
+                "attachment"
+            } else {
+                "inline"
+            }
+            .into(),
+        ),
+    ] {
+        response.headers_mut().insert(
+            axum::http::header::HeaderName::from_static(name),
+            value.parse().unwrap(),
+        );
+    }
+    if status == StatusCode::PARTIAL_CONTENT {
+        response.headers_mut().insert(
+            "content-range",
+            format!("bytes {start}-{}/{}", start + length - 1, opened.size)
+                .parse()
+                .unwrap(),
         );
     }
     response
@@ -331,6 +480,20 @@ fn route(url: &str, observation: &Observation) -> Result<WebResult> {
         })
     };
     let data: Value = match url.path() {
+        "/api/v1/media" => crate::media::catalog(
+            observation,
+            field("run")?,
+            query.get("after").map(String::as_str).unwrap_or(""),
+        )?,
+        "/api/v1/media/document" => {
+            crate::media::document(observation, field("run")?, field("path")?)?
+        }
+        "/api/v1/media/frames" => crate::media::frames(
+            observation,
+            field("run")?,
+            field("manifest")?,
+            field("video")?,
+        )?,
         "/api/v1/telemetry/schema" => crate::telemetry::schema(),
         "/api/v1/telemetry/state" => crate::telemetry::latest(
             &observation.data_dir,

@@ -8,6 +8,7 @@ mod dashboard;
 mod error;
 mod filesystem;
 mod learning_checkpoint;
+mod media;
 mod observation;
 mod observe;
 mod package;
