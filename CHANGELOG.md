@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.20.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.19.0...v0.20.0) (2026-09-16)
+
+
+### Features
+
+* add adaptable agent workbench and process trace ([2252bb7](https://github.com/loonghao/GameLearningRuntime/commit/2252bb79cb009a18249ca668030b7a117f0fbc09))
+* add bridge telemetry ingestion and dashboard state views ([332b815](https://github.com/loonghao/GameLearningRuntime/commit/332b81588ad27fbdd02e0995aaefbef3c3617225))
+* add dashboard video and evidence workspace ([a59d797](https://github.com/loonghao/GameLearningRuntime/commit/a59d7977f02ecb60fa97e2138bd6e3bf1373cd96))
+* add embedded training dashboard and durable observability ([f13cdfb](https://github.com/loonghao/GameLearningRuntime/commit/f13cdfbcfe7fafdd8ba5eaf13c92e46b2c60fc8a))
+* embed React dashboard assets through CI ([52c1e26](https://github.com/loonghao/GameLearningRuntime/commit/52c1e261589a075243a999dc4251c6f43c403b65))
+
+
+### Bug Fixes
+
+* render structured process logs and document data collection ([481e6c1](https://github.com/loonghao/GameLearningRuntime/commit/481e6c15afd59c12ac67726acf47718b76c88510))
+
+
+### Documentation
+
+* clarify bridge telemetry ingestion contract ([2c8a2a1](https://github.com/loonghao/GameLearningRuntime/commit/2c8a2a15b1375f25f130ea53f874866cbf295fa0))
+* format workbench integration example ([e25a286](https://github.com/loonghao/GameLearningRuntime/commit/e25a2862fb31fa0a8536ba848dc414d8eb9ac473))
+* sync data collection skills into agent plugin ([7fc3770](https://github.com/loonghao/GameLearningRuntime/commit/7fc377038f7520ddf47ba493e38405537c5ea277))
+
 ## [0.19.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.18.0...v0.19.0) (2026-09-15)
 
 
