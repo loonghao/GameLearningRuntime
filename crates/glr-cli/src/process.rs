@@ -158,6 +158,17 @@ fn configure_command(
         .split_first()
         .ok_or_else(|| Error::Invalid("project command is empty".into()))?;
     let mut process = Command::new(program);
+    // A role's GLR environment is owned by the CLI. `Command` inherits the parent
+    // environment by default, so any inherited `GLR_*` variable would otherwise
+    // outlive the value the CLI publishes, or survive when the CLI publishes
+    // nothing. That let a forged `GLR_TRIAL_ID`, or a stale `GLR_RUN_ID` from an
+    // outer run, reach a role that owns no such binding. Scrub the namespace
+    // first, then set the values this invocation actually owns.
+    for (key, _) in std::env::vars_os() {
+        if key.to_str().is_some_and(|name| name.starts_with("GLR_")) {
+            process.env_remove(&key);
+        }
+    }
     process
         .args(arguments)
         .current_dir(&project.root)

@@ -89,6 +89,17 @@ yuv420p、GOP 30、MP4 fast-start、无音频。配置字段不会自动改变�
 `GLR_STORE_PATH`、环境身份、录制输出路径和 goal loop 路径。每个角色仍需独立验证准确的
 游戏目标，不能依赖 CLI 猜测进程或窗口。
 
+`GLR_` 环境变量命名空间由 CLI 独占。CLI 会先清除继承来的 `GLR_*` 变量，再写入本次调用真正
+拥有的值，因此角色不会读到来自外层 run 或外部环境的过期、伪造绑定。角色输入应通过工程
+manifest 上下文声明，不要依赖外部环境。
+
+角色调用始终描述它所服务的 trial。`glr goal run` 会向 planner 和 trainer 注入
+`GLR_TRIAL_ID` 与 `GLR_TRIAL_PATH`；`glr train` 为其唯一的隐式 trial 注入同一对变量
+（`trial-1`，位于 `trials/trial-1/`），因此 `{trial_id}` 和 `{trial_path}` 在两种命令下
+都可展开。`GLR_RUN_DIR` 仍是 run 级输出根目录 `.glr/runs/<run-id>/`，trial 目录是其子目录。
+不拥有 trial 的角色（如 `runtime start`、`play`）不会收到 trial 身份。`glr train` 只预留
+trial plan 路径，不会写入 plan 内容：规划只属于 goal loop。
+
 进度检测默认关闭。声明 `progress` 后，完成的 trainer 必须在 `trainer.result.json` 中回传：
 
 ```json
