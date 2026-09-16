@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -19,14 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "./ui/table";
-import {
-  get,
-  sourceOf,
-  type BridgeState,
-  type Event,
-  type LogPage,
-  type Metric,
-} from "@/lib/api";
+import { sourceOf, type BridgeState, type Event, type Metric } from "@/lib/api";
 
 function coords(event: Event): number[] {
   const p = event.payload.position ?? event.payload.xyz;
@@ -434,110 +427,4 @@ export function EventPanel({
     </Card>
   );
 }
-export function LogPanel({
-  runId,
-  paths,
-  paused,
-}: {
-  runId: string | null;
-  paths: string[];
-  paused: boolean;
-}) {
-  const [selected, setSelected] = useState(""),
-    [text, setText] = useState(""),
-    [note, setNote] = useState(""),
-    [error, setError] = useState("");
-  const path = paths.includes(selected) ? selected : paths[0],
-    offset = useRef<number | null>(null),
-    scroll = useRef<HTMLPreElement>(null),
-    follow = useRef(true);
-  useEffect(() => {
-    offset.current = null;
-    setText("");
-    setNote("");
-    setError("");
-  }, [runId, path]);
-  useEffect(() => {
-    if (!runId || !path || paused) return;
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      try {
-        const page = await get<LogPage>(
-          "log",
-          {
-            run: runId!,
-            path,
-            ...(offset.current === null ? {} : { offset: offset.current }),
-          },
-          abort.signal,
-        );
-        if (abort.signal.aborted) return;
-        offset.current = page.next_offset;
-        setError("");
-        setText((old) => ((page.reset ? "" : old) + page.text).slice(-131072));
-        setNote(
-          `${page.next_offset.toLocaleString()} / ${page.size_bytes.toLocaleString()} bytes${page.reset ? " · file reset" : ""}`,
-        );
-      } catch (e) {
-        if (!abort.signal.aborted) setError(String(e));
-      } finally {
-        if (!abort.signal.aborted) timer = setTimeout(poll, 1000);
-      }
-    }
-    void poll();
-    return () => {
-      abort.abort();
-      clearTimeout(timer);
-    };
-  }, [runId, path, paused]);
-  useEffect(() => {
-    if (follow.current && scroll.current)
-      scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [text]);
-  return (
-    <Card>
-      <CardHeader>
-        <div className="section-heading">
-          <div>
-            <CardTitle>Process / FFmpeg output</CardTitle>
-            <CardDescription>
-              Recorder output is available when forwarded to capture.log.
-            </CardDescription>
-          </div>
-          <select
-            aria-label="Log file"
-            value={path ?? ""}
-            onChange={(e) => setSelected(e.target.value)}
-          >
-            {paths.length ? (
-              paths.map((p) => <option key={p}>{p}</option>)
-            ) : (
-              <option value="">No log files</option>
-            )}
-          </select>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <pre
-          ref={scroll}
-          className="console"
-          tabIndex={0}
-          onScroll={() => {
-            const el = scroll.current!;
-            follow.current =
-              el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-          }}
-        >
-          {text || "Waiting for recorded output…"}
-        </pre>
-        <p className="muted mt-2">{note}</p>
-        {error && (
-          <p role="alert" className="error">
-            {error}
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
+export { LogPanel } from "./LogPanel";

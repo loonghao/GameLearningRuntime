@@ -107,12 +107,8 @@ describe("agent process trace", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Open process event 2" }),
     );
-    expect(screen.getByLabelText("Input")).toHaveTextContent(
-      '"action": "dodge"',
-    );
-    expect(screen.getByLabelText("Output / receipt")).toHaveTextContent(
-      '"accepted": true',
-    );
+    expect(screen.getByLabelText("Input")).toHaveTextContent("dodge");
+    expect(screen.getByLabelText("Output / receipt")).toHaveTextContent("true");
     expect(screen.getByText("1.3s")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Close process detail"));
     expect(

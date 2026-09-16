@@ -37,6 +37,8 @@ def test_unified_cli_archive_contains_host_manifest_and_agent_skills(tmp_path: P
         f"{root}/install.md",
         f"{root}/skills/glr-cli/SKILL.md",
         f"{root}/skills/glr-cli/references/recording.md",
+        f"{root}/skills/glr-cli/references/data-collection.md",
+        f"{root}/skills/glr-adapter-builder/references/diagnostics.md",
         f"{root}/skills/glr-cli/references/packages.md",
         f"{root}/skills/glr-qa/SKILL.md",
         f"{root}/skills/glr-adapter-builder/SKILL.md",

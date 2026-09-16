@@ -9,6 +9,7 @@ import { TrainingControls } from "@/components/TrainingControls";
 import { MediaWorkspace } from "@/components/MediaWorkspace";
 import { AgentWorkbench } from "@/components/AgentWorkbench";
 import { ProcessTrace } from "@/components/ProcessTrace";
+import { StructuredValue } from "@/components/StructuredOutput";
 import {
   BridgePanel,
   EventPanel,
@@ -224,12 +225,7 @@ export default function App() {
             className="data-[state=inactive]:hidden"
           >
             {health && !health.read_only && (
-              <TrainingControls
-                onSelectJob={(id) => {
-                  setFollowJob(id);
-                  setWorkspaceTab("observe");
-                }}
-              />
+              <TrainingControls onSelectJob={setFollowJob} />
             )}
           </TabsContent>
           <TabsContent value="observe">
@@ -251,6 +247,11 @@ export default function App() {
               run={view.run}
               selectedEvent={selectedEvent}
               onInspect={inspect}
+              logOutput={
+                view.logs.length ? (
+                  <LogPanel runId={runId} paths={view.logs} paused={paused} />
+                ) : undefined
+              }
             />
             <section className="run-summary">
               <div>
@@ -346,19 +347,26 @@ export default function App() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <pre
+                  <div
                     className="inspector"
                     tabIndex={0}
                     aria-label="Evidence payload"
                   >
-                    {detail
-                      ? JSON.stringify(detail, null, 2)
-                      : "Select an event, Bridge card or route sample to inspect its persisted payload."}
-                  </pre>
+                    {detail ? (
+                      <StructuredValue value={detail} />
+                    ) : (
+                      "Select an event, Bridge card or route sample to inspect its persisted payload."
+                    )}
+                  </div>
+                  {detail != null && (
+                    <details className="trace-raw">
+                      <summary>Raw evidence JSON</summary>
+                      <pre tabIndex={0}>{JSON.stringify(detail, null, 2)}</pre>
+                    </details>
+                  )}
                 </CardContent>
               </Card>
             </div>
-            <LogPanel runId={runId} paths={view.logs} paused={paused} />
             <footer className="retention">
               The browser keeps 5,000 events and metrics. Persisted history
               remains queryable through GLR.

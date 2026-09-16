@@ -516,12 +516,16 @@ fn route(url: &str, observation: &Observation) -> Result<WebResult> {
                 limit as u32,
             )?
         }
-        "/api/v1/log" => observation.log(
+        "/api/v1/log" => observation.log_page(
             field("run")?,
             field("path")?,
             query
                 .get("offset")
                 .map(|_| number("offset", 0).map(|n| n as u64))
+                .transpose()?,
+            query
+                .get("before")
+                .map(|_| number("before", 0).map(|n| n as u64))
                 .transpose()?,
         )?,
         _ => {
