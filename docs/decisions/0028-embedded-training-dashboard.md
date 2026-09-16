@@ -33,7 +33,7 @@ processes; live run records also block another game execution. A stale running
 record requires reconciliation, never automatic replay.
 
 The HTTP server binds IPv4 loopback only, checks Host/Origin/Fetch Metadata,
-requires same-origin JSON for writes, bounds body sizes and concurrent storage
+requires same-origin JSON for control writes, bounds body sizes and concurrent storage
 work, and serves a restrictive CSP. The interface has no shell or generic file
 server. Managed log paths reject traversal and links. A local user who can run
 GLR remains the trust boundary; the service is not a multi-user remote service.
@@ -44,6 +44,17 @@ execution receipt when GLR environment bindings exist. Telemetry failures never
 retry actions. Diagnostic metrics cannot satisfy authoritative reward terms.
 Role stdout/stderr remain durable files and are mirrored to terminal stderr;
 recorders must forward FFmpeg stderr to expose it.
+
+Bridge producers use `glr.bridge-telemetry.v1` through authenticated localhost
+HTTP, CLI JSON/JSONL ingestion, or the Python `BridgeTelemetry` client. HTTP
+ingestion accepts non-browser requests with a project-scoped bearer token but
+rejects foreign origins; read-only observation mode has no ingestion endpoint.
+The shared ingestion service validates bounded batches and commits events,
+metrics, latest status/state/progress projections and deduplication receipts in
+one transaction. Retry identity is `(run_id, source, batch_id)`; changed content
+under that identity is refused. New batches require an existing running run.
+All ingress data remains diagnostic, and producer reports never prove current
+connectivity or grant action authority. These tables are included in backups.
 
 Backups use SQLite's online backup API, then copy and verify completed-run
 files and terminal Dashboard job logs. Active run files and active job logs are
