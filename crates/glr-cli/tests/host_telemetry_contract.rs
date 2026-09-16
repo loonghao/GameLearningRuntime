@@ -164,6 +164,130 @@ fn host(project: &Path, test_name: &str, extra: &[&str]) -> Output {
         .unwrap()
 }
 
+fn host_with_args(project: &Path, extra: &[&str], child: &[&str]) -> Output {
+    let mut arguments: Vec<&str> = vec!["host"];
+    arguments.extend_from_slice(extra);
+    arguments.push("--");
+    arguments.extend_from_slice(child);
+    Command::new(binary())
+        .arg("--project")
+        .arg(project)
+        .arg("--json")
+        .args(&arguments)
+        .output()
+        .unwrap()
+}
+
+/// A hosted program that records its own argv verbatim and then exits.
+///
+/// `echo` normalizes its arguments, so it cannot show whether GLR rewrote them;
+/// this probe writes the raw `std::env::args()` it received.
+#[test]
+#[ignore]
+fn argv_probe_child() {
+    let run_dir = PathBuf::from(std::env::var_os("GLR_RUN_DIR").expect("GLR_RUN_DIR"));
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    fs::write(
+        run_dir.join("argv-observed.json"),
+        serde_json::to_vec_pretty(&json!({"argv": argv})).unwrap(),
+    )
+    .unwrap();
+}
+
+fn observed_argv(project: &Path, run_id: &str) -> Vec<String> {
+    let value: Value = serde_json::from_slice(
+        &fs::read(
+            project
+                .join(".glr/runs")
+                .join(run_id)
+                .join("argv-observed.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    value["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_hosted_command_line_is_not_expanded_as_placeholders() {
+    let project = create_project();
+    let mut child = probe_argv("argv_probe_child");
+    // `{telemetry_token}` and `{run_id}` are both real keys in the host expansion
+    // context. If the hosted argv were expanded, these would become the credential
+    // and the run id.
+    child.push("{telemetry_token}".into());
+    child.push("{run_id}".into());
+    let child: Vec<&str> = child.iter().map(String::as_str).collect();
+
+    let output = host_with_args(project.path(), &[], &child);
+    let receipt = output_json(&output);
+    assert_eq!(receipt["data"]["telemetry"]["available"], true);
+    let run_id = run_id_of(&receipt).to_string();
+
+    let argv = observed_argv(project.path(), &run_id);
+    assert!(
+        argv.contains(&"{telemetry_token}".to_string()),
+        "the literal argument must reach the child unchanged; argv: {argv:?}"
+    );
+    assert!(
+        argv.contains(&"{run_id}".to_string()),
+        "the literal argument must reach the child unchanged; argv: {argv:?}"
+    );
+    // Nothing longer than a placeholder should appear: no expanded credential.
+    for argument in &argv {
+        assert!(
+            argument.len() < 32 || argument.contains('\\') || argument.contains('/'),
+            "the ingest token was expanded onto the child argv: {argument}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_brace_argument_is_passed_through_instead_of_refused() {
+    let project = create_project();
+    let mut child = probe_argv("argv_probe_child");
+    // A role command refuses this with `missing command placeholder value`.
+    // A hosted program must simply receive it.
+    child.push("{not_a_placeholder}".into());
+    let child: Vec<&str> = child.iter().map(String::as_str).collect();
+
+    let output = host_with_args(project.path(), &[], &child);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt = output_json(&output);
+    let run_id = run_id_of(&receipt).to_string();
+    let argv = observed_argv(project.path(), &run_id);
+    assert!(
+        argv.contains(&"{not_a_placeholder}".to_string()),
+        "the host must not refuse a literal brace argument; argv: {argv:?}"
+    );
+}
+
+#[test]
+fn a_hosted_command_line_is_not_expanded_as_placeholders_without_telemetry() {
+    let project = create_project();
+    let mut child = probe_argv("argv_probe_child");
+    child.push("{telemetry_token}".into());
+    let child: Vec<&str> = child.iter().map(String::as_str).collect();
+
+    let output = host_with_args(project.path(), &["--no-telemetry"], &child);
+    let receipt = output_json(&output);
+    let run_id = run_id_of(&receipt).to_string();
+    let argv = observed_argv(project.path(), &run_id);
+    assert!(
+        argv.contains(&"{telemetry_token}".to_string()),
+        "expansion must stay off regardless of ingest; argv: {argv:?}"
+    );
+}
+
 #[test]
 fn an_external_loop_receives_an_ingest_binding_inside_a_glr_run() {
     let project = create_project();

@@ -688,6 +688,7 @@ fn run_host(
         bundle: None,
         extra: &extra,
         timeout,
+        arguments: crate::process::ArgumentMode::Verbatim,
     });
     let exit_code = match outcome {
         Ok(code) => code,
@@ -804,6 +805,7 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         bundle: None,
         extra: &extra,
         timeout: None,
+        arguments: crate::process::ArgumentMode::ExpandPlaceholders,
     });
     let capture = if let Some(session) = capture_session {
         Some(finish_capture(
@@ -914,6 +916,7 @@ fn execute_project_role(
             bundle: invocation.bundle,
             extra: &extra,
             timeout: None,
+            arguments: crate::process::ArgumentMode::ExpandPlaceholders,
         })?;
         let record = ReadinessAttempt {
             index,
@@ -1743,6 +1746,7 @@ fn run_goal_role(
         bundle: None,
         extra: &context,
         timeout: Some(remaining(deadline)?),
+        arguments: crate::process::ArgumentMode::ExpandPlaceholders,
     })?;
     if exit_code != 0 {
         return Err(Error::Contract(format!(
@@ -1771,6 +1775,7 @@ fn run_trainer_role(
         bundle: None,
         extra: &context,
         timeout: Some(remaining(deadline)?),
+        arguments: crate::process::ArgumentMode::ExpandPlaceholders,
     })?;
     let result_path = role_dir.join("trainer.result.json");
     let (parsed_status, metrics, progress) = if result_path.is_file() {

@@ -168,11 +168,54 @@ fn configure_command(
     bundle: Option<&Path>,
     extra: &HashMap<String, PathBuf>,
 ) -> Result<Command> {
+    configure_command_with_argv(
+        command,
+        project,
+        run_id,
+        run_dir,
+        bundle,
+        extra,
+        ArgumentMode::ExpandPlaceholders,
+    )
+}
+
+/// How the command line is prepared before spawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgumentMode {
+    /// Resolve `{placeholder}` arguments from the run context.
+    ///
+    /// Project roles declare their inputs as placeholders in the manifest, so a
+    /// role command is expanded.
+    ExpandPlaceholders,
+    /// Pass the command line through exactly as given.
+    ///
+    /// `glr host` runs a caller-supplied program, not a manifest role. Expanding
+    /// its arguments would both break legitimate command lines that happen to
+    /// contain a bare `{...}` argument and allow a `{telemetry_token}` argument
+    /// to move the ingest credential onto the child's argv, where any local
+    /// process could read it. The hosted child therefore gets no expansion, and
+    /// its binding arrives only through the environment.
+    Verbatim,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn configure_command_with_argv(
+    command: &ProjectCommand,
+    project: &Project,
+    run_id: &str,
+    run_dir: &Path,
+    bundle: Option<&Path>,
+    extra: &HashMap<String, PathBuf>,
+    mode: ArgumentMode,
+) -> Result<Command> {
     if let Some(context) = &project.run_context {
         context.verify(&project.root)?;
     }
     let context = command_context(project, run_id, run_dir, bundle, extra);
-    let argv = command.expand(&context)?;
+    let argv = match mode {
+        ArgumentMode::ExpandPlaceholders => command.expand(&context)?,
+        ArgumentMode::Verbatim => command.argv.clone(),
+    };
     let (program, arguments) = argv
         .split_first()
         .ok_or_else(|| Error::Invalid("project command is empty".into()))?;
@@ -234,6 +277,7 @@ pub struct CommandInvocation<'a> {
     pub bundle: Option<&'a Path>,
     pub extra: &'a HashMap<String, PathBuf>,
     pub timeout: Option<Duration>,
+    pub arguments: ArgumentMode,
 }
 
 pub fn run_command(invocation: CommandInvocation<'_>) -> Result<i32> {
@@ -243,13 +287,14 @@ pub fn run_command(invocation: CommandInvocation<'_>) -> Result<i32> {
     let log = File::create(invocation.log_path)?;
     let _log_mirror = LogMirror::start(invocation.log_path);
     let stderr = log.try_clone()?;
-    let mut process = configure_command(
+    let mut process = configure_command_with_argv(
         invocation.command,
         invocation.project,
         invocation.run_id,
         invocation.run_dir,
         invocation.bundle,
         invocation.extra,
+        invocation.arguments,
     )?;
     let mut child = process
         .stdin(Stdio::null())
