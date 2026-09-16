@@ -1,0 +1,464 @@
+{
+  "valid": [
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Action combat · synthetic example",
+      "agent": "combat.policy",
+      "objective": "Evaluate dodge timing against a scripted encounter",
+      "phase": "Encounter 2",
+      "sections": [
+        {
+          "id": "combat",
+          "title": "Combat state",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Health",
+              "value": 72,
+              "unit": "%"
+            },
+            {
+              "label": "Stamina",
+              "value": 44,
+              "unit": "%"
+            }
+          ]
+        },
+        {
+          "id": "actions",
+          "title": "Action candidates",
+          "kind": "table",
+          "columns": [
+            "Action",
+            "Score",
+            "Selected"
+          ],
+          "rows": [
+            [
+              "dodge",
+              0.8,
+              true
+            ],
+            [
+              "attack",
+              0.3,
+              false
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Economy and build · synthetic example",
+      "agent": "shop.policy",
+      "objective": "Compare purchase decisions within a fixed budget",
+      "phase": "Shop",
+      "sections": [
+        {
+          "id": "economy",
+          "title": "Economy",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Gold",
+              "value": 12,
+              "unit": "coins"
+            },
+            {
+              "label": "Day",
+              "value": 4,
+              "unit": "day"
+            }
+          ]
+        },
+        {
+          "id": "inventory",
+          "title": "Build",
+          "kind": "table",
+          "columns": [
+            "Item",
+            "Tier",
+            "Cooldown"
+          ],
+          "rows": [
+            [
+              "Example item",
+              "silver",
+              "4 s"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Survival waves · synthetic example",
+      "agent": "survival.policy",
+      "objective": "Evaluate survival and upgrade choices",
+      "phase": "Wave 3",
+      "sections": [
+        {
+          "id": "survival",
+          "title": "Survival",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Elapsed",
+              "value": 180,
+              "unit": "s"
+            },
+            {
+              "label": "Level",
+              "value": 8,
+              "unit": "level"
+            }
+          ]
+        },
+        {
+          "id": "upgrades",
+          "title": "Upgrade choices",
+          "kind": "table",
+          "columns": [
+            "Upgrade",
+            "Selected"
+          ],
+          "rows": [
+            [
+              "Example upgrade",
+              true
+            ]
+          ]
+        },
+        {
+          "id": "note",
+          "title": "Observation",
+          "kind": "text",
+          "text": "Synthetic contract fixture, not a live game result."
+        }
+      ]
+    },
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Custom environment",
+      "sections": []
+    }
+  ],
+  "invalid": [
+    {
+      "schema_version": "glr.workbench.v2",
+      "title": "Action combat · synthetic example",
+      "agent": "combat.policy",
+      "objective": "Evaluate dodge timing against a scripted encounter",
+      "phase": "Encounter 2",
+      "sections": [
+        {
+          "id": "combat",
+          "title": "Combat state",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Health",
+              "value": 72,
+              "unit": "%"
+            },
+            {
+              "label": "Stamina",
+              "value": 44,
+              "unit": "%"
+            }
+          ]
+        },
+        {
+          "id": "actions",
+          "title": "Action candidates",
+          "kind": "table",
+          "columns": [
+            "Action",
+            "Score",
+            "Selected"
+          ],
+          "rows": [
+            [
+              "dodge",
+              0.8,
+              true
+            ],
+            [
+              "attack",
+              0.3,
+              false
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Action combat · synthetic example",
+      "agent": null,
+      "objective": "Evaluate dodge timing against a scripted encounter",
+      "phase": "Encounter 2",
+      "sections": [
+        {
+          "id": "combat",
+          "title": "Combat state",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Health",
+              "value": 72,
+              "unit": "%"
+            },
+            {
+              "label": "Stamina",
+              "value": 44,
+              "unit": "%"
+            }
+          ]
+        },
+        {
+          "id": "actions",
+          "title": "Action candidates",
+          "kind": "table",
+          "columns": [
+            "Action",
+            "Score",
+            "Selected"
+          ],
+          "rows": [
+            [
+              "dodge",
+              0.8,
+              true
+            ],
+            [
+              "attack",
+              0.3,
+              false
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Action combat · synthetic example",
+      "agent": "combat.policy",
+      "objective": "Evaluate dodge timing against a scripted encounter",
+      "phase": "Encounter 2",
+      "sections": [
+        {
+          "id": "x",
+          "title": "Unsafe",
+          "kind": "html",
+          "text": "<script>x</script>"
+        }
+      ]
+    },
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Action combat · synthetic example",
+      "agent": "combat.policy",
+      "objective": "Evaluate dodge timing against a scripted encounter",
+      "phase": "Encounter 2",
+      "sections": [
+        {
+          "id": "combat",
+          "title": "Combat state",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Health",
+              "value": 72,
+              "unit": "%"
+            },
+            {
+              "label": "Stamina",
+              "value": 44,
+              "unit": "%"
+            }
+          ]
+        },
+        {
+          "id": "actions",
+          "title": "Action candidates",
+          "kind": "table",
+          "columns": [
+            "Action",
+            "Score",
+            "Selected"
+          ],
+          "rows": [
+            [
+              "dodge",
+              0.8,
+              true
+            ],
+            [
+              "attack",
+              0.3,
+              false
+            ]
+          ]
+        },
+        {
+          "id": "combat",
+          "title": "Combat state",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Health",
+              "value": 72,
+              "unit": "%"
+            },
+            {
+              "label": "Stamina",
+              "value": 44,
+              "unit": "%"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Economy and build · synthetic example",
+      "agent": "shop.policy",
+      "objective": "Compare purchase decisions within a fixed budget",
+      "phase": "Shop",
+      "sections": [
+        {
+          "id": "economy",
+          "title": "Economy",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Gold",
+              "value": 12,
+              "unit": "coins"
+            },
+            {
+              "label": "Day",
+              "value": 4,
+              "unit": "day"
+            }
+          ]
+        },
+        {
+          "id": "inventory",
+          "title": "Build",
+          "kind": "table",
+          "columns": [
+            "Item",
+            "Tier",
+            "Cooldown"
+          ],
+          "rows": [
+            [
+              1
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Action combat · synthetic example",
+      "agent": "combat.policy",
+      "objective": "Evaluate dodge timing against a scripted encounter",
+      "phase": "Encounter 2",
+      "sections": [
+        {
+          "id": "combat",
+          "title": "Combat state",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Health",
+              "value": {
+                "unsafe": "nested"
+              },
+              "unit": "%"
+            },
+            {
+              "label": "Stamina",
+              "value": 44,
+              "unit": "%"
+            }
+          ]
+        },
+        {
+          "id": "actions",
+          "title": "Action candidates",
+          "kind": "table",
+          "columns": [
+            "Action",
+            "Score",
+            "Selected"
+          ],
+          "rows": [
+            [
+              "dodge",
+              0.8,
+              true
+            ],
+            [
+              "attack",
+              0.3,
+              false
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "schema_version": "glr.workbench.v1",
+      "title": "Action combat · synthetic example",
+      "agent": "combat.policy",
+      "objective": "Evaluate dodge timing against a scripted encounter",
+      "phase": "Encounter 2",
+      "sections": [
+        {
+          "id": "combat",
+          "title": "Combat state",
+          "kind": "stats",
+          "fields": [
+            {
+              "label": "Health",
+              "value": 72,
+              "unit": null
+            },
+            {
+              "label": "Stamina",
+              "value": 44,
+              "unit": "%"
+            }
+          ]
+        },
+        {
+          "id": "actions",
+          "title": "Action candidates",
+          "kind": "table",
+          "columns": [
+            "Action",
+            "Score",
+            "Selected"
+          ],
+          "rows": [
+            [
+              "dodge",
+              0.8,
+              true
+            ],
+            [
+              "attack",
+              0.3,
+              false
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -22,6 +22,10 @@ Bridge 最新状态面板时使用 `BridgeTelemetry`。
 
 ## 数据契约
 
+工作台支持 [Agent 优先与多类型数据视图](agent-workbench.md)：在 `bridge.state` 的
+`payload.workbench` 中声明 `glr.workbench.v1`，即可展示自有数值、表格和文本面板。
+无需在前端写死游戏类型；同一数据可由 CLI 和 HTTP 读取，并随历史归档持久化。
+
 通过 `glr --json telemetry schema` 或 `GET /api/v1/telemetry/schema` 获取
 [JSON Schema](../schemas/bridge-telemetry.schema.json)。CLI 读取 Schema 不需要训练工程。
 

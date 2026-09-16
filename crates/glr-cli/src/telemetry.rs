@@ -75,6 +75,11 @@ fn validate(batch: &Batch) -> Result<()> {
     }
     for event in &batch.events {
         identifier(&event.kind, "event kind")?;
+        if event.kind == "bridge.state"
+            && let Some(view) = event.payload.get("workbench")
+        {
+            crate::workbench::validate(view)?;
+        }
         if let Some(episode) = &event.episode_id {
             // Episode UUIDs are valid; unlike GLR identifiers they may start with a digit.
             if episode.is_empty()
@@ -264,10 +269,14 @@ pub fn latest(data_dir: &Path, environment: &str, run: &str) -> Result<Value> {
 }
 
 pub fn schema() -> Value {
-    serde_json::from_str(include_str!(
+    let mut schema: Value = serde_json::from_str(include_str!(
         "../../../docs/schemas/bridge-telemetry.schema.json"
     ))
-    .expect("embedded schema")
+    .expect("embedded schema");
+    schema["$defs"]["workbench"] =
+        serde_json::from_str(include_str!("../../../docs/schemas/workbench.schema.json"))
+            .expect("embedded workbench schema");
+    schema
 }
 
 pub fn execute(project: &Project, command: &TelemetryCommand) -> Result<Value> {

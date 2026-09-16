@@ -174,7 +174,9 @@ describe("observation views", () => {
     expect(screen.getByRole("spinbutton", { name: "Filter step" })).toHaveValue(
       4,
     );
-    expect(screen.getByText(/"position":/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Evidence payload")).toHaveTextContent(
+      '"position":',
+    );
   });
   it("displays source-bound progress with received time and an inspect action", () => {
     const inspect = vi.fn();
