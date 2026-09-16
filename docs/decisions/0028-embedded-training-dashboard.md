@@ -73,6 +73,13 @@ Source project packages remain the existing explicit, contract-bound format.
 
 ## Consequences
 
+Registered media is served from the selected run only, using bounded catalog and
+document reads plus streamed single-range video responses. Active formats remain
+download-only. Markdown resolves only registered relative assets. Browser-local
+previews are ephemeral and never become run evidence. Step navigation requires a
+checksum-verified capture manifest bound to the run and registered video identity;
+it does not imply fresh full-video digest verification or training eligibility.
+
 - Agent and human operations share contracts and failure semantics.
 - Closing the browser does not stop a job or discard data.
 - A killed service may leave a child process and an unverified receipt;

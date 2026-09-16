@@ -4,6 +4,7 @@ export interface Run {
   kind: string;
   status: string;
   started_at_ns: number;
+  finished_at_ns?: number | null;
   metadata: Record<string, unknown>;
 }
 export interface Event {

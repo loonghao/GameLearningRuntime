@@ -1,5 +1,29 @@
 # 训练 Dashboard、实时观测与持久化历史
 
+## 视频、图片与文档
+
+运行详情包含 MP4/WebM 回放、图片画廊、Markdown 笔记和文本日志。决策事件可打开
+检查器；存在已登记且匹配的 capture manifest 时，可按 episode/step 跳转视频。
+重复步骤无法唯一定位时不会跳转。播放依赖浏览器编解码支持，服务不转码。
+
+媒体必须位于 `.glr/runs/RUN_ID` 并登记为 artifact。生产端先写入文件，再调用
+`TrainingStore.register_artifact`，传入相对 `path`、实际 `source`、`role` 和
+`media_type`；该接口记录元数据和摘要，不复制文件。现有历史归档会包含这些运行文件。
+
+**Preview local media** 可临时预览本机视频或图片，不上传、不持久化，也不关联到当前
+运行。Markdown 只解析指向已加载、已登记产物的相对链接；不加载外部图片和原始 HTML。
+HTML/SVG 仅供下载。
+
+媒体目录每页最多 100 项，文档预览最多 256 KiB，capture manifest 最多 8 MiB、
+映射最多 25,000 帧。联动前验证 manifest 摘要、运行与环境、帧单调性和视频登记信息。
+浏览时不重新计算整段视频的摘要，明确标记 `not_reverified`；完整校验仍由归档或报告
+验证执行。原文件使用流式 Range 读取，可拖动播放大视频。
+
+接口：`GET /api/v1/media?run=ID&after=PATH` 获取目录；
+`GET/HEAD /api/v1/media/file?run=ID&path=PATH` 读取文件；
+`GET /api/v1/media/document?run=ID&path=PATH` 预览文档；
+`GET /api/v1/media/frames?run=ID&manifest=PATH&video=PATH` 获取帧映射。
+
 ```powershell
 glr --project . dashboard
 ```
