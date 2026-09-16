@@ -30,21 +30,39 @@ from game_learning_runtime import BridgeTelemetry
 
 publisher = BridgeTelemetry.from_env("bridge.my-environment")
 if publisher is not None:
-    batch = publisher.prepare(events=[{
-        "kind": "bridge.state", "episode_id": "episode-1", "step_id": 42,
-        "payload": {"workbench": {
-            "schema_version": "glr.workbench.v1",
-            "title": "Encounter training", "agent": "policy.baseline",
-            "objective": "Evaluate action selection", "phase": "Encounter",
-            "sections": [
-                {"id": "state", "title": "Player state", "kind": "stats",
-                 "fields": [{"label": "Health", "value": 72, "unit": "%"}]},
-                {"id": "choices", "title": "Candidates", "kind": "table",
-                 "columns": ["Action", "Score", "Selected"],
-                 "rows": [["dodge", 0.8, True], ["attack", 0.3, False]]}
-            ]
-        }}
-    }])
+    batch = publisher.prepare(
+        events=[
+            {
+                "kind": "bridge.state",
+                "episode_id": "episode-1",
+                "step_id": 42,
+                "payload": {
+                    "workbench": {
+                        "schema_version": "glr.workbench.v1",
+                        "title": "Encounter training",
+                        "agent": "policy.baseline",
+                        "objective": "Evaluate action selection",
+                        "phase": "Encounter",
+                        "sections": [
+                            {
+                                "id": "state",
+                                "title": "Player state",
+                                "kind": "stats",
+                                "fields": [{"label": "Health", "value": 72, "unit": "%"}],
+                            },
+                            {
+                                "id": "choices",
+                                "title": "Candidates",
+                                "kind": "table",
+                                "columns": ["Action", "Score", "Selected"],
+                                "rows": [["dodge", 0.8, True], ["attack", 0.3, False]],
+                            },
+                        ],
+                    }
+                },
+            }
+        ]
+    )
     publisher.send(batch)
 ```
 
