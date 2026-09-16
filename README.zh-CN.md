@@ -536,3 +536,11 @@ Runtime Host、安装清单和两套 GLR Skills；Release 还包含 C# Provider 
 
 开发契约见 [CONTRIBUTING.md](CONTRIBUTING.md)，私密漏洞报告流程见
 [SECURITY.md](SECURITY.md)。GLR 使用 [MIT License](LICENSE)。
+
+## 训练 Dashboard 与持久化历史
+
+```powershell
+glr --project . dashboard
+```
+
+[训练 Dashboard 与持久化历史](docs/guides/dashboard.zh-CN.md)

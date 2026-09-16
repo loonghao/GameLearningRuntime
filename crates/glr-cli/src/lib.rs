@@ -1,10 +1,15 @@
 mod args;
+mod backup;
 mod capture_presets;
 mod checkpoint;
 mod commands;
 mod contracts;
+mod dashboard;
 mod error;
+mod filesystem;
 mod learning_checkpoint;
+mod observation;
+mod observe;
 mod package;
 mod plugin;
 mod process;

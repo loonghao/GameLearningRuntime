@@ -317,3 +317,40 @@ to `GLR_STORE_PATH` during the current trial, including value, source, and autho
 Stop when a declared budget is exhausted, a required role/capture fails, the runtime identity is
 uncertain, or authoritative success evidence is missing. Return the failed gate and the relevant
 run ID rather than relaxing the contract.
+
+## Embedded Dashboard and durable trace commands
+
+```powershell
+glr --project . dashboard
+glr --json dashboard catalog
+glr --json dashboard presets
+glr --json dashboard save-preset --file preset.json
+glr --json dashboard run train.example
+glr --json dashboard jobs
+glr --json dashboard jobs --before JOB_ID
+glr --json dashboard job-log JOB_ID --stream stderr
+glr observe --port 7432
+glr --json runs trace RUN_ID --events-after 1000 --metrics-after 500 --limit 250
+glr --json runs log RUN_ID --path capture.log --offset 0
+glr --json backup create --output ../backups/run-history
+glr --json backup verify ../backups/run-history
+glr --json backup restore ../backups/run-history --output ../restored-history
+glr observe --archive ../restored-history
+```
+
+Dashboard presets use `glr.training-preset.v1` with `id`, `title`, `description`,
+and `argv` (train, goal run, or task run). Presets and job receipts persist in
+SQLite. Operation forms reuse CLI argument definitions; requests never run a
+shell or change the server project. Jobs use stable request IDs and one project
+lock. A nonterminal record after service restart is unverified, not resumable.
+
+Read-only HTTP: `/api/v1/health`, `/api/v1/runs?before=RUN_ID`,
+`/api/v1/snapshot?run=ID&events_after=-1&metrics_after=0&limit=250`,
+`/api/v1/log?run=ID&path=capture.log&offset=0`. Envelopes use
+`glr.observation.v1`. POST controls exist only in Dashboard mode and require
+same-origin JSON. All assets and Axum are embedded in the CLI.
+
+Backups use `glr.observation-backup.v1`: a consistent SQLite snapshot, verified
+completed-run files, completed-job logs and file hashes. Active run files and
+active job logs are excluded; the manifest identifies database-only active runs.
+Restores require a new destination and do not establish model/game compatibility.

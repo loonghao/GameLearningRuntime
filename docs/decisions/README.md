@@ -27,5 +27,7 @@
 - [ADR-0025: Record learner-owned dynamic decisions](0025-record-learner-owned-decisions.md)
 - [ADR-0026: Add a plugin-first extension system](0026-plugin-first-extension-system.md)
 
+- [ADR-0028: Embed a durable training dashboard](0028-embedded-training-dashboard.md)
+
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.
