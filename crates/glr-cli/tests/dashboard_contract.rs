@@ -52,6 +52,10 @@ impl Service {
     fn start(project: &Path, mode: &str) -> Self {
         let mut child = Command::new(binary())
             .env("GLR_NO_UPDATE_CHECK", "1")
+            .env(
+                "GLR_TELEMETRY_TOKEN",
+                "test-bridge-token-01234567890123456789",
+            )
             .args(["--json", "--project"])
             .arg(project)
             .args([mode, "--port", "0"])
@@ -432,4 +436,129 @@ fn history_cursors_preserve_ties_and_stale_jobs_remain_unverified() {
     }
     let trace = success(run(project.path(), &["runs", "trace", "run-000"]));
     assert_eq!(trace["data"]["events"][0]["sequence_id"], 0);
+}
+
+#[test]
+fn bridge_ingress_is_authenticated_atomic_idempotent_and_shared_with_cli() {
+    let project = project();
+    let id = seed(project.path());
+    let db = Connection::open(project.path().join(".glr/runs.sqlite3")).unwrap();
+    db.execute("UPDATE runs SET status='running' WHERE run_id=?", [&id])
+        .unwrap();
+    let server = Service::start(project.path(), "dashboard");
+    let batch = json!({"schema_version":"glr.bridge-telemetry.v1","run_id":id,"source":"bridge.unity","batch_id":"batch-1",
+        "events":[{"kind":"bridge.status","step_id":3,"payload":{"state":"ready","message":"Synthetic provider"}},
+        {"kind":"navigation.route_sample","episode_id":"episode-1","step_id":3,"payload":{"position":[1,2,3]}}],
+        "metrics":[{"name":"bridge.latency_ms","value":2.5,"step_id":3}]});
+    let post = |value: &Value| {
+        server
+            .client
+            .post(format!("{}/api/v1/telemetry", server.url))
+            .bearer_auth("test-bridge-token-01234567890123456789")
+            .json(value)
+            .send()
+            .unwrap()
+    };
+    assert_eq!(server.post("/api/v1/telemetry", &batch).status(), 401);
+    let first = post(&batch);
+    assert!(
+        first.status().is_success(),
+        "{}",
+        first.text().unwrap_or_default()
+    );
+    let retry: Value = post(&batch).json().unwrap();
+    assert_eq!(retry["duplicate"], true);
+    let state: Value = server
+        .get(&format!("/api/v1/telemetry/state?run={id}"))
+        .json()
+        .unwrap();
+    assert_eq!(state["states"][0]["payload"]["state"], "ready");
+    assert_eq!(state["states"][0]["payload"]["authority"], "diagnostic");
+    let mut invalid = batch.clone();
+    invalid["batch_id"] = "batch-invalid".into();
+    invalid["events"][1]["payload"]["position"] = json!([1]);
+    assert_eq!(post(&invalid).status(), 400);
+    invalid = batch.clone();
+    invalid["events"][0]["payload"]["state"] = "changed".into();
+    assert_eq!(post(&invalid).status(), 400);
+    let trace = success(run(project.path(), &["runs", "trace", &id]));
+    assert_eq!(trace["data"]["events"].as_array().unwrap().len(), 2);
+    assert_eq!(trace["data"]["metrics"].as_array().unwrap().len(), 1);
+    let schema: Value = server.get("/api/v1/telemetry/schema").json().unwrap();
+    assert_eq!(
+        schema["properties"]["schema_version"]["const"],
+        "glr.bridge-telemetry.v1"
+    );
+    let latest = success(run(project.path(), &["telemetry", "state", &id]));
+    assert_eq!(latest["data"]["states"][0]["source"], "bridge.unity");
+    let mut oversized = batch.clone();
+    oversized["batch_id"] = "batch-big".into();
+    oversized["events"][0]["payload"]["large"] = "a".repeat(13000).into();
+    assert_eq!(post(&oversized).status(), 400);
+    let mut spoof = batch.clone();
+    spoof["batch_id"] = "batch-spoof".into();
+    spoof["events"][0]["payload"]["authority"] = "authoritative".into();
+    assert_eq!(post(&spoof).status(), 400);
+    assert_eq!(
+        server
+            .client
+            .post(format!("{}/api/v1/telemetry", server.url))
+            .bearer_auth("test-bridge-token-01234567890123456789")
+            .header("Origin", "https://foreign.invalid")
+            .json(&batch)
+            .send()
+            .unwrap()
+            .status(),
+        403
+    );
+    let file = project.path().join("batch.json");
+    fs::write(&file, serde_json::to_vec(&batch).unwrap()).unwrap();
+    let replay = success(run(
+        project.path(),
+        &["telemetry", "ingest", "--file", file.to_str().unwrap()],
+    ));
+    assert_eq!(replay["data"]["receipts"][0]["duplicate"], true);
+    fs::write(&file, format!("{batch}\n{batch}\n")).unwrap();
+    let replay = success(run(
+        project.path(),
+        &[
+            "telemetry",
+            "ingest",
+            "--file",
+            file.to_str().unwrap(),
+            "--jsonl",
+        ],
+    ));
+    assert_eq!(replay["data"]["receipts"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        server
+            .client
+            .post(format!("{}/api/v1/telemetry", server.url))
+            .bearer_auth("test-bridge-token-01234567890123456789")
+            .header("Content-Type", "application/json; charset=utf-8")
+            .body(batch.to_string())
+            .send()
+            .unwrap()
+            .status(),
+        200
+    );
+    let archive_root = tempfile::tempdir().unwrap();
+    let archive = archive_root.path().join("archive");
+    success(run(
+        project.path(),
+        &["backup", "create", "--output", archive.to_str().unwrap()],
+    ));
+    let archive_db = Connection::open(archive.join("runs.sqlite3")).unwrap();
+    let archived: i64 = archive_db
+        .query_row("SELECT COUNT(*) FROM telemetry_latest", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(archived, 1);
+    db.execute("UPDATE runs SET status='succeeded' WHERE run_id=?", [&id])
+        .unwrap();
+    assert!(post(&batch).status().is_success());
+    invalid = batch.clone();
+    invalid["batch_id"] = "batch-late".into();
+    assert_eq!(post(&invalid).status(), 400);
+    let observer = Service::start(project.path(), "observe");
+    assert_eq!(observer.post("/api/v1/telemetry", &batch).status(), 405);
 }

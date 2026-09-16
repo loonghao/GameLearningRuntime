@@ -45,6 +45,7 @@ pub struct Dashboard {
     root: PathBuf,
     data_dir: PathBuf,
     environment_id: String,
+    telemetry: Option<(String, String)>,
 }
 
 impl Dashboard {
@@ -54,10 +55,22 @@ impl Dashboard {
             root: project.root.clone(),
             data_dir: project.data_dir.clone(),
             environment_id: project.environment_id.clone(),
+            telemetry: None,
         };
         dashboard.connect()?.execute_batch("CREATE TABLE IF NOT EXISTS dashboard_presets (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS dashboard_jobs (id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, created_at_ms INTEGER NOT NULL, payload TEXT NOT NULL);")?;
         Ok(dashboard)
+    }
+
+    pub fn with_telemetry(mut self, url: String, token: String) -> Self {
+        self.telemetry = Some((url, token));
+        self
+    }
+
+    pub fn telemetry_authorized(&self, authorization: Option<&str>) -> bool {
+        self.telemetry.as_ref().is_some_and(|(_, token)| {
+            authorization.is_some_and(|value| value == format!("Bearer {token}"))
+        })
     }
 
     fn connect(&self) -> Result<Connection> {
@@ -284,7 +297,17 @@ impl Dashboard {
                 serde_json::to_string(&job)?
             ],
         )?;
-        let spawn = Command::new(std::env::current_exe()?)
+        let mut process = Command::new(std::env::current_exe()?);
+        if let Some((url, token)) = &self.telemetry {
+            process
+                .env("GLR_TELEMETRY_URL", url)
+                .env("GLR_TELEMETRY_TOKEN", token);
+        } else {
+            process
+                .env_remove("GLR_TELEMETRY_URL")
+                .env_remove("GLR_TELEMETRY_TOKEN");
+        }
+        let spawn = process
             .arg("--project")
             .arg(&self.root)
             .arg("--json")

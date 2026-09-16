@@ -162,6 +162,7 @@ fn configure_command(
         .args(arguments)
         .current_dir(&project.root)
         .env("GLR_PROJECT_ROOT", &project.root)
+        .env("GLR_CLI_PATH", std::env::current_exe()?)
         .env("GLR_PROJECT_MANIFEST", &project.manifest_path)
         .env("GLR_BRIDGE_PATH", &project.bridge_path)
         .env("GLR_RUN_ID", run_id)

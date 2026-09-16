@@ -197,6 +197,19 @@
           </section>
           <section class="panel events-panel">
             <div class="panel-head">
+              <h2>Bridge telemetry</h2>
+              <select id="bridge-source" aria-label="Bridge source">
+                <option value="">All sources</option>
+              </select>
+            </div>
+            <p class="muted" id="bridge-note">
+              Latest reported status, state and progress. A past report does not
+              prove current connectivity.
+            </p>
+            <div id="bridge-states" class="bridge-states"></div>
+          </section>
+          <section class="panel events-panel">
+            <div class="panel-head">
               <h2>Decision & execution timeline</h2>
               <span class="muted">Select to inspect</span>
             </div>

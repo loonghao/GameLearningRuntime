@@ -37,6 +37,7 @@ from game_learning_runtime.bridge import (
     BridgeStepRequest,
     EnvironmentBridgeDriver,
 )
+from game_learning_runtime.bridge_telemetry import BridgeTelemetry
 from game_learning_runtime.capture import (
     CAPTURE_FRAME_SCHEMA_VERSION,
     CAPTURE_MANIFEST_SCHEMA_VERSION,
@@ -460,6 +461,7 @@ __all__ = [
     "BridgeResumeRequest",
     "BridgeResumeResult",
     "BridgeStepRequest",
+    "BridgeTelemetry",
     "BundleFile",
     "CaptureArtifact",
     "CaptureConfig",

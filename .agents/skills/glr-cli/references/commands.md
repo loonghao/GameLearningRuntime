@@ -320,6 +320,13 @@ run ID rather than relaxing the contract.
 
 ## Embedded Dashboard and durable trace commands
 
+Bridge diagnostics share `glr.bridge-telemetry.v1`: `glr telemetry schema`,
+`glr telemetry ingest --file FILE [--jsonl]` (`-` for stdin), and
+`glr telemetry state RUN_ID`. Dashboard offers authenticated
+`POST /api/v1/telemetry` and read-only `GET /api/v1/telemetry/state?run=ID`.
+Preserve batch IDs when retrying and drain pending data before a run terminates.
+Never print or archive `GLR_TELEMETRY_TOKEN`; status and metrics are diagnostic.
+
 ```powershell
 glr --project . dashboard
 glr --json dashboard catalog

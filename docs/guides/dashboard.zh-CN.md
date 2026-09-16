@@ -23,6 +23,10 @@ glr --project . dashboard
 
 ## 接入学习器
 
+Bridge 主动上报支持 Python SDK、带令牌的 localhost HTTP 和 CLI JSON/JSONL。
+详见 [Bridge 接入指南](bridge-telemetry.md)，包含状态/进度、自定义事件、指标、
+来源标识、批次去重、Agent 查询及 C# 示例。
+
 ```python
 from game_learning_runtime import Telemetry
 

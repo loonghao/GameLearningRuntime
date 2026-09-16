@@ -144,6 +144,15 @@ pub fn execute(cli: Cli) -> Result<i32> {
         emit("backup", &result, cli.json)?;
         return Ok(0);
     }
+    if let CliCommand::Telemetry { command } = &cli.command {
+        let result = if matches!(command, crate::args::TelemetryCommand::Schema) {
+            crate::telemetry::schema()
+        } else {
+            crate::telemetry::execute(&load_project(&cli.project)?, command)?
+        };
+        emit("telemetry", &result, cli.json)?;
+        return Ok(0);
+    }
     if let CliCommand::Dashboard { port, command } = &cli.command {
         let project = load_project(&cli.project)?;
         return match command {
@@ -459,6 +468,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
         CliCommand::Observe { .. } => unreachable!("observe handled before store loading"),
         CliCommand::Backup { .. } => unreachable!("backup handled before store loading"),
         CliCommand::Dashboard { .. } => unreachable!("dashboard handled before store loading"),
+        CliCommand::Telemetry { .. } => unreachable!("telemetry handled before store loading"),
     }
 }
 
