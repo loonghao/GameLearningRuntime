@@ -5,7 +5,7 @@
 - Git
 - [vx](https://github.com/loonghao/vx)
 
-`vx.toml` and `vx.lock` pin the baseline Python, uv, just, and rustup versions.
+`vx.toml` and `vx.lock` pin the baseline Python, Node.js, uv, just, and rustup versions.
 `rust-toolchain.toml` pins Rust 1.98.0 and `global.json` pins .NET SDK 10.0.400.
 The GitHub Actions jobs use the same just recipes as local development.
 
@@ -13,6 +13,7 @@ The GitHub Actions jobs use the same just recipes as local development.
 
 ```powershell
 vx setup
+vx just dashboard-build dashboard-check
 vx just check
 vx just build
 ```
@@ -45,6 +46,11 @@ The CLI is the canonical deployment entrypoint; the Python package remains an
 optional SDK. A release distribution is produced with `scripts/package_cli.py`
 and must contain `glr`, `glr-hostd`, `glr-release.json`, `install.md`, `LICENSE`,
 and both repository Skills.
+
+Rebuild the React/shadcn dashboard with `vx just dashboard-build` after changing
+`dashboard-ui/`. Cargo rejects missing or stale frontend artifacts. CI supplies
+the tested frontend artifact before Rust compilation; the CLI serves its embedded
+assets without Node.js at runtime.
 
 Run the complete local pre-push surface with `vx just ci`. CI selects Python
 3.10 through 3.13 through `vx just ci-core <version>` in isolated jobs.

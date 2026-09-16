@@ -42,3 +42,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[build-dependencies]
+sha2.workspace = true

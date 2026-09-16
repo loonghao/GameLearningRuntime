@@ -18,6 +18,14 @@ observation. `train` and `goal run` start an observation server for their own
 lifetime by default, with an explicit `--no-observe` opt-out. An independently
 started Dashboard observes CLI runs through the same SQLite database.
 
+The frontend uses React, TypeScript and shadcn/ui with Radix primitives and
+Tailwind. Vite emits hashed JavaScript/CSS assets; CI builds and tests these once
+and passes the artifact to Rust jobs. Release builds consume the same artifact
+from the immutable release tag on every platform. Cargo verifies a normalized
+source/configuration SHA-256 before embedding the asset table, failing if the
+artifact is missing or stale. Assets use the existing same-origin CSP without
+inline scripts. Node.js is needed only to develop/build the frontend.
+
 The web transport depends on a read-only observation projection and a separate
 command application service. Event/metric IDs and log byte offsets are resumable
 cursors. SQLite is the authority; browser memory and exported view windows are

@@ -17,6 +17,7 @@ def test_vx_and_just_pin_the_local_and_ci_toolchain() -> None:
     recipes = (ROOT / "justfile").read_text(encoding="utf-8")
 
     assert config["tools"] == {
+        "node": "22.22.0",
         "actionlint": "1.7.12",
         "dotnet": "10.0.400",
         "python": "3.12.13",
@@ -27,6 +28,7 @@ def test_vx_and_just_pin_the_local_and_ci_toolchain() -> None:
     assert config["scripts"]["check"] == "vx just check"
     assert config["scripts"]["ci"] == "vx just ci"
     assert {name: value["version"] for name, value in lock["tools"].items()} == {
+        "node": "22.22.0",
         "actionlint": "1.7.12",
         "dotnet": "10.0.400",
         "just": "1.58.0",

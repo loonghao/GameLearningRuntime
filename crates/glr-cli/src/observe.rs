@@ -20,6 +20,10 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+mod assets {
+    include!(concat!(env!("OUT_DIR"), "/dashboard_assets.rs"));
+}
+
 pub struct Observer {
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
@@ -249,7 +253,7 @@ async fn handle(
                     200,
                     "application/json",
                     serde_json::to_vec(
-                        &json!({"schema_version":SCHEMA,"version":env!("CARGO_PKG_VERSION"),"read_only":state.dashboard.is_none(),"environment_id":state.observation.environment_id}),
+                        &json!({"schema_version":SCHEMA,"version":env!("CARGO_PKG_VERSION"),"read_only":state.dashboard.is_none(),"environment_id":state.observation.environment_id,"dashboard_source_sha256":assets::SOURCE_HASH}),
                     )?,
                 ));
             }
@@ -333,34 +337,6 @@ fn route(url: &str, observation: &Observation) -> Result<WebResult> {
             &observation.environment_id,
             field("run")?,
         )?,
-        "/" => {
-            return Ok((
-                200,
-                "text/html; charset=utf-8",
-                include_bytes!("web/index.html").to_vec(),
-            ));
-        }
-        "/app.js" => {
-            return Ok((
-                200,
-                "text/javascript; charset=utf-8",
-                include_bytes!("web/app.js").to_vec(),
-            ));
-        }
-        "/controls.js" => {
-            return Ok((
-                200,
-                "text/javascript; charset=utf-8",
-                include_bytes!("web/controls.js").to_vec(),
-            ));
-        }
-        "/style.css" => {
-            return Ok((
-                200,
-                "text/css; charset=utf-8",
-                include_bytes!("web/style.css").to_vec(),
-            ));
-        }
         "/api/v1/health" => {
             json!({"schema_version": SCHEMA, "version": env!("CARGO_PKG_VERSION"), "environment_id": observation.environment_id, "read_only": true})
         }
@@ -386,6 +362,9 @@ fn route(url: &str, observation: &Observation) -> Result<WebResult> {
                 .transpose()?,
         )?,
         _ => {
+            if let Some((mime, bytes)) = assets::asset(url.path()) {
+                return Ok((200, mime, bytes.to_vec()));
+            }
             return Ok((
                 404,
                 "application/json",

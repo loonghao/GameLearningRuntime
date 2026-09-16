@@ -17,6 +17,11 @@ knowledge queries, plugins and other CLI operations. Forms come from the same
 clap definitions as agent commands. Paths refer to the machine running GLR.
 The dashboard does not launch a browser automatically.
 
+The interface uses React, TypeScript, shadcn/ui (Radix primitives), and Tailwind.
+Vite produces hashed JavaScript/CSS assets that Rust embeds alongside Axum.
+All assets are served from the same loopback origin under the existing CSP;
+no inline scripts or external asset hosts are needed.
+
 `glr train` and `glr goal run` also print a read-only observation URL by default.
 Their server stops when the command exits; `--no-observe` disables it. If 7432 is
 occupied, this automatic view uses a free port. Keep `glr dashboard` running
@@ -118,8 +123,8 @@ invalid bytes; raw files remain exact. Offline reports now page through history
 and explicitly refuse above 100,000 events or metrics rather than silently
 omitting later records.
 
-The browser keeps 5,000 events/metrics and 128 KiB of log text. Its **Export loaded
-data** button exports that window with an explicit scope/partial marker, not a
+The browser keeps 5,000 events/metrics and 128 KiB of log text. Its **Export
+window** button exports that window with an explicit scope/partial marker, not a
 complete backup. SQLite and raw logs are not pruned. Use cursors or backup for
 full history. Oversized event/metric metadata (>16 KiB) is marked
 `observation_truncated` in the live projection; the original stays in SQLite.
@@ -179,3 +184,29 @@ Submit `{"request_id":"request-unique-id","preset":"train.default"}` or
 exist only in Dashboard mode. The project is fixed at startup. Nested dashboard
 and observer jobs are rejected. Use agent CLI commands for local scripting;
 the web service is not an authenticated remote multi-user API.
+
+## Build the embedded frontend
+
+From a source checkout, build the frontend before any Cargo command that compiles
+`glr-cli` (including `just check`, `just build`, and Rust tests):
+
+```powershell
+vx just dashboard-build dashboard-check
+vx cargo build --release --package glr-cli --locked
+```
+
+`vx.toml` pins Node.js; `npm ci` uses the checked-in lockfile. The frontend build
+runs TypeScript checking and writes `dist/source.sha256` over its source and
+configuration, normalizing CRLF so Windows and Linux agree. Cargo verifies this
+fingerprint and fails with a rebuild instruction if assets are missing or stale.
+Rebuild after editing frontend files. Generated `dist/` is not committed.
+
+CI builds and tests the frontend in the **React dashboard** job, then passes the
+`dashboard-ui` artifact to Rust and distribution jobs. Release CI builds from the
+immutable release tag and supplies that same artifact to Linux, Windows, and macOS
+compilations. The final executable includes the HTML, JavaScript, and CSS; it does
+not read a frontend directory at runtime. `/api/v1/health` exposes
+`dashboard_source_sha256` to identify the embedded source revision.
+
+Component tests run in jsdom and exercise controls and observation state. They do
+not replace a real-browser visual acceptance check.

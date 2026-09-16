@@ -303,11 +303,12 @@ Provider。准确能力边界和 Unity/Unreal 实现路径见
 
 ## 可复现的本地开发环境
 
-GLR 固定 Python、uv、just、rustup、Rust 与 .NET SDK 输入。本地与 GitHub Actions
+GLR 固定 Python、Node.js、uv、just、rustup、Rust 与 .NET SDK 输入。本地与 GitHub Actions
 执行相同 recipes：
 
 ```powershell
 vx setup
+vx just dashboard-build dashboard-check
 vx just check
 vx just ci
 ```

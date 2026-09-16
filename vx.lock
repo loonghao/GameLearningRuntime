@@ -4,7 +4,7 @@
 version = 2
 
 [metadata]
-generated_at = "2026-08-31T13:39:13Z"
+generated_at = "2026-09-16T07:15:23Z"
 vx_version = "0.9.31"
 platform = "x86_64-pc-windows-msvc"
 
@@ -55,6 +55,24 @@ linux-arm64 = "https://github.com/casey/just/releases/download/1.58.0/just-1.58.
 linux-x64 = "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-unknown-linux-musl.tar.gz"
 windows-arm64 = "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-aarch64-pc-windows-msvc.zip"
 windows-x64 = "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-pc-windows-msvc.zip"
+
+[tools.node]
+version = "22.22.0"
+source = "nodejs"
+resolved_from = "22.22.0"
+ecosystem = "nodejs"
+download_url = "https://nodejs.org/dist/v22.22.0/node-v22.22.0-win-x64.zip"
+
+[tools.node.platform_urls]
+darwin-arm64 = "https://nodejs.org/dist/v22.22.0/node-v22.22.0-darwin-arm64.tar.gz"
+darwin-x64 = "https://nodejs.org/dist/v22.22.0/node-v22.22.0-darwin-x64.tar.gz"
+linux-arm64 = "https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-arm64.tar.xz"
+linux-x64 = "https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-x64.tar.xz"
+windows-arm64 = "https://nodejs.org/dist/v22.22.0/node-v22.22.0-win-arm64.zip"
+windows-x64 = "https://nodejs.org/dist/v22.22.0/node-v22.22.0-win-x64.zip"
+
+[tools.node.metadata]
+lts = "true"
 
 [tools.python]
 version = "3.12.13"

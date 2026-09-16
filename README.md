@@ -365,11 +365,12 @@ and [configuration sample](docs/examples/deepseek-harness.json).
 
 ## Reproducible local development
 
-GLR pins Python, uv, just, rustup, Rust, and .NET SDK inputs. Local development
+GLR pins Python, Node.js, uv, just, rustup, Rust, and .NET SDK inputs. Local development
 and GLR's GitHub Actions execute the same recipes:
 
 ```powershell
 vx setup
+vx just dashboard-build dashboard-check
 vx just check
 vx just ci
 ```
