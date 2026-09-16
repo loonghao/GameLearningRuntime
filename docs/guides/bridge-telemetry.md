@@ -118,7 +118,9 @@ glr --json host --timeout-seconds 600 -- ./loop
 glr --json host --no-telemetry -- ./loop   # 只要 run，不要写入口
 ```
 
-`--` 之后的命令行按原样执行，GLR 不展开占位符、不要求配置 trainer 角色。
+`--` 之后的命令行按原样执行：GLR 不展开 `{...}` 占位符，也不要求配置 trainer 角色。
+因此 `glr host -- jq '{a: 1}'` 这类含裸花括号的参数会原样传给子进程；同理
+`{telemetry_token}` 不会被替换成令牌，凭据只经环境传递，不会出现在命令行上。
 子进程会收到与角色一致的 `GLR_RUN_ID`、`GLR_RUN_DIR`、`GLR_STORE_PATH`、
 `GLR_CLI_PATH` 和环境身份，并在启用写入时额外收到 `GLR_TELEMETRY_URL` 和
 `GLR_TELEMETRY_TOKEN`，因此 `BridgeTelemetry.from_env("loop.example")` 可直接工作。
