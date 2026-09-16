@@ -167,6 +167,40 @@ policy, or reward settings. GLR does not automatically load local overrides.
 project-owned relative directory or an explicitly configured absolute directory;
 relative escapes are rejected. It never installs, discovers, or launches games.
 
+### Startup readiness for a cold host
+
+The runtime role may declare a bounded startup window instead of re-implementing
+one with a private settle constant:
+
+```toml
+[runtime]
+argv = ["uv", "run", "--frozen", "python", "-m", "example_runtime"]
+
+[runtime.readiness]
+timeout_seconds = 300
+poll_interval_seconds = 5
+file = "runtime-readiness.json"
+```
+
+`timeout_seconds` is required, positive, and at most one hour; the poll interval
+and receipt name default to `5` and `runtime-readiness.json`. Without the table,
+`runtime start` invokes the role once and the role exit code decides the run.
+
+Within the window, each invocation receives `GLR_READINESS_PATH` and
+`GLR_READINESS_ATTEMPT` and publishes one `glr.environment-readiness.v1` receipt
+at that path: `{"schema_version", "state", "reason", "checked_at_ns"}` where
+`state` is `ready`, `not_ready`, or `unavailable`. Only `not_ready` means "come
+back". `ready` with a non-zero exit, `unavailable`, an off-schema, unreadable,
+oversized, or absent receipt are terminal on first observation; never retry
+those. A role that brings up a cold host should refuse with a named non-zero
+code plus a `not_ready` receipt rather than sleeping inside itself.
+
+The verdict is durable evidence: one `readiness.attempt` event per invocation
+and one `readiness.outcome` event in the run, plus a `readiness` object in the
+`runtime.start` payload. An exhausted window returns exit code `78` (host still
+parking: retry later); every other verdict keeps the role exit code. Read
+`glr runs show` before concluding that a start is broken.
+
 Commit the root manifest, package metadata, dependency locks, generic default
 config, tests, and project-owned setup instructions. Do not copy a virtualenv:
 recreate it from the lock after clone. Keep adapters as importable semantic

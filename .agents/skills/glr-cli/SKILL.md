@@ -46,7 +46,10 @@ running a goal, transferring knowledge, or claiming reproduction.
    frozen `glr.run-context.v1` receipt. Python roles must call
    `load_inherited_run_context(project)` before consuming selected inputs.
 5. Use `glr runtime start` only for the configured fixed-argv runtime command. Its process exit
-   proves command completion, not a live bridge handshake or gameplay success.
+   proves command completion, not a live bridge handshake or gameplay success. When the project
+   declares `runtime.readiness`, an exit code of `78` means the declared window expired while the
+   role still reported `not_ready`: the host was starting, not broken, so wait and retry instead of
+   reporting a defect.
 6. Express the user objective as `glr.agent-goal.v1` with machine-readable success criteria and
    hard trial, step, time, and research-source budgets.
 7. Run `glr goal run`. Let the project researcher gather only allowed sources; let the planner

@@ -23,7 +23,10 @@ use crate::process::{
     CaptureLifecycle, CaptureSession, CaptureState, CommandInvocation, executable_available,
     finish_capture, relative_portable, run_command, start_capture,
 };
-use crate::project::{ProgressConfig, Project, ProjectCommand, find_project, load_project};
+use crate::project::{
+    ProgressConfig, Project, ProjectCommand, RuntimeReadinessConfig, find_project, load_project,
+};
+use crate::readiness::{ReadinessAttempt, ReadinessWindowOutcome};
 use crate::report;
 use crate::store::{CheckpointPromotionRequest, EntityQuery, RunRecord, Store, TransactionRefusal};
 use crate::update::Updater;
@@ -32,6 +35,7 @@ pub const CLI_OUTPUT_SCHEMA_VERSION: &str = "glr.cli-output.v1";
 const TRAINER_NO_DATA_EXIT_CODE: i32 = 75;
 const GOAL_STALLED_EXIT_CODE: i32 = 76;
 const TRANSACTION_ABANDONED_EXIT_CODE: i32 = 77;
+const RUNTIME_NOT_READY_EXIT_CODE: i32 = 78;
 const TRAINER_RESULT_SCHEMA_VERSION: &str = "glr.trainer-result.v1";
 
 #[derive(Debug, Deserialize)]
@@ -249,6 +253,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
                 as_json: cli.json,
                 bundle: None,
                 metadata: json!({}),
+                readiness: project.runtime_readiness.as_ref(),
             },
         ),
         CliCommand::Train {
@@ -296,6 +301,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
                     "framework": manifest.framework,
                     "framework_version": manifest.framework_version,
                     }),
+                    readiness: None,
                 },
             )
         }
@@ -730,6 +736,97 @@ struct ProjectRoleInvocation<'a> {
     as_json: bool,
     bundle: Option<&'a Path>,
     metadata: Value,
+    readiness: Option<&'a RuntimeReadinessConfig>,
+}
+
+struct ProjectRoleExecution {
+    exit_code: i32,
+    readiness: Option<ReadinessWindowOutcome>,
+    logs: Vec<PathBuf>,
+}
+
+/// Invoke a role once, or park and re-invoke it inside a declared window.
+///
+/// Without a declared window this is exactly one invocation and the role exit
+/// code decides the outcome. With a window, only an explicit `not_ready`
+/// receipt is retried; every other verdict is terminal on first observation.
+fn execute_project_role(
+    project: &Project,
+    store: &Store,
+    invocation: &ProjectRoleInvocation<'_>,
+    run_id: &str,
+    run_dir: &Path,
+) -> Result<ProjectRoleExecution> {
+    let readiness_file = invocation.readiness.map(|config| config.file.clone());
+    let mut logs: Vec<PathBuf> = Vec::new();
+    let mut run_attempt = |index: u32| -> Result<ReadinessAttempt> {
+        let name = if index == 1 {
+            format!("{}.log", invocation.kind)
+        } else {
+            format!("{}-attempt{}.log", invocation.kind, index)
+        };
+        let log_path = run_dir.join(name);
+        logs.push(log_path.clone());
+        let mut extra = HashMap::new();
+        if let Some(file) = &readiness_file {
+            extra.insert("readiness_path".to_string(), run_dir.join(file));
+            extra.insert(
+                "readiness_attempt".to_string(),
+                PathBuf::from(index.to_string()),
+            );
+        }
+        let exit_code = run_command(CommandInvocation {
+            command: invocation.command,
+            project,
+            run_id,
+            run_dir,
+            log_path: &log_path,
+            bundle: invocation.bundle,
+            extra: &extra,
+            timeout: None,
+        })?;
+        let record = ReadinessAttempt {
+            index,
+            exit_code,
+            readiness: match &readiness_file {
+                None => None,
+                Some(file) => crate::readiness::read_receipt(&run_dir.join(file))?,
+            },
+        };
+        if readiness_file.is_some() {
+            // Only a declared window adds readiness evidence; an undeclared
+            // project keeps exactly the run records it had before.
+            store.append_event(run_id, "readiness.attempt", serde_json::to_value(&record)?)?;
+        }
+        Ok(record)
+    };
+    let (exit_code, readiness) = match invocation.readiness {
+        None => (run_attempt(1)?.exit_code, None),
+        Some(config) => {
+            let outcome = crate::readiness::run_readiness_window(
+                config.timeout_seconds,
+                config.poll_interval_seconds,
+                &mut run_attempt,
+            )?;
+            store.append_event(run_id, "readiness.outcome", outcome.mapping())?;
+            let exit_code = if outcome.exhausted {
+                // "The host is still starting" is the one verdict a caller must
+                // be able to tell apart from a refusal or a crash by exit code.
+                RUNTIME_NOT_READY_EXIT_CODE
+            } else {
+                outcome
+                    .attempts
+                    .last()
+                    .map_or(1, |attempt| attempt.exit_code)
+            };
+            (exit_code, Some(outcome))
+        }
+    };
+    Ok(ProjectRoleExecution {
+        exit_code,
+        readiness,
+        logs,
+    })
 }
 
 fn run_project_role(
@@ -765,44 +862,42 @@ fn run_project_role(
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
     fs::create_dir_all(&run_dir)?;
     crate::run_context::persist(project, store, &run.run_id, &run_dir)?;
-    let log = run_dir.join(format!("{}.log", invocation.kind));
-    let extra = HashMap::new();
-    let exit_code = match run_command(CommandInvocation {
-        command: invocation.command,
-        project,
-        run_id: &run.run_id,
-        run_dir: &run_dir,
-        log_path: &log,
-        bundle: invocation.bundle,
-        extra: &extra,
-        timeout: None,
-    }) {
+    let execution = match execute_project_role(project, store, &invocation, &run.run_id, &run_dir) {
         Ok(value) => value,
         Err(error) => {
             let _ = store.finish_run(&run.run_id, "failed", Some(1));
             return Err(error);
         }
     };
-    store.register_artifact(
-        &run.run_id,
-        log.file_name()
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| Error::Invalid("run log filename is not UTF-8".into()))?,
-        &log,
-        "run-log",
-        "text/plain",
-    )?;
+    for log in &execution.logs {
+        store.register_artifact(
+            &run.run_id,
+            log.file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| Error::Invalid("run log filename is not UTF-8".into()))?,
+            log,
+            "run-log",
+            "text/plain",
+        )?;
+    }
     let finished = store.finish_run(
         &run.run_id,
-        if exit_code == 0 {
+        if execution.exit_code == 0 {
             "succeeded"
         } else {
             "failed"
         },
-        Some(exit_code),
+        Some(execution.exit_code),
     )?;
-    emit(invocation.output_command, &finished, invocation.as_json)?;
-    Ok(exit_code)
+    let mut output = serde_json::to_value(&finished)?;
+    if let Some(readiness) = execution.readiness {
+        output
+            .as_object_mut()
+            .expect("RunRecord serializes as an object")
+            .insert("readiness".into(), readiness.mapping());
+    }
+    emit(invocation.output_command, &output, invocation.as_json)?;
+    Ok(execution.exit_code)
 }
 
 fn run_goal(
