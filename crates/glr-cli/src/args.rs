@@ -29,8 +29,11 @@ pub enum Command {
     },
     /// Open the local training dashboard, or manage its persisted presets/jobs.
     Dashboard {
-        #[arg(long, default_value_t = 7432)]
-        port: u16,
+        /// Loopback port. Omit to try 7432, then this project's own slot, then
+        /// a free port; pass 0 to always let the operating system choose. An
+        /// explicit port is used exactly as given and never moved.
+        #[arg(long)]
+        port: Option<u16>,
         #[command(subcommand)]
         command: Option<DashboardCommand>,
     },
@@ -51,9 +54,10 @@ pub enum Command {
     },
     /// Serve the bundled live dashboard and read-only observation API.
     Observe {
-        /// Loopback port; use 0 to select a free port.
-        #[arg(long, default_value_t = 7432)]
-        port: u16,
+        /// Loopback port. Omit to try 7432, then this project's own slot, then
+        /// a free port; pass 0 to always let the operating system choose.
+        #[arg(long)]
+        port: Option<u16>,
         /// Inspect a verified backup without modifying or restoring it.
         #[arg(long)]
         archive: Option<PathBuf>,
@@ -387,6 +391,27 @@ pub enum DashboardCommand {
     },
     /// Run a preset in the foreground with a durable dashboard receipt.
     Run { preset: String },
+    /// List live workbench servers, with the project, port, version and age of each.
+    Instances {
+        /// Every server this user has running, not only this project's.
+        #[arg(long)]
+        all: bool,
+        /// Forget leases whose address stopped answering. Never terminates anything.
+        #[arg(long)]
+        prune: bool,
+    },
+    /// Ask a live server to stop. The server retires itself; nothing is killed.
+    Stop {
+        /// Instance id from `dashboard instances`.
+        #[arg(long)]
+        instance: Option<String>,
+        /// Address of the server to stop.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Stop every live server for this project.
+        #[arg(long, conflicts_with_all = ["instance", "port"])]
+        all: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

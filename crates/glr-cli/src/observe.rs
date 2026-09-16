@@ -1,6 +1,7 @@
 //! Embedded Axum transport; all blocking storage work stays off its reactor.
 use crate::dashboard::Dashboard;
 use crate::error::{Error, Result};
+use crate::instance::{self, Instance, Lease};
 use crate::observation::{Observation, SCHEMA};
 use crate::project::Project;
 use axum::{
@@ -28,6 +29,24 @@ pub struct Observer {
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     pub url: String,
+    pub port: u16,
+    /// The same identity the server reports over `/api/v1/health`.
+    pub identity: Instance,
+    /// Held for the lifetime of the server; dropping it retires the registry
+    /// entry, so a lease cannot outlive the process that published it.
+    _lease: Option<Lease>,
+}
+impl Observer {
+    /// Retire the registry entry once the worker has stopped.
+    ///
+    /// `Drop` is the backstop; doing it here makes the disappearance of the
+    /// lease file a dependable "this server is finished" signal for
+    /// `glr dashboard stop`, which waits on exactly that.
+    pub fn release_lease(&mut self) {
+        if let Some(lease) = self._lease.take() {
+            lease.release();
+        }
+    }
 }
 impl Drop for Observer {
     fn drop(&mut self) {
@@ -41,7 +60,12 @@ impl Drop for Observer {
 struct WebState {
     observation: Arc<Observation>,
     dashboard: Option<Arc<Dashboard>>,
+    identity: Arc<Instance>,
     port: u16,
+    /// Set by `POST /api/v1/control/shutdown`. The graceful-shutdown future
+    /// already polls `Observer::stop`; this is the same flag reached over HTTP
+    /// so a human can retire a server without hunting for its pid.
+    shutdown: Arc<AtomicBool>,
     permits: Arc<tokio::sync::Semaphore>,
 }
 
@@ -49,11 +73,12 @@ pub fn start_default(project: &Project, enabled: bool) -> Option<Observer> {
     if !enabled {
         return None;
     }
-    match start(project, 7432, false).or_else(|_| start(project, 0, false)) {
+    match start(project, None, false) {
         Ok(observer) => {
             eprintln!(
-                "GLR observation: {} (stops with this command; use glr dashboard for persistent controls)",
-                observer.url
+                "GLR observation: {} (instance {}; stops with this command, `glr dashboard \
+                 instances` lists live servers)",
+                observer.url, observer.identity.instance_id
             );
             Some(observer)
         }
@@ -63,28 +88,56 @@ pub fn start_default(project: &Project, enabled: bool) -> Option<Observer> {
         }
     }
 }
-pub fn serve(project: &Project, port: u16, as_json: bool, controls: bool) -> Result<i32> {
+pub fn serve(project: &Project, port: Option<u16>, as_json: bool, controls: bool) -> Result<i32> {
     let mut observer = start(project, port, controls)?;
     let ready = json!({"schema_version": crate::commands::CLI_OUTPUT_SCHEMA_VERSION,
         "command": if controls {"dashboard.ready"} else {"observe.ready"}, "data": {"schema_version": SCHEMA, "url": observer.url,
-        "read_only": !controls, "environment_id": project.environment_id}});
+        "read_only": !controls, "environment_id": project.environment_id,
+        "instance": &observer.identity}});
     if as_json {
         println!("{}", ready);
     } else {
-        println!("GLR dashboard: {}\nPress Ctrl+C to stop.", observer.url);
+        // The bound address is printed, never assumed: an implicit start may
+        // have moved off the historical default, and a number the operator
+        // cannot see is a number they cannot open.
+        let requested = port.unwrap_or(instance::PREFERRED_PORT);
+        let moved = if requested != 0 && requested != observer.port {
+            format!(
+                "\n({requested} was already in use; this project's address is {})",
+                observer.port
+            )
+        } else {
+            String::new()
+        };
+        println!(
+            "GLR dashboard: {}{moved}\nPress Ctrl+C to stop; `glr dashboard instances` lists \
+             every live server.",
+            observer.url
+        );
     }
     if let Some(worker) = observer.worker.take() {
         worker
             .join()
             .map_err(|_| Error::Contract("dashboard worker stopped unexpectedly".into()))?;
     }
+    observer.release_lease();
     Ok(0)
 }
-fn start(project: &Project, port: u16, controls: bool) -> Result<Observer> {
-    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))?;
-    listener.set_nonblocking(true)?;
-    let port = listener.local_addr()?.port();
+fn start(project: &Project, preferred: Option<u16>, controls: bool) -> Result<Observer> {
+    let (listener, port) = instance::bind(preferred, &project.data_dir)?;
     let url = format!("http://127.0.0.1:{port}/");
+    let identity = Arc::new(Instance::new(project, port, !controls));
+    // A lease is a convenience for a human, not a precondition for serving, so
+    // an unwritable registry degrades to a warning rather than refusing to
+    // start. The health payload carries the same identity either way.
+    let lease =
+        match instance::lease_dir().and_then(|dir| Lease::publish(&dir, (*identity).clone())) {
+            Ok(lease) => Some(lease),
+            Err(error) => {
+                eprintln!("GLR warning: workbench instance lease not published: {error}");
+                None
+            }
+        };
     let stop = Arc::new(AtomicBool::new(false));
     let shutdown = stop.clone();
     let state = WebState {
@@ -116,7 +169,9 @@ fn start(project: &Project, port: u16, controls: bool) -> Result<Observer> {
         } else {
             None
         },
+        identity: identity.clone(),
         port,
+        shutdown: shutdown.clone(),
         permits: Arc::new(tokio::sync::Semaphore::new(8)),
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -148,6 +203,9 @@ fn start(project: &Project, port: u16, controls: bool) -> Result<Observer> {
         stop,
         worker: Some(worker),
         url,
+        port,
+        identity: (*identity).clone(),
+        _lease: lease,
     })
 }
 async fn handle(
@@ -236,6 +294,24 @@ async fn handle(
                     serde_json::to_vec(&receipt)?,
                 ));
             }
+            if path.split('?').next() == Some("/api/v1/control/shutdown") {
+                // Reachable only in control mode: the guard above answers 405
+                // when there is no `Dashboard`, which is what keeps `observe`
+                // read-only. The flag is the same one `Observer::drop` sets, so
+                // the graceful-shutdown future stops the reactor and this
+                // response still completes on its way out. Nothing else is
+                // terminated: the server retires itself.
+                state.shutdown.store(true, Ordering::Relaxed);
+                return Ok((
+                    200,
+                    "application/json; charset=utf-8",
+                    serde_json::to_vec(&json!({
+                        "schema_version": SCHEMA,
+                        "data": {"stopping": true, "instance_id": state.identity.instance_id,
+                                 "url": state.identity.url},
+                    }))?,
+                ));
+            }
             if path.starts_with("/api/v1/control/") {
                 if let Some(dashboard) = state.dashboard {
                     let value = dashboard.route(method.as_str(), &path, &body)?;
@@ -258,16 +334,12 @@ async fn handle(
                     b"{\"error\":\"read-only endpoint\"}".to_vec(),
                 ));
             }
-            if path.split('?').next() == Some("/api/v1/health") {
-                return Ok((
-                    200,
-                    "application/json",
-                    serde_json::to_vec(
-                        &json!({"schema_version":SCHEMA,"version":env!("CARGO_PKG_VERSION"),"read_only":state.dashboard.is_none(),"environment_id":state.observation.environment_id,"dashboard_source_sha256":assets::SOURCE_HASH}),
-                    )?,
-                ));
-            }
-            route(&path, &state.observation)
+            route(
+                &path,
+                &state.observation,
+                &state.identity,
+                state.dashboard.is_none(),
+            )
         });
         match task.await {
             Ok(Ok(response)) => response,
@@ -453,7 +525,29 @@ async fn media_response(
 
 type WebResult = (u16, &'static str, Vec<u8>);
 
-fn route(url: &str, observation: &Observation) -> Result<WebResult> {
+/// The one health payload, so every path that can answer it answers the same.
+///
+/// `instance` is the addition the CLI could not make before: a caller holding
+/// only a port can now name the project, the process, and the start time behind
+/// it, and a caller probing a lease can tell this server apart from whatever
+/// inherits the port next.
+fn health(observation: &Observation, identity: &Instance, read_only: bool) -> Value {
+    json!({
+        "schema_version": SCHEMA,
+        "version": env!("CARGO_PKG_VERSION"),
+        "read_only": read_only,
+        "environment_id": observation.environment_id,
+        "dashboard_source_sha256": assets::SOURCE_HASH,
+        "instance": identity,
+    })
+}
+
+fn route(
+    url: &str,
+    observation: &Observation,
+    identity: &Instance,
+    read_only: bool,
+) -> Result<WebResult> {
     if url.len() > 4096 {
         return Err(Error::Invalid("request URL too long".into()));
     }
@@ -500,9 +594,7 @@ fn route(url: &str, observation: &Observation) -> Result<WebResult> {
             &observation.environment_id,
             field("run")?,
         )?,
-        "/api/v1/health" => {
-            json!({"schema_version": SCHEMA, "version": env!("CARGO_PKG_VERSION"), "environment_id": observation.environment_id, "read_only": true})
-        }
+        "/api/v1/health" => health(observation, identity, read_only),
         "/api/v1/runs" => observation.runs(query.get("before").map(String::as_str))?,
         "/api/v1/snapshot" => {
             let limit = number("limit", 250)?;

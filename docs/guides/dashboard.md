@@ -9,8 +9,11 @@ idempotent receipts, state/progress panels, and shared Agent queries.
 glr --project . dashboard
 ```
 
-Open the printed localhost URL (port 7432 by default; `--port 0` selects a free
-port). Axum and all page assets are embedded in `glr`; no web runtime, build step,
+Open the printed localhost URL. Without `--port`, the server prefers 7432, then
+falls back to a stable port derived from the project's data directory, then to
+any free port; `--port 0` asks the OS for one. An explicit `--port` is used
+exactly as given and never silently changed — if it is taken, the command fails
+instead. Axum and all page assets are embedded in `glr`; no web runtime, build step,
 CDN, or cloud account is required. Start a preset, inspect the resulting run,
 and use **GLR operations** for reports, source packaging/import, playback,
 knowledge queries, plugins and other CLI operations. Forms come from the same
@@ -23,11 +26,42 @@ All assets are served from the same loopback origin under the existing CSP;
 no inline scripts or external asset hosts are needed.
 
 `glr train` and `glr goal run` also print a read-only observation URL by default.
-Their server stops when the command exits; `--no-observe` disables it. If 7432 is
-occupied, this automatic view uses a free port. Keep `glr dashboard` running
-independently for persistent controls and observation across multiple CLI runs.
-`glr observe` is an explicitly read-only alternative; `--archive DIRECTORY`
-opens a verified backup with the current project's environment scope.
+Their server stops when the command exits; `--no-observe` disables it. If the
+preferred port is occupied, this automatic view moves to the project's own port.
+Keep `glr dashboard` running independently for persistent controls and
+observation across multiple CLI runs. `glr observe` is an explicitly read-only
+alternative; `--archive DIRECTORY` opens a verified backup with the current
+project's environment scope.
+
+## Which workbench is on which port
+
+Every running server publishes an *instance lease* — its instance ID, project
+root, data directory digest, executable, PID, port, URL, mode, version and start
+time — into a per-user registry. `/api/v1/health` returns the same identity under
+`instance`, so a caller can prove which server answered instead of trusting the
+port number.
+
+```powershell
+glr --json dashboard instances          # servers for the current project
+glr --json dashboard instances --all    # every server started by this user
+glr --json dashboard instances --all --prune   # also forget stale leases
+glr --json dashboard stop --instance ID
+glr --json dashboard stop --port 7432
+glr --json dashboard stop --all
+```
+
+A lease is a hint, not the truth: `instances` asks each port's health endpoint
+and compares the returned instance ID. A server that does not answer is `stale`
+(its process is gone or pre-dates this feature); a port that answers as somebody
+else is `foreign`, and is neither listed as yours nor stopped. `stop` requests a
+shutdown — the server retires itself through the same graceful path it uses when
+the owning command exits. Nothing is killed, so a foreign or unresponsive target
+is reported instead of terminated. `stop` refuses when the current project has
+more than one live server and neither `--instance` nor `--all` says which one.
+
+Two servers for the same project are allowed and distinguishable: they share the
+project's `environment_id` and `data_dir_sha256` but have distinct instance IDs
+and ports.
 
 ## Train from the browser or CLI
 

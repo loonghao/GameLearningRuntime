@@ -254,22 +254,49 @@ fn seed(project: &Path) -> String {
     let result = success(run(project, &["train", "--no-observe"]));
     result["data"]["run_id"].as_str().unwrap().to_string()
 }
+
+/// Like [`run`], but with the instance registry pointed at a throwaway path so
+/// a test never reads or writes the operator's real one.
+fn run_in(project: &Path, state: &Path, args: &[&str]) -> Output {
+    Command::new(binary())
+        .env("GLR_NO_UPDATE_CHECK", "1")
+        .env("GLR_STATE_DIR", state)
+        .args(["--json", "--project"])
+        .arg(project)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
 struct Service {
     child: Child,
     url: String,
     client: Client,
+    identity: Value,
+    /// Present only when this service created its own registry, which keeps the
+    /// existing single-server tests out of the operator's profile.
+    _state: Option<TempDir>,
 }
 impl Service {
     fn start(project: &Path, mode: &str) -> Self {
+        let state = tempfile::tempdir().unwrap();
+        let mut service = Self::start_in(project, state.path(), &[mode, "--port", "0"]);
+        service._state = Some(state);
+        service
+    }
+
+    /// Start with a registry the caller also drives from the CLI.
+    fn start_in(project: &Path, state: &Path, args: &[&str]) -> Self {
         let mut child = Command::new(binary())
             .env("GLR_NO_UPDATE_CHECK", "1")
+            .env("GLR_STATE_DIR", state)
             .env(
                 "GLR_TELEMETRY_TOKEN",
                 "test-bridge-token-01234567890123456789",
             )
             .args(["--json", "--project"])
             .arg(project)
-            .args([mode, "--port", "0"])
+            .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -293,12 +320,23 @@ impl Service {
         Self {
             child,
             url,
+            identity: value["data"]["instance"].clone(),
+            _state: None,
             client: Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
                 .unwrap(),
         }
     }
+
+    fn instance_id(&self) -> String {
+        self.identity["instance_id"].as_str().unwrap().to_string()
+    }
+
+    fn port(&self) -> u64 {
+        self.identity["port"].as_u64().unwrap()
+    }
+
     fn get(&self, path: &str) -> reqwest::blocking::Response {
         self.client
             .get(format!("{}{path}", self.url))
@@ -915,4 +953,171 @@ fn log_history_pages_preserve_utf8_and_reassemble_in_both_directions() {
     assert_eq!(page["text"], "汉\n");
     let reset: Value = server.get(&format!("{url}&before=9999")).json().unwrap();
     assert_eq!(reset["reset"], true);
+}
+
+/// Acceptance criteria 1-3: two projects start with no `--port` argument, each
+/// reports where it bound, health names its own project, and one command lists
+/// every live server.
+#[test]
+fn two_projects_start_without_a_port_and_a_port_names_its_own_project() {
+    let state = tempfile::tempdir().unwrap();
+    let first = project();
+    let second = project();
+
+    let one = Service::start_in(first.path(), state.path(), &["dashboard"]);
+    let two = Service::start_in(second.path(), state.path(), &["dashboard"]);
+    assert_ne!(
+        one.port(),
+        two.port(),
+        "two projects must not be handed the same default address"
+    );
+
+    // Given only a port, recover the project: this is what four anonymous
+    // servers could not answer before.
+    let health: Value = one.get("/api/v1/health").json().unwrap();
+    assert_eq!(health["instance"]["instance_id"], one.instance_id());
+    assert_eq!(health["instance"]["port"].as_u64().unwrap(), one.port());
+    assert_eq!(health["environment_id"], "test.dashboard");
+    assert!(health["instance"]["pid"].as_u64().unwrap() > 0);
+    assert_eq!(
+        health["instance"]["data_dir_sha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    // `project.root` is canonicalised, which on Windows means the verbatim
+    // `\\?\` prefix; compare the path the operator would recognise.
+    assert_eq!(
+        health["instance"]["project_root"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("\\\\?\\"),
+        first.path().to_str().unwrap(),
+        "{health}"
+    );
+
+    // Given this user, list every live server, whichever project it serves.
+    let every = success(run_in(
+        first.path(),
+        state.path(),
+        &["dashboard", "instances", "--all"],
+    ));
+    assert_eq!(every["data"]["live"], 2, "{every}");
+    let ids: Vec<&str> = every["data"]["instances"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["instance_id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&one.instance_id().as_str()), "{every}");
+    assert!(ids.contains(&two.instance_id().as_str()), "{every}");
+
+    // Scoped to a project, only that project's server is listed.
+    let scoped = success(run_in(
+        first.path(),
+        state.path(),
+        &["dashboard", "instances"],
+    ));
+    assert_eq!(scoped["data"]["scope"], "project");
+    assert_eq!(scoped["data"]["instances"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        scoped["data"]["instances"][0]["instance_id"],
+        one.instance_id()
+    );
+}
+
+/// Acceptance criteria 2 and 5 with the ambiguity and stop-path rules: two
+/// servers for one project stay distinguishable, an ambiguous stop is refused,
+/// and an explicit stop retires exactly the server named.
+#[test]
+fn a_second_server_for_one_project_is_distinguishable_and_stop_is_explicit() {
+    let state = tempfile::tempdir().unwrap();
+    let dir = project();
+    let one = Service::start_in(dir.path(), state.path(), &["dashboard"]);
+    let two = Service::start_in(dir.path(), state.path(), &["dashboard", "--port", "0"]);
+    assert_ne!(one.instance_id(), two.instance_id());
+    assert_ne!(one.port(), two.port());
+
+    let both = success(run_in(
+        dir.path(),
+        state.path(),
+        &["dashboard", "instances"],
+    ));
+    assert_eq!(both["data"]["live"], 2, "{both}");
+    let rows = both["data"]["instances"].as_array().unwrap();
+    // Two servers, one project: distinguishable by port and instance id, and
+    // recognisable as the same project by everything else.
+    assert_eq!(rows[0]["environment_id"], rows[1]["environment_id"]);
+    assert_eq!(rows[0]["data_dir_sha256"], rows[1]["data_dir_sha256"]);
+    assert_ne!(rows[0]["port"], rows[1]["port"]);
+    assert_ne!(rows[0]["instance_id"], rows[1]["instance_id"]);
+
+    // Neither server may be picked for the operator: two live servers for one
+    // project is ambiguous, and guessing would retire the wrong one.
+    let ambiguous = run_in(dir.path(), state.path(), &["dashboard", "stop"]);
+    assert!(!ambiguous.status.success());
+    assert!(
+        String::from_utf8_lossy(&ambiguous.stderr).contains("--instance"),
+        "{}",
+        String::from_utf8_lossy(&ambiguous.stderr)
+    );
+    assert_eq!(
+        one.get("/api/v1/health").status(),
+        200,
+        "a refused stop must leave the server running"
+    );
+
+    let stopped = success(run_in(
+        dir.path(),
+        state.path(),
+        &["dashboard", "stop", "--instance", &one.instance_id()],
+    ));
+    assert_eq!(stopped["data"]["confirmed"], 1, "{stopped}");
+    assert_eq!(
+        stopped["data"]["requested"][0]["instance_id"],
+        one.instance_id()
+    );
+    assert_eq!(
+        stopped["data"]["requested"][0]["pid"].as_u64().unwrap(),
+        one.identity["pid"].as_u64().unwrap()
+    );
+
+    // The receipt claimed the server retired; prove it from the outside.
+    let remaining = success(run_in(
+        dir.path(),
+        state.path(),
+        &["dashboard", "instances"],
+    ));
+    assert_eq!(remaining["data"]["live"], 1, "{remaining}");
+    let rows = remaining["data"]["instances"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row["instance_id"] == *two.instance_id() && row["state"] == "live"),
+        "{remaining}"
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row["instance_id"] == *one.instance_id() && row["state"] == "live"),
+        "the retired server must stop answering health: {remaining}"
+    );
+
+    // An id nobody published is an error, not a silent no-op.
+    let unknown = run_in(
+        dir.path(),
+        state.path(),
+        &[
+            "dashboard",
+            "stop",
+            "--instance",
+            "deadbeefdeadbeefdeadbeefdeadbeef",
+        ],
+    );
+    assert!(!unknown.status.success());
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("missing file or directory"),
+        "{}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
 }

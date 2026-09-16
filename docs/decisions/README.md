@@ -29,6 +29,7 @@
 
 - [ADR-0028: Embed a durable training dashboard](0028-embedded-training-dashboard.md)
 - [ADR-0029: Bound the runtime start readiness window in the project contract](0029-bound-runtime-start-readiness.md)
+- [ADR-0030: Give each workbench server an instance identity](0030-give-workbench-servers-an-instance-identity.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

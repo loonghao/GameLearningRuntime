@@ -7,6 +7,7 @@ mod contracts;
 mod dashboard;
 mod error;
 mod filesystem;
+mod instance;
 mod learning_checkpoint;
 mod media;
 mod observation;
