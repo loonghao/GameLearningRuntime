@@ -174,8 +174,13 @@ describe("observation views", () => {
     expect(screen.getByRole("spinbutton", { name: "Filter step" })).toHaveValue(
       4,
     );
-    expect(screen.getByLabelText("Evidence payload")).toHaveTextContent(
-      '"position":',
+    fireEvent.click(
+      screen.getByLabelText("Evidence payload").querySelector("summary")!,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Evidence payload")).toHaveTextContent(
+        "position",
+      ),
     );
   });
   it("displays source-bound progress with received time and an inspect action", () => {

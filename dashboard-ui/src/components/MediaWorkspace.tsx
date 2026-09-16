@@ -14,6 +14,7 @@ import {
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "./ui/button";
+import { OutputViewer } from "./StructuredOutput";
 import { Badge } from "./ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { get, type Event, type Run } from "@/lib/api";
@@ -166,7 +167,7 @@ function DocumentView({
             </Markdown>
           </article>
         ) : (
-          <pre tabIndex={0}>{value.text}</pre>
+          <OutputViewer text={value.text} partialEnd={value.truncated} />
         ))}
       {value?.truncated && (
         <p className="muted">

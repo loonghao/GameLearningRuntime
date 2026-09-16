@@ -19,6 +19,7 @@ import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Label } from "./ui/label";
 import { Badge } from "./ui/badge";
+import { OutputViewer } from "./StructuredOutput";
 import {
   control,
   download,
@@ -34,6 +35,7 @@ export function TrainingControls({
 }: {
   onSelectJob: (id: string) => void;
 }) {
+  const [outputTruncated, setOutputTruncated] = useState(false);
   const [presets, setPresets] = useState<Preset[]>([]),
     [catalog, setCatalog] = useState<Operation[]>([]);
   const [operationName, setOperationName] = useState("train"),
@@ -118,6 +120,7 @@ export function TrainingControls({
   }, []);
   useEffect(() => {
     setOutput("");
+    setOutputTruncated(false);
     if (!selectedJob) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -128,10 +131,10 @@ export function TrainingControls({
           undefined,
           abort.signal,
         );
-        if (!abort.signal.aborted)
-          setOutput(
-            (log.tail_truncated ? "[Showing latest 64 KiB]\n" : "") + log.text,
-          );
+        if (!abort.signal.aborted) {
+          setOutput(log.text);
+          setOutputTruncated(log.tail_truncated);
+        }
       } catch (e) {
         if (!abort.signal.aborted) setOutput(String(e));
       } finally {
@@ -486,9 +489,17 @@ export function TrainingControls({
                   <option>stdout</option>
                 </select>
               </div>
-              <pre className="console mt-3" tabIndex={0}>
-                {output || "No output yet."}
-              </pre>
+              {outputTruncated && (
+                <p className="output-notice">
+                  Showing the latest 64 KiB of operation output. Earlier bytes
+                  remain in the persisted job log.
+                </p>
+              )}
+              <OutputViewer
+                key={`${selectedJob}:${stream}`}
+                text={output}
+                partialStart={outputTruncated}
+              />
             </div>
           </div>
         </CardContent>

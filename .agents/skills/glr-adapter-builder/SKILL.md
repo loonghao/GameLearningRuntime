@@ -291,6 +291,12 @@ decision, not permission to move game semantics or learner algorithms into
 Rust. Preserve Python reference behavior and cross-language fixtures.
 
 ## Evidence and recording
+
+Read [workbench diagnostics](references/diagnostics.md) before implementing
+data collection, structured process output, game-neutral panels or media
+registration. Validate the installed telemetry schema and preserve source/run/
+episode/step identity; diagnostic delivery never retries a game action.
+
 Before any boss or elite combat action, start and verify the configured recording provider. Persist route transitions and combat outcomes using docs/knowledge/combat-route-evidence.v1.json; retain recording provenance and exact producer binding. Never publish local paths, PIDs, HWNDs, credentials, or private traces.
 
 ## Training capture profile

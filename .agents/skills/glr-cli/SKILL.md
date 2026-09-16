@@ -194,6 +194,11 @@ the adapter/runtime boundary when authoritative evidence is missing.
 
 ## Dashboard, telemetry, and durable history
 
+Read [data collection and rendering](references/data-collection.md) before wiring
+Bridge/learner reporting, interpreting process output, adding workbench panels,
+or diagnosing missing data. It covers HTTP/CLI/SDK ingestion, media registration,
+legacy JSONL, FFmpeg output, cursor readback and backup boundaries.
+
 - Start `glr dashboard` for human controls; agent commands remain the same CLI
   contracts. Dashboard forms are derived from clap. `train` and `goal run` start
   a command-lifetime read-only observation server unless `--no-observe` is explicit.

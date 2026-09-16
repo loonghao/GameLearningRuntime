@@ -41,6 +41,11 @@ export interface BridgeState {
 }
 export interface LogPage {
   text: string;
+  offset: number;
+  partial_start?: boolean;
+  partial_end?: boolean;
+  tail_truncated?: boolean;
+  more?: boolean;
   reset: boolean;
   next_offset: number;
   size_bytes: number;

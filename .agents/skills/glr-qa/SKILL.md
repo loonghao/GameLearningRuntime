@@ -40,6 +40,26 @@ python -m game_learning_runtime.qa "inspect the whole game for bugs" `
 Do not claim release quality from this report alone. Keep proprietary traces and
 secrets out of artifacts; publish only evidence the project owner authorized.
 
+## Verify workbench collection
+
+- Inspect the installed `glr --json telemetry schema` before assuming a view or
+  reporting feature exists. Read the `glr-cli` Skill's
+  `references/data-collection.md` when that Skill is installed.
+- Read back `glr --json telemetry state RUN_ID` and
+  `glr --json runs trace RUN_ID --events-after -1 --metrics-after 0` with complete
+  cursor traversal. Match run/environment, source, episode and step before
+  correlating events, metrics, capture frames or evaluator outcomes.
+- Inspect legacy JSONL through Process logs or `glr --json runs log RUN_ID
+  --path trainer.log --offset 0`. Continue byte cursors; a rendered 64 KiB tail,
+  filtered record set or browser export is not the complete history. Confirm
+  truncated/partial records are labelled rather than silently dropped.
+- Check one actual event/metric, source-state update and registered artifact.
+  Reopen the observer and verify a completed-run backup to test persistence.
+  Do not fabricate diagnostics or start a live game merely to populate cards.
+- A successful ingest, rendered workbench, or process receipt does not establish
+  action success, effective learning or capture alignment. Report missing source
+  instrumentation separately from frontend rendering defects.
+
 ## Training capture profile
 
 For imported projects, use the sibling [package workflow](../glr-cli/references/packages.md).

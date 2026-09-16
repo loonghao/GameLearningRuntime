@@ -120,6 +120,19 @@ impl Observation {
     }
 
     pub fn log(&self, run_id: &str, relative: &str, offset: Option<u64>) -> Result<Value> {
+        self.log_page(run_id, relative, offset, None)
+    }
+
+    pub fn log_page(
+        &self,
+        run_id: &str,
+        relative: &str,
+        offset: Option<u64>,
+        before: Option<u64>,
+    ) -> Result<Value> {
+        if offset.is_some() && before.is_some() {
+            return Err(Error::Invalid("choose offset or before, not both".into()));
+        }
         let store = self.store()?;
         if store.get_run(run_id)?.environment_id != self.environment_id {
             return Err(Error::Invalid("run belongs to another environment".into()));
@@ -140,20 +153,47 @@ impl Observation {
         let path = safe_child(&self.run_dir(run_id)?, Path::new(relative))?;
         let mut file = File::open(path)?;
         let size = file.metadata()?.len();
-        let reset = offset.is_some_and(|value| value > size);
-        let start = if reset {
+        let reset =
+            offset.is_some_and(|value| value > size) || before.is_some_and(|value| value > size);
+        let end = before.unwrap_or(size).min(size);
+        let mut start = if reset {
             0
         } else {
-            offset.unwrap_or_else(|| size.saturating_sub(LOG_BYTES))
+            offset.unwrap_or_else(|| end.saturating_sub(LOG_BYTES))
         };
         file.seek(SeekFrom::Start(start))?;
         let mut bytes = Vec::new();
-        file.take(LOG_BYTES).read_to_end(&mut bytes)?;
+        (&mut file)
+            .take(LOG_BYTES.min(end.saturating_sub(start)))
+            .read_to_end(&mut bytes)?;
+        // Keep independently fetched pages composable across UTF-8 boundaries.
+        let leading = bytes.iter().take_while(|b| **b & 0xc0 == 0x80).count();
+        bytes.drain(..leading);
+        start += leading as u64;
+        if let Some(index) = bytes.iter().rposition(|b| b & 0xc0 != 0x80) {
+            let width = match bytes[index] {
+                0xc2..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf4 => 4,
+                _ => 1,
+            };
+            if bytes.len() - index < width {
+                bytes.truncate(index);
+            }
+        }
         let next = start + bytes.len() as u64;
+        let mut preceding = *b"\n";
+        if start > 0 {
+            file.seek(SeekFrom::Start(start - 1))?;
+            file.read_exact(&mut preceding)?;
+        }
+        let partial_start = start > 0 && !matches!(preceding[0], b'\n' | b'\r');
+        let partial_end = bytes.last().is_some_and(|b| !matches!(b, b'\n' | b'\r'));
         Ok(
             json!({"schema_version": SCHEMA, "run_id": run_id, "path": relative,
             "offset": start, "next_offset": next, "size_bytes": size, "reset": reset,
             "tail_truncated": offset.is_none() && start > 0, "more": next < size,
+            "partial_start":partial_start,"partial_end":partial_end,
             "text": String::from_utf8_lossy(&bytes)}),
         )
     }

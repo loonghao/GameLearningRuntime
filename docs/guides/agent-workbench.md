@@ -89,6 +89,29 @@ survival and custom shapes against Rust and TypeScript validation.
 
 ## Process view
 
+Agent activity also includes a **Process logs** tab. Legacy runs whose structured
+records exist only in `trainer.log` no longer require a Bridge schema migration:
+JSON/JSONL render as selectable records, scalar fields, expandable objects and
+tables; FFmpeg key/value progress renders as fields. Plain text remains readable,
+and **Raw text** preserves the loaded output. The same renderer is used by process
+input/output, operation output, document previews and the evidence inspector.
+File records do not receive fabricated event IDs, timestamps, metric values or
+capture bindings. They remain distinct from persisted agent events.
+
+Managed logs initially load the latest 64 KiB and explicitly identify omitted
+bytes. **Earlier output**, **Next output**, **Read from start**, and **Follow latest**
+let readers navigate the full file without an unbounded browser buffer. At most
+16 pages are retained. Records crossing page boundaries become structured once
+their fragments are joined; incomplete records are labelled. Unicode characters
+are not split between pages. Record search applies to the loaded window, and
+additional table rows/fields have explicit expansion controls. Operation output
+currently remains a labelled 64 KiB tail; its full file is kept in the job store.
+
+`GET /api/v1/log?run=ID&path=trainer.log&before=BYTE` reads the page preceding a
+cursor; `offset=BYTE` reads forward. These parameters are mutually exclusive.
+Responses include `offset`, `next_offset`, `size_bytes`, `partial_start` and
+`partial_end`. A trailing, unfinished UTF-8 character is deferred to the next read.
+
 The light, blue-accent workbench provides a four-lane overview, searchable steps,
 source/category filters, and an input/output inspector. `agent.decision` maps to
 Model, `agent.execution`/`tool.*`/`process.*`/`bridge.log` to Tools, `learning.*` to

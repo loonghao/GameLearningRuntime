@@ -855,3 +855,64 @@ fn workbench_views_are_validated_atomically_and_readable_by_agents() {
         "glr.workbench.v1"
     );
 }
+
+#[test]
+fn log_history_pages_preserve_utf8_and_reassemble_in_both_directions() {
+    let project = project();
+    let id = seed(project.path());
+    let path = project
+        .path()
+        .join(".glr/runs")
+        .join(&id)
+        .join("trainer.log");
+    let original = format!(
+        "{{\"kind\":\"roster\",\"name\":\"{}\"}}\n",
+        "汉".repeat(50000)
+    );
+    fs::write(&path, &original).unwrap();
+    let server = Service::start(project.path(), "observe");
+    let url = format!("/api/v1/log?run={id}&path=trainer.log");
+    let mut cursor = 0;
+    let mut forward = String::new();
+    loop {
+        let page: Value = server
+            .get(&format!("{url}&offset={cursor}"))
+            .json()
+            .unwrap();
+        assert_eq!(page["offset"].as_u64().unwrap(), cursor);
+        let text = page["text"].as_str().unwrap();
+        assert!(!text.contains('\u{fffd}'));
+        forward.push_str(text);
+        cursor = page["next_offset"].as_u64().unwrap();
+        if page["more"] == false {
+            break;
+        }
+    }
+    assert_eq!(forward, original);
+    let mut page: Value = server.get(&url).json().unwrap();
+    assert_eq!(page["partial_start"], true);
+    let mut reverse = page["text"].as_str().unwrap().to_owned();
+    while page["offset"].as_u64().unwrap() > 0 {
+        let before = page["offset"].as_u64().unwrap();
+        page = server
+            .get(&format!("{url}&before={before}"))
+            .json()
+            .unwrap();
+        assert_eq!(page["next_offset"].as_u64().unwrap(), before);
+        reverse.insert_str(0, page["text"].as_str().unwrap());
+    }
+    assert_eq!(reverse, original);
+    assert_eq!(
+        server.get(&format!("{url}&before=1&offset=0")).status(),
+        400
+    );
+    fs::write(&path, b"x\xe6\xb1").unwrap();
+    let page: Value = server.get(&format!("{url}&offset=0")).json().unwrap();
+    assert_eq!(page["text"], "x");
+    assert_eq!(page["next_offset"], 1);
+    fs::write(&path, "x汉\n").unwrap();
+    let page: Value = server.get(&format!("{url}&offset=1")).json().unwrap();
+    assert_eq!(page["text"], "汉\n");
+    let reset: Value = server.get(&format!("{url}&before=9999")).json().unwrap();
+    assert_eq!(reset["reset"], true);
+}
