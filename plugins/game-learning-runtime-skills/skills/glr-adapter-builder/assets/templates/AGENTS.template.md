@@ -20,6 +20,11 @@ Operate only an owned or explicitly authorized offline/test runtime. @@LOADER_NO
   --json train`, and verified playback through the same project entry.
 - Read `QUALITY.md`: all reusable Python logic belongs in the installable
   `@@PACKAGE@@` namespace, with no import path injection.
+- Read `ARCHITECTURE.md` before moving modules. Preserve contract identity and
+  independently test environment, policy, learner, collection, and storage.
+- Read `USER_RELEASE.md` before distributing a trained stage. Package immutable
+  weights with the inference runtime; record scope, install/startup/uninstall
+  evidence and data-preserving rollback. A source ZIP or wheel alone is insufficient.
 - Before upgrading GLR, read `FRAMEWORK_MIGRATION.md` and `MIGRATIONS.md`.
   Inventory source/target versions, validate backups and converters, migrate to
   staging, and prove rollback; never silently reset training history or weights.

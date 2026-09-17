@@ -41,6 +41,14 @@ logging, optional error aggregation, and offline regression gates apply to the
 project's trainers and utilities as well as its adapter. The scaffold emits this
 contract as `QUALITY.md`; run `vx run package-check` before delivery.
 
+Read [module-boundaries.md](references/module-boundaries.md) before splitting or
+moving training code. The scaffold includes it as `ARCHITECTURE.md`. Enforce
+dependency direction and independent testing; one wheel may own several modules.
+
+For a trained-stage handoff, read [user-releases.md](references/user-releases.md).
+The scaffold emits `USER_RELEASE.md`. Require a bundled inference runtime and
+installed-app tests; a source package or wheel alone is not a user installer.
+
 For upgrades, read [framework-migration.md](references/framework-migration.md)
 before editing dependencies or persistent state. The scaffold emits
 `FRAMEWORK_MIGRATION.md` and `MIGRATIONS.md` for code, configuration, dataset,

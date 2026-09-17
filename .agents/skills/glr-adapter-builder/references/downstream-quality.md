@@ -8,6 +8,9 @@ package and its callers at a time, with recorded remaining gaps.
 
 ## Package and architecture contract
 
+Use the module responsibility and migration contract in generated
+`ARCHITECTURE.md` (the Skill's `module-boundaries.md` reference).
+
 - Use `pyproject.toml`, an explicit build backend, and `src/<project_namespace>/`.
   Each reusable Python component belongs to an installable wheel. Do not use
   `[tool.uv] package = false` for an application containing reusable Python logic.

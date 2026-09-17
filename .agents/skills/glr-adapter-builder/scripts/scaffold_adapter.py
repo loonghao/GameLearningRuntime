@@ -1186,6 +1186,8 @@ def main() -> int:
     _write(output / "AGENTS.md", _agents_md(args.package, loader=args.loader))
     for name, reference in (
         ("QUALITY.md", "downstream-quality.md"),
+        ("ARCHITECTURE.md", "module-boundaries.md"),
+        ("USER_RELEASE.md", "user-releases.md"),
         ("FRAMEWORK_MIGRATION.md", "framework-migration.md"),
     ):
         _write(output / name, (_SKILL_ROOT / "references" / reference).read_text(encoding="utf-8"))

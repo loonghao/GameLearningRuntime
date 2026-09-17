@@ -23,6 +23,12 @@ running a goal, transferring knowledge, or claiming reproduction.
 
 ## Select the correct boundary
 
+- For a trained-stage installer, read the project's `USER_RELEASE.md`,
+  `ARCHITECTURE.md`, and migration records. Use the adapter-builder release
+  reference if absent. Source import and model checksums do not prove that an
+  installed inference application works. Keep versions immutable and migrations
+  explicit; do not invent unsupported release CLI commands.
+
 - Use this Skill when the project already has a reviewed runtime bridge and needs CLI setup or
   operation.
 - Use `glr-adapter-builder` when implementing or changing observation, action, lifecycle,

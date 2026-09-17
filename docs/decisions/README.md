@@ -34,5 +34,7 @@
 - [ADR-0031: Bind every training role to one trial identity](0031-bind-roles-to-one-trial-identity.md)
 - [ADR-0032: Host an externally driven loop inside a run](0032-host-an-externally-driven-loop.md)
 
+- [ADR-0033: Package trained-stage installers](0033-package-trained-stage-installers.md)
+
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

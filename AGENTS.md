@@ -34,6 +34,9 @@ logs never replace authoritative learner metrics or terminal evidence.
 Framework upgrades must follow the code/config/data/checkpoint migration contract
 in that guide: inventory versions, back up consistently, dry-run to a new
 destination, verify integrity, and retain a tested rollback.
+Follow the adapter-builder module-boundary and user-release references for
+downstream architecture and trained-stage distribution. A user installer includes
+the inference runtime and immutable model, with installed-app acceptance evidence.
 
 ## Git identity
 

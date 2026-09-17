@@ -3,6 +3,10 @@
 Use this workflow for an explicitly selected source-only project handoff. It
 does not package models, real datasets, recordings, game binaries or accounts.
 
+For a trained-stage installer, follow the project's `USER_RELEASE.md` or the
+sibling adapter-builder `references/user-releases.md`. It uses a separately
+prepared runtime and model bundle; this source-only contract remains unchanged.
+
 1. Select individual files and review their contents and redistribution rights.
    Exclude secrets, host paths, private endpoints and recipient-local overrides.
    Extension checks are not a secret scanner. Include exactly one project manifest,

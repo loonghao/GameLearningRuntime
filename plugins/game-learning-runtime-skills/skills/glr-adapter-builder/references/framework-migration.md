@@ -4,6 +4,11 @@ Use this procedure whenever an agent upgrades GLR or its downstream packages.
 Read the project's `QUALITY.md` and `MIGRATIONS.md` first. Dependency installation
 is not data migration. Do not invent migration commands absent from the release.
 
+For a module split, read `ARCHITECTURE.md` and record old/new ownership and import
+edges. Check serialized Python module/class references, configuration entrypoints,
+and observation/action ordering before moving code. A source-only rename can
+break old checkpoints even when dependency versions have not changed.
+
 ## Establish source and target
 
 Record installed GLR version and import origin, application revision, Python,

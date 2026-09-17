@@ -623,6 +623,7 @@ runbook](docs/runbooks/release.md).
 
 - [Getting started](docs/guides/getting-started.md)
 - [Downstream Python quality and framework migrations](docs/guides/downstream-quality.md)
+- [Distribute a trained stage as a user installer](docs/guides/trained-stage-releases.md)
 - [Operate GLR as an agent-first control plane](docs/guides/agent-first-cli.md)
 - [Build a reusable runtime bridge](docs/guides/runtime-bridges.md)
 - [Connect Unity and Unreal runtimes](docs/guides/engine-runtime-integration.md)
