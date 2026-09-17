@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.22.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.21.0...v0.22.0) (2026-09-17)
+
+
+### Features
+
+* define module boundaries and build trained-stage installers ([48b37c4](https://github.com/loonghao/GameLearningRuntime/commit/48b37c431eaf9e74418c781d718922ddc889f651))
+
 ## [0.21.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.20.0...v0.21.0) (2026-09-17)
 
 
