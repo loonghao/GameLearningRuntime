@@ -1191,11 +1191,11 @@ def main() -> int:
         _write(output / name, (_SKILL_ROOT / "references" / reference).read_text(encoding="utf-8"))
     _write(
         output / "MIGRATIONS.md",
-        _load_text_asset("templates/MIGRATIONS.md.template", package=args.package),
+        _load_text_asset("templates/MIGRATIONS.template.md", package=args.package),
     )
     _write(
         output / "scripts/check_wheel.py",
-        _load_text_asset("templates/check_wheel.py.template", package=args.package),
+        _load_text_asset("templates/check_wheel.template.py", package=args.package),
     )
     _write(
         output / "scripts/train_reference.py",
