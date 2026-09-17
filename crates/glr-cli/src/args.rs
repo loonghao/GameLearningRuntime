@@ -319,9 +319,28 @@ pub enum RuntimeCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum GoalCommand {
-    Run {
+    /// Save a goal file as this project's default goal and make it active.
+    ///
+    /// Pair it with the global `--context` flag to bind the run context that
+    /// freezes the goal's training and reward inputs.
+    Set {
+        /// Project-relative `glr.agent-goal.v1` file to bind.
         #[arg(long)]
         goal: PathBuf,
+    },
+    /// Show the active goal, or one saved goal by id.
+    Show {
+        /// Saved goal id. Omit to show the active goal.
+        goal_id: Option<String>,
+    },
+    /// Make one saved goal the active default goal.
+    Use { goal_id: String },
+    /// List every goal saved in this project.
+    List,
+    /// Pursue a goal. Omit `--goal` to pursue the saved default goal.
+    Run {
+        #[arg(long)]
+        goal: Option<PathBuf>,
         #[arg(long)]
         no_capture: bool,
         #[arg(long)]
@@ -586,7 +605,9 @@ impl UpdateArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Command};
+    use std::path::Path;
+
+    use super::{Cli, Command, GoalCommand};
     use clap::Parser;
 
     #[test]
@@ -612,5 +633,72 @@ mod tests {
         };
         assert!(arguments.yes);
         assert!(arguments.applies_update());
+    }
+
+    #[test]
+    fn goal_run_accepts_an_explicit_goal_and_omits_it_for_the_default() {
+        let cli = Cli::try_parse_from(["glr", "goal", "run"]).unwrap();
+        let Command::Goal { command } = cli.command else {
+            panic!("expected goal command");
+        };
+        let GoalCommand::Run { goal, .. } = command else {
+            panic!("expected goal run");
+        };
+        assert_eq!(goal, None);
+
+        let cli = Cli::try_parse_from(["glr", "goal", "run", "--goal", "goals/a.json"]).unwrap();
+        let Command::Goal { command } = cli.command else {
+            panic!("expected goal command");
+        };
+        let GoalCommand::Run { goal, .. } = command else {
+            panic!("expected goal run");
+        };
+        assert_eq!(goal.as_deref(), Some(Path::new("goals/a.json")));
+    }
+
+    #[test]
+    fn goal_set_binds_a_goal_with_the_global_context_flag() {
+        let cli = Cli::try_parse_from([
+            "glr",
+            "--context",
+            "config/contexts/ranked.toml",
+            "goal",
+            "set",
+            "--goal",
+            "goals/a.json",
+        ])
+        .unwrap();
+        let Command::Goal { command } = cli.command else {
+            panic!("expected goal command");
+        };
+        let GoalCommand::Set { goal } = command else {
+            panic!("expected goal set");
+        };
+        assert_eq!(goal, Path::new("goals/a.json"));
+        assert_eq!(
+            cli.context.as_deref(),
+            Some(Path::new("config/contexts/ranked.toml"))
+        );
+    }
+
+    #[test]
+    fn goal_show_takes_an_optional_saved_goal_id() {
+        let cli = Cli::try_parse_from(["glr", "goal", "show"]).unwrap();
+        let Command::Goal { command } = cli.command else {
+            panic!("expected goal command");
+        };
+        let GoalCommand::Show { goal_id } = command else {
+            panic!("expected goal show");
+        };
+        assert_eq!(goal_id, None);
+
+        let cli = Cli::try_parse_from(["glr", "goal", "show", "goal.reach-destination"]).unwrap();
+        let Command::Goal { command } = cli.command else {
+            panic!("expected goal command");
+        };
+        let GoalCommand::Show { goal_id } = command else {
+            panic!("expected goal show");
+        };
+        assert_eq!(goal_id.as_deref(), Some("goal.reach-destination"));
     }
 }

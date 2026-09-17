@@ -70,7 +70,8 @@ pub struct RunContext {
 
 impl RunContext {
     pub fn load(project: &Project, requested: &Path) -> Result<Self> {
-        let (source_path, source_relative) = regular_project_file(&project.root, requested)?;
+        let (source_path, source_relative) =
+            regular_project_file(&project.root, requested, "run context")?;
         let source_bytes = read_bounded(&source_path)?;
         let text = std::str::from_utf8(&source_bytes)
             .map_err(|_| invalid("run context must be UTF-8 TOML"))?;
@@ -123,7 +124,7 @@ impl RunContext {
                 )));
             }
             let requested = Path::new(&reference.path);
-            let (path, relative) = regular_project_file(&project.root, requested)?;
+            let (path, relative) = regular_project_file(&project.root, requested, "run context")?;
             if relative == source_relative || !paths.insert(relative.clone()) {
                 return Err(invalid(format!(
                     "duplicate run context input path: {relative}"
@@ -211,7 +212,7 @@ fn verify_identity(
     expected: &str,
     expected_size: usize,
 ) -> Result<()> {
-    let (path, normalized) = regular_project_file(root, Path::new(relative))?;
+    let (path, normalized) = regular_project_file(root, Path::new(relative), "run context")?;
     if normalized != relative {
         return Err(Error::Contract("run context path identity changed".into()));
     }
@@ -250,7 +251,15 @@ fn verify_schema(path: &Path, bytes: &[u8], expected: &str) -> Result<()> {
     Ok(())
 }
 
-fn regular_project_file(root: &Path, requested: &Path) -> Result<(PathBuf, String)> {
+/// Resolve a project-relative path to a regular file that cannot escape `root`.
+///
+/// `label` names the calling contract so rejections name the file the caller
+/// asked for instead of an unrelated one.
+pub(crate) fn regular_project_file(
+    root: &Path,
+    requested: &Path,
+    label: &str,
+) -> Result<(PathBuf, String)> {
     if requested.as_os_str().is_empty()
         || requested.is_absolute()
         || requested.components().any(|component| {
@@ -263,20 +272,20 @@ fn regular_project_file(root: &Path, requested: &Path) -> Result<(PathBuf, Strin
             )
         })
     {
-        return Err(invalid("run context paths must be project-relative"));
+        return Err(invalid(format!("{label} paths must be project-relative")));
     }
     let relative = requested.to_string_lossy().replace('\\', "/");
     if relative.len() > 512 {
-        return Err(invalid("run context path exceeds 512 bytes"));
+        return Err(invalid(format!("{label} path exceeds 512 bytes")));
     }
     let mut current = root.to_path_buf();
     for component in requested.components() {
         if let Component::Normal(value) = component {
             current.push(value);
             if current.exists() && linked(&current)? {
-                return Err(invalid(
-                    "run context paths cannot contain links or reparse points",
-                ));
+                return Err(invalid(format!(
+                    "{label} paths cannot contain links or reparse points",
+                )));
             }
         }
     }

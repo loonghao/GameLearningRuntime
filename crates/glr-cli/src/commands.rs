@@ -208,9 +208,24 @@ pub fn execute(cli: Cli) -> Result<i32> {
         }
     }
     let mut project = load_project(&cli.project)?;
+    // An explicit `--context` always wins; otherwise a training command may
+    // inherit the context bound to the active default goal.
+    let inherited_context = if cli.context.is_none()
+        && matches!(
+            cli.command,
+            CliCommand::Train { .. }
+                | CliCommand::Goal {
+                    command: GoalCommand::Run { .. }
+                }
+        ) {
+        crate::goal_binding::active_context(&project)?
+    } else {
+        None
+    };
     project.run_context = cli
         .context
         .as_ref()
+        .or(inherited_context.as_ref())
         .map(|path| crate::run_context::RunContext::load(&project, path))
         .transpose()?;
     let store = Store::open(project.data_dir.join("runs.sqlite3"))?;
@@ -276,17 +291,27 @@ pub fn execute(cli: Cli) -> Result<i32> {
             !no_telemetry,
             cli.json,
         ),
-        CliCommand::Goal {
-            command:
-                GoalCommand::Run {
-                    goal,
-                    no_capture,
-                    no_observe,
-                },
-        } => {
-            let _observer = crate::observe::start_default(&project, !no_observe);
-            run_goal(&project, &store, &absolute(&goal)?, cli.json, !no_capture)
-        }
+        CliCommand::Goal { command } => match command {
+            GoalCommand::Set { goal } => {
+                crate::goal_binding::set_command(&project, &goal, cli.context.as_deref(), cli.json)
+            }
+            GoalCommand::Show { goal_id } => {
+                crate::goal_binding::show_command(&project, goal_id.as_deref(), cli.json)
+            }
+            GoalCommand::Use { goal_id } => {
+                crate::goal_binding::use_command(&project, &goal_id, cli.json)
+            }
+            GoalCommand::List => crate::goal_binding::list_command(&project, cli.json),
+            GoalCommand::Run {
+                goal,
+                no_capture,
+                no_observe,
+            } => {
+                let _observer = crate::observe::start_default(&project, !no_observe);
+                let (goal_path, source) = crate::goal_binding::resolve(&project, goal.as_deref())?;
+                run_goal(&project, &store, &goal_path, source, cli.json, !no_capture)
+            }
+        },
         CliCommand::Play { bundle } => {
             let bundle = absolute(&bundle)?;
             let manifest = verify_model_bundle(&bundle)?;
@@ -562,6 +587,7 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
                 .map(|value| value.manifest(&project.root))
                 .transpose()?,
             "run_context": crate::run_context::metadata(project)?,
+            "goal_binding": crate::goal_binding::doctor_metadata(project),
         }),
         as_json,
     )?;
@@ -1037,9 +1063,16 @@ fn run_goal(
     project: &Project,
     store: &Store,
     goal_path: &Path,
+    source: crate::goal_binding::GoalSource,
     as_json: bool,
     capture_enabled: bool,
 ) -> Result<i32> {
+    // Only a default goal contributes binding metadata; an explicit `--goal`
+    // keeps the historical receipt shape.
+    let binding = match source {
+        crate::goal_binding::GoalSource::Default => crate::goal_binding::active(project)?,
+        crate::goal_binding::GoalSource::Explicit => None,
+    };
     let (researcher, planner, evaluator) = match (
         project.researcher.as_ref(),
         project.planner.as_ref(),
@@ -1076,6 +1109,7 @@ fn run_goal(
             "objective": goal.objective,
             "lifecycle": lifecycle,
             "run_context": crate::run_context::metadata(project)?,
+            "goal_binding": crate::goal_binding::run_metadata(binding.as_ref(), source),
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
@@ -1134,6 +1168,7 @@ fn run_goal(
         &json!({
             "run": finished,
             "goal_id": goal.goal_id,
+            "goal_source": source.as_str(),
             "satisfied": satisfied,
             "trials_completed": trials_completed,
             "training_steps_planned": total_steps,
@@ -1971,7 +2006,7 @@ fn ensure_export_path(project: &Project, output: &Path) -> Result<()> {
     Ok(())
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
+pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     let mut result = PathBuf::new();
     for component in path.components() {
         match component {
