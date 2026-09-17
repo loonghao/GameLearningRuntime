@@ -159,6 +159,28 @@ glr --project . --json play --bundle artifacts/model-bundle
 runtime/trainer/player/researcher/planner/evaluator/recorder 角色。GLR 负责验证和编排
 这些角色，但不会把具体游戏启动器、爬虫或学习算法写死在核心中。
 
+### 默认目标绑定
+
+目标只是结构化元数据：它会被复制进 run 目录作为可审计的回执，不参与奖励塑形，也不
+判定是否完成。为每个项目绑定一个默认目标，`goal run` 就不必再重复 `--goal`；同时绑定
+让它可执行所需的 run context，`train` 也不必再重复 `--context`：
+
+```powershell
+glr --project . --context config/contexts/ranked.toml --json goal set --goal goals/reach-destination.json
+glr --project . --json goal show
+glr --project . --json goal list
+glr --project . --json goal use goal.reach-destination
+glr --project . --json train
+glr --project . --json goal run
+```
+
+绑定保存在 `<data_dir>/goal-binding.json`（`glr.goal-binding.v1`），记录项目相对路径与
+目标文件的 SHA-256，因此 `goal show` 会给出 `source_status`
+（`unchanged` / `changed` / `missing`）与 `context_status`
+（`unbound` / `bound` / `unresolved`）。显式传入的 `--goal` 或 `--context` 始终优先于
+已保存的默认值，旧脚本行为不变。`doctor` 在 `goal_binding` 下报告当前激活目标，每次
+运行回执都会记录 `goal_binding.source` 为 `default` 或 `explicit`。
+
 ### 类 DSH 的插件 Bundle
 
 项目可以通过声明式 Profile 组合经过审查的 learner、recorder、evaluator 或 harness

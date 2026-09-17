@@ -184,6 +184,31 @@ environment resolution while GLR owns validation, dependency ordering, timeout,
 logs, and execution receipts. See [Extend GLR with declarative VX
 tasks](docs/guides/declarative-tasks.md).
 
+### Default goal binding
+
+A goal is structured metadata: it is copied into the run directory as an
+auditable receipt and never shapes rewards or judges completion. Bind one goal
+per project so `goal run` works without repeating `--goal`, and bind the run
+context that makes it executable so `train` works without repeating
+`--context`:
+
+```powershell
+glr --project . --context config/contexts/ranked.toml --json goal set --goal goals/reach-destination.json
+glr --project . --json goal show
+glr --project . --json goal list
+glr --project . --json goal use goal.reach-destination
+glr --project . --json train
+glr --project . --json goal run
+```
+
+Bindings live in `<data_dir>/goal-binding.json` (`glr.goal-binding.v1`) and
+store project-relative paths plus a SHA-256 of the goal file, so `goal show`
+reports `source_status` (`unchanged` / `changed` / `missing`) and
+`context_status` (`unbound` / `bound` / `unresolved`). An explicit `--goal` or
+`--context` always wins over the saved default, so existing scripts keep their
+behaviour. `doctor` reports the active goal under `goal_binding`, and every
+run receipt records `goal_binding.source` as `default` or `explicit`.
+
 ### DSH-like plugin bundles
 
 Projects can compose reviewed learner, recorder, evaluator, or harness bundles

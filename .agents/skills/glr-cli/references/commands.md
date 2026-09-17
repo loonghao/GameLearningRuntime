@@ -232,6 +232,11 @@ glr --project . --json task run season --set profile=example/default
 glr --project . --json train
 glr --project . --json train --no-capture
 glr --project . --json goal run --goal goals/reach-destination.json
+glr --project . --context config/contexts/ranked.toml --json goal set --goal goals/reach-destination.json
+glr --project . --json goal show
+glr --project . --json goal list
+glr --project . --json goal use goal.reach-destination
+glr --project . --json goal run
 glr --project . --json runs list --status succeeded --limit 20
 glr --project . --json runs show run-0123456789abcdef
 glr --project . --json query entities --world forest --kind shrine --name 土地庙
@@ -338,6 +343,25 @@ weights, rationales, and referenced finding IDs. They cannot contain expressions
 The evaluator writes `glr.goal-evidence.v1`. Every evidence item must match a metric already saved
 to `GLR_STORE_PATH` during the current trial, including value, source, and authority. Only
 `authoritative` runtime evidence can satisfy a goal criterion.
+
+## Default goal bindings
+
+`goal set` validates a `glr.agent-goal.v1` file, requires its `environment_family` to match the
+project, and saves it as the active default goal in `<data_dir>/goal-binding.json`
+(`glr.goal-binding.v1`) together with a project-relative path and a SHA-256 of the goal file.
+`goal set --context` additionally binds the `glr.run-context.v1` file that makes the goal
+executable.
+
+Once a goal is bound, `goal run` reads the default when `--goal` is omitted, and `train` inherits
+the bound context when `--context` is omitted. An explicit `--goal` or `--context` always wins, so
+existing invocations are unchanged.
+
+Use `goal list` to enumerate saved goals, `goal show [goal-id]` to inspect one (`source_status` is
+`unchanged` / `changed` / `missing`, `context_status` is `unbound` / `bound` / `unresolved`), and
+`goal use <goal-id>` to move the active pointer. A binding only selects a goal and a context: the
+goal stays structured metadata, is copied into the run directory as an auditable receipt, and never
+shapes rewards or judges completion. Run receipts record `goal_binding.source` as `default` or
+`explicit`.
 
 ## Reuse and reproduction gates
 
