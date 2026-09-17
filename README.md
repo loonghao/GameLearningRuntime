@@ -622,6 +622,7 @@ runbook](docs/runbooks/release.md).
 ## Documentation
 
 - [Getting started](docs/guides/getting-started.md)
+- [Downstream Python quality and framework migrations](docs/guides/downstream-quality.md)
 - [Operate GLR as an agent-first control plane](docs/guides/agent-first-cli.md)
 - [Build a reusable runtime bridge](docs/guides/runtime-bridges.md)
 - [Connect Unity and Unreal runtimes](docs/guides/engine-runtime-integration.md)
@@ -653,7 +654,7 @@ under the [MIT License](LICENSE).
 Run bounded checks against a human-readable objective and get a self-contained report grouped by local date:
 
 ```powershell
-$env:PYTHONPATH = "src"
+# Install the package in the selected environment first: python -m pip install -e .
 python -m game_learning_runtime.qa "inspect the whole game for bugs" `
   --project . `
   --check smoke python -c "print('adapter smoke ok')"
@@ -666,7 +667,7 @@ Each run is written to `.glr-qa/YYYY-MM-DD/<UTC-time>/` with `result.json` and `
 Run bounded checks against a human-readable objective and get a self-contained report grouped by local date:
 
 ```powershell
-$env:PYTHONPATH = "src"
+# Install the package in the selected environment first: python -m pip install -e .
 python -m game_learning_runtime.qa "inspect the whole game for bugs" --project . --check smoke python -c "print('adapter smoke ok')"
 ```
 

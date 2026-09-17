@@ -32,6 +32,12 @@
 
 ## Evidence gate
 
+- Apply [downstream-quality.md](downstream-quality.md) to the complete owned
+  Python training package, including logging and optional monitoring changes.
+- Install the exact wheel into a clean environment and test outside the source
+  checkout; source-path injection and editable installs are not package evidence.
+- Each fixed training defect has an offline behavioral regression fixture.
+
 - Unit tests and synthetic conformance pass from a clean environment.
 - Optional integrations are tested separately from the NumPy-only core.
 - Live acceptance uses only an explicitly authorized environment.

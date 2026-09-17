@@ -35,6 +35,18 @@ anti-cheat bypasses, credential capture, or unrestricted process discovery.
 
 ## Scaffold the adapter lane
 
+Read [downstream-quality.md](references/downstream-quality.md) before creating
+or refactoring any downstream Python training project. Packaging, standard
+logging, optional error aggregation, and offline regression gates apply to the
+project's trainers and utilities as well as its adapter. The scaffold emits this
+contract as `QUALITY.md`; run `vx run package-check` before delivery.
+
+For upgrades, read [framework-migration.md](references/framework-migration.md)
+before editing dependencies or persistent state. The scaffold emits
+`FRAMEWORK_MIGRATION.md` and `MIGRATIONS.md` for code, configuration, dataset,
+run-store, and checkpoint migration with consistent backups and verified rollback.
+
+
 The scaffold is a standalone project boundary and emits `glr-project.toml`.
 For a single-game repository, put that manifest at the intended repository root;
 do not hide the only Python environment inside a disposable adapter scaffold.

@@ -131,8 +131,8 @@ def _test_module(package: str) -> str:
     load_reward_safety_config,
     load_training_config,
 )
-from game_learning_runtime.testing import run_environment_conformance
 from game_learning_runtime.project import find_project
+from game_learning_runtime.testing import run_environment_conformance
 
 from {package}.environment import create_environment, synthetic_policy
 
@@ -193,13 +193,24 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["editables>=0.5", "hatchling>=1.27", "mypy>=1.15", "pytest>=8.3", "ruff>=0.11"]
+dev = ["build>=1.2", "editables>=0.5", "hatchling>=1.27", "mypy>=1.15", "pytest>=8.3", "ruff>=0.11"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/{package}"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "--strict-config", "--strict-markers"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "TID251"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"sys.path" = {{ msg = "Install the owning package; never mutate import search paths." }}
 '''
 
 
@@ -218,6 +229,8 @@ UV_PROJECT_ENVIRONMENT = ".venv-glr"
 [scripts]
 setup = "vx just setup"
 check = "vx just check"
+ci = "vx just ci"
+package-check = "vx just package-check"
 test = "vx just test"
 train = "vx just train"
 reproduce = "vx just reproduce"
@@ -244,7 +257,7 @@ lock-check:
     vx uv lock --check
 
 lint:
-    vx uv run python -m ruff check src tests
+    vx uv run python -m ruff check src tests scripts
 
 typecheck:
     vx uv run python -m mypy src
@@ -253,6 +266,11 @@ test:
     vx uv run python -m pytest
 
 check: setup lock-check lint typecheck test
+
+package-check: setup
+    vx uv run python scripts/check_wheel.py
+
+ci: check package-check
 
 train: setup
     vx uv run python scripts/train_reference.py --output .glr/exports/model-bundles/reference-model
@@ -398,6 +416,10 @@ schema and SHA-256 for each input before any role runs.
 The trainer runs a deterministic synthetic behavior-cloning smoke test and writes a
 checksummed model bundle under `.glr/exports/model-bundles/`. It proves the training and
 reproduction plumbing only; it is not live runtime acceptance.
+
+Read `QUALITY.md` for packaging, logging, and offline regression requirements.
+Use `vx run ci` to combine static/unit and clean-wheel gates. Before upgrading
+GLR, follow `FRAMEWORK_MIGRATION.md` and record results in `MIGRATIONS.md`.
 """
 
 
@@ -650,7 +672,6 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-
 from game_learning_runtime import (
     DemonstrationGate,
     DemonstrationOrigin,
@@ -663,8 +684,9 @@ from game_learning_runtime import (
     load_reward_safety_config,
     load_training_config,
 )
-from {package}.environment import create_environment, synthetic_policy
 from game_learning_runtime.project import find_project
+
+from {package}.environment import create_environment, synthetic_policy
 
 ROOT = find_project(__file__).parent
 
@@ -803,6 +825,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
 from game_learning_runtime.project import find_project
 
 ROOT = find_project(__file__).parent
@@ -921,6 +944,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
+
 from game_learning_runtime.project import find_project
 
 ROOT = find_project(__file__).parent
@@ -1160,6 +1184,19 @@ def main() -> int:
         + "\n",
     )
     _write(output / "AGENTS.md", _agents_md(args.package, loader=args.loader))
+    for name, reference in (
+        ("QUALITY.md", "downstream-quality.md"),
+        ("FRAMEWORK_MIGRATION.md", "framework-migration.md"),
+    ):
+        _write(output / name, (_SKILL_ROOT / "references" / reference).read_text(encoding="utf-8"))
+    _write(
+        output / "MIGRATIONS.md",
+        _load_text_asset("templates/MIGRATIONS.md.template", package=args.package),
+    )
+    _write(
+        output / "scripts/check_wheel.py",
+        _load_text_asset("templates/check_wheel.py.template", package=args.package),
+    )
     _write(
         output / "scripts/train_reference.py",
         _reference_training_script(args.package, args.environment_id),

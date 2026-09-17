@@ -18,4 +18,13 @@ Operate only an owned or explicitly authorized offline/test runtime. @@LOADER_NO
   anti-cheat bypasses, credentials, or local machine identifiers.
 - Run `vx run check`, then `glr --project . --json doctor`, `glr --project .
   --json train`, and verified playback through the same project entry.
+- Read `QUALITY.md`: all reusable Python logic belongs in the installable
+  `@@PACKAGE@@` namespace, with no import path injection.
+- Before upgrading GLR, read `FRAMEWORK_MIGRATION.md` and `MIGRATIONS.md`.
+  Inventory source/target versions, validate backups and converters, migrate to
+  staging, and prove rollback; never silently reset training history or weights.
+- Use standard `logging`; configure bounded queued output, rotation, and optional
+  error aggregation only in the application entrypoint. Test failure and shutdown.
+- Run `vx run package-check` for clean installed-wheel acceptance, and add an
+  offline behavioral regression test for each training defect fixed.
 - Publish only aggregate synthetic conformance until a bounded authorized live trace exists.

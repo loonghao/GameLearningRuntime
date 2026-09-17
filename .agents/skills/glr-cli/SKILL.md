@@ -80,6 +80,15 @@ running a goal, transferring knowledge, or claiming reproduction.
 
 ## Keep the managed runtime current
 
+- Before a framework upgrade, read the project's `QUALITY.md`,
+  `FRAMEWORK_MIGRATION.md`, and `MIGRATIONS.md`. If absent, use the
+  `glr-adapter-builder` migration reference to establish these contracts first.
+  Record installed/target versions, code/config/data/checkpoint compatibility,
+  consistent backups, staged validation, and rollback. Updating a CLI binary
+  alone does not prove downstream migration. Do not implicitly downgrade a
+  project to match an older checkout or modify a live store with active writers.
+
+
 - Ordinary commands check for newer releases in the background and print a
   `glr update` hint to stderr. Successful checks are cached for 24 hours;
   failures cool down for one hour. Command completion waits at most one second
