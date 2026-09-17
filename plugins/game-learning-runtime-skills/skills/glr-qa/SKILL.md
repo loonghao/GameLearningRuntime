@@ -29,7 +29,7 @@ complete.
 Example:
 
 ```powershell
-$env:PYTHONPATH = "src"
+# Install GLR and the downstream package in the selected environment first.
 python -m game_learning_runtime.qa "inspect the whole game for bugs" `
   --project . `
   --check doctor glr --project . doctor `
@@ -39,6 +39,12 @@ python -m game_learning_runtime.qa "inspect the whole game for bugs" `
 
 Do not claim release quality from this report alone. Keep proprietary traces and
 secrets out of artifacts; publish only evidence the project owner authorized.
+
+For trained-stage installers, read `USER_RELEASE.md`. Verify installation,
+startup without source/system Python, inference parity, frozen mode, missing
+prerequisites, offline operation, version rollback, and uninstall preserving user
+data. Report synthetic installer tests separately from real application and
+authorized live-game acceptance.
 
 ## Verify workbench collection
 

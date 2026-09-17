@@ -30,6 +30,11 @@
 
 ## Agent 升级与代码、数据迁移
 
+模块职责见 [Module boundaries](../../.agents/skills/glr-adapter-builder/references/module-boundaries.md)，
+新项目会生成 `ARCHITECTURE.md`。规范涵盖契约、环境、奖励、策略、学习器、采集、
+存储与应用组合；一个 wheel 可以包含多个模块，不要求每个概念单独拆包。
+模块迁移必须检查旧 import、配置入口、序列化引用及观测/动作顺序，并验证离线行为一致。
+
 升级必须遵循 [Framework migration contract](../../.agents/skills/glr-adapter-builder/references/framework-migration.md)。
 脚手架同时生成 `FRAMEWORK_MIGRATION.md` 流程和 `MIGRATIONS.md` 升级记录模板。
 

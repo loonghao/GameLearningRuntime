@@ -507,6 +507,12 @@ def test_scaffold_rejects_source_path_injection(tmp_path: Path) -> None:
         text=True,
     )
     source = output / "src/example_quality/path_hack.py"
+    assert (output / "ARCHITECTURE.md").read_text(encoding="utf-8") == (
+        _SKILL / "references/module-boundaries.md"
+    ).read_text(encoding="utf-8")
+    assert (output / "USER_RELEASE.md").read_text(encoding="utf-8") == (
+        _SKILL / "references/user-releases.md"
+    ).read_text(encoding="utf-8")
     subprocess.run(
         [sys.executable, "-m", "ruff", "check", "src", "tests", "scripts"],
         cwd=output,

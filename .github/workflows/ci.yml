@@ -14,6 +14,26 @@ permissions:
   contents: read
 
 jobs:
+  user-installer:
+    name: Windows user installer
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      UV_PROJECT_ENVIRONMENT: .venv-glr
+      GLR_INNO_COMPILER: 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
+        with:
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "python uv just"
+          cache: "true"
+      - run: vx just setup
+      - run: vx uv run --no-sync python -m pytest tests/test_user_release.py -q
+
   dashboard:
     name: React dashboard
     runs-on: ubuntu-latest
