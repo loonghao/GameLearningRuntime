@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.21.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.20.0...v0.21.0) (2026-09-17)
+
+
+### Features
+
+* bound the runtime start readiness window ([1a54aa7](https://github.com/loonghao/GameLearningRuntime/commit/1a54aa7c78e3b0f8c1ca786f109ea67bf490bb28))
+* give each workbench server an instance identity ([#143](https://github.com/loonghao/GameLearningRuntime/issues/143)) ([182fb69](https://github.com/loonghao/GameLearningRuntime/commit/182fb692fcd677a0a461715bdf7e469b45286132)), closes [#141](https://github.com/loonghao/GameLearningRuntime/issues/141)
+* host an externally driven loop inside a GLR run ([0d0ece8](https://github.com/loonghao/GameLearningRuntime/commit/0d0ece8a9073b9a205e24ad86cce2a4938f5543f))
+* standardize downstream Python quality and migrations ([f809476](https://github.com/loonghao/GameLearningRuntime/commit/f8094763cdc22d3e90f97e3d0638a9599775064e))
+
+
+### Bug Fixes
+
+* bind training roles to one trial identity ([00a260a](https://github.com/loonghao/GameLearningRuntime/commit/00a260af68782f72d5b2729a3a75db1e1379e24c))
+* include quality templates in skill publication ([15279c1](https://github.com/loonghao/GameLearningRuntime/commit/15279c1e836bbaebca2d54ed69a056f474ae9330))
+* own the GLR environment namespace for every child process ([221a155](https://github.com/loonghao/GameLearningRuntime/commit/221a1553cf281f7cb4384a900cfcc6c78bd0a9cb))
+* pass a hosted command line through without expansion ([9b276c3](https://github.com/loonghao/GameLearningRuntime/commit/9b276c39d7901ef3f21c3e06f3d7967f3d71c5d2))
+
 ## [0.20.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.19.0...v0.20.0) (2026-09-16)
 
 
