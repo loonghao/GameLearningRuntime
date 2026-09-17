@@ -71,3 +71,8 @@ Before configuring or running recorded training, read the sibling
 Resolve `glr capture preset` and `glr capture layout` from the authorized project.
 Use `training-balanced` by default and verify the actual finalized video and
 checksummed frame index before claiming training-data readiness.
+
+For downstream training projects, inspect their `QUALITY.md` and include static,
+installed-wheel, offline training-regression, and applicable logging/monitoring
+checks. Missing packaging, source-path injection, or untested queue/rotation
+failure paths are quality gaps even when existing source-tree tests pass.

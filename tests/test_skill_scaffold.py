@@ -487,3 +487,50 @@ def test_research_validator_rejects_local_or_credentialed_sources(tmp_path: Path
 
     assert result.returncode != 0
     assert "credentials" in result.stderr
+
+
+def test_scaffold_rejects_source_path_injection(tmp_path: Path) -> None:
+    output = tmp_path / "adapter"
+    subprocess.run(
+        [
+            sys.executable,
+            str(_SCAFFOLD),
+            "--output",
+            str(output),
+            "--package",
+            "example_quality",
+            "--environment-id",
+            "example.quality-v1",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    source = output / "src/example_quality/path_hack.py"
+    subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "src", "tests", "scripts"],
+        cwd=output,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    source.write_text(
+        "import sys as system\nsystem.path.insert(0, 'some/source')\n", encoding="utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", str(source)],
+        cwd=output,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "TID251" in result.stdout
+    source.write_text("import logging\n\nlogger = logging.getLogger(__name__)\n", encoding="utf-8")
+    subprocess.run(
+        [sys.executable, "-m", "ruff", "check", str(source)],
+        cwd=output,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
