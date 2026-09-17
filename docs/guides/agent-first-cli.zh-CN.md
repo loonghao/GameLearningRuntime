@@ -269,6 +269,26 @@ glr --project . --json goal run --goal goals/reach-destination.json
 authority 和 run ID 必须与当前 trial 新写入 SQLite 的 metric 完全匹配；只有
 `authoritative` 运行时证据能满足成功条件。
 
+### 绑定默认目标
+
+先绑定一次目标，之后 `goal run` 就不必再写 `--goal`；同时绑定让它可执行所需的 run
+context，`train` 也不必再写 `--context`：
+
+```powershell
+glr --project . --context config/contexts/ranked.toml --json goal set --goal goals/reach-destination.json
+glr --project . --json goal show
+glr --project . --json goal list
+glr --project . --json goal use goal.reach-destination
+glr --project . --json train
+glr --project . --json goal run
+```
+
+绑定保存在 `<data_dir>/goal-binding.json`（`glr.goal-binding.v1`），记录项目相对路径与目标
+文件的 SHA-256，因此 `goal show` 会给出 `source_status`（`unchanged` / `changed` /
+`missing`）与 `context_status`（`unbound` / `bound` / `unresolved`）。显式传入的 `--goal` 或
+`--context` 始终优先于已保存的默认值。绑定只负责“选中”一个目标与 context：目标仍是结构化
+元数据，会被复制进 run 目录作为可审计回执，不参与奖励塑形，也不判定是否完成。
+
 ## 查询训练历史与世界知识
 
 ```powershell

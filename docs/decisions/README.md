@@ -36,5 +36,7 @@
 
 - [ADR-0033: Package trained-stage installers](0033-package-trained-stage-installers.md)
 
+- [ADR-0034: Bind a default goal per project](0034-bind-a-default-goal-per-project.md)
+
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

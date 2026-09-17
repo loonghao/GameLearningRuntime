@@ -291,6 +291,27 @@ Official rules, text guides, and video tutorials produce advisory findings. Only
 value, source, authority, and run ID match a metric persisted during the current trial can be
 evaluated. Only `authoritative` evidence can satisfy a criterion.
 
+### Bind a default goal
+
+Bind the goal once so `goal run` no longer needs `--goal`, and bind the run context that makes it
+executable so `train` no longer needs `--context`:
+
+```powershell
+glr --project . --context config/contexts/ranked.toml --json goal set --goal goals/reach-destination.json
+glr --project . --json goal show
+glr --project . --json goal list
+glr --project . --json goal use goal.reach-destination
+glr --project . --json train
+glr --project . --json goal run
+```
+
+Bindings live in `<data_dir>/goal-binding.json` (`glr.goal-binding.v1`) and store project-relative
+paths plus a SHA-256 of the goal file, so `goal show` reports `source_status`
+(`unchanged` / `changed` / `missing`) and `context_status` (`unbound` / `bound` / `unresolved`).
+An explicit `--goal` or `--context` always wins over the saved default. A binding only selects a
+goal and a context: the goal stays structured metadata, is copied into the run directory as an
+auditable receipt, and never shapes rewards or judges completion.
+
 ## Query previous experience
 
 ```powershell
