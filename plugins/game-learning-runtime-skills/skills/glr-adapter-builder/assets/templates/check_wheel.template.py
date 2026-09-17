@@ -26,10 +26,19 @@ def main() -> None:
         distributions = work / "dist"
         subprocess.run(
             [
-                sys.executable, "-I", "-m", "build", "--wheel", "--no-isolation",
-                "--outdir", str(distributions), str(project),
+                sys.executable,
+                "-I",
+                "-m",
+                "build",
+                "--wheel",
+                "--no-isolation",
+                "--outdir",
+                str(distributions),
+                str(project),
             ],
-            cwd=work, env=environment, check=True,
+            cwd=work,
+            env=environment,
+            check=True,
         )
         wheels = list(distributions.glob("*.whl"))
         if len(wheels) != 1:
@@ -42,29 +51,45 @@ def main() -> None:
             install.extend(["--find-links", str(args.find_links.resolve())])
         subprocess.run(
             [*install, str(wheels[0]), "pytest>=8.3"],
-            cwd=work, env=environment, check=True,
+            cwd=work,
+            env=environment,
+            check=True,
         )
         subprocess.run(
             [str(python), "-I", "-m", "pip", "--isolated", "check"],
-            cwd=work, env=environment, check=True,
+            cwd=work,
+            env=environment,
+            check=True,
         )
         subprocess.run(
             [
-                str(python), "-I", "-c",
+                str(python),
+                "-I",
+                "-c",
                 (
                     "import sys; from pathlib import Path; import @@PACKAGE@@ as package; "
                     "assert Path(package.__file__).resolve().is_relative_to(Path(sys.prefix)), "
                     "'Package was not loaded from the clean installation'"
                 ),
             ],
-            cwd=work, env=environment, check=True,
+            cwd=work,
+            env=environment,
+            check=True,
         )
         subprocess.run(
             [
-                str(python), "-I", "-m", "pytest", "--import-mode=importlib",
-                "-c", str(project / "pyproject.toml"), str(project / "tests"),
+                str(python),
+                "-I",
+                "-m",
+                "pytest",
+                "--import-mode=importlib",
+                "-c",
+                str(project / "pyproject.toml"),
+                str(project / "tests"),
             ],
-            cwd=work, env=environment, check=True,
+            cwd=work,
+            env=environment,
+            check=True,
         )
 
 
