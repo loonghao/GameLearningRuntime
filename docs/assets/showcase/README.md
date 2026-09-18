@@ -8,7 +8,7 @@ private dataset, proprietary telemetry, or an unauthorized runtime trace.
 
 - Source: a real local collection run of the bundled, explicitly synthetic
   `CounterEnvironment` through `ContractEnvironment` and `SyncCollector`.
-- Renderer: [`scripts/render_readme_demo.py`](../../../scripts/render_readme_demo.py).
+- Renderer: [`tools/docs/render_readme_demo.py`](../../../tools/docs/render_readme_demo.py).
 - Public claim: the core GLR contract validates and collects a terminal-bounded
   sequence. It is not evidence of a commercial-game adapter or trainer.
 - Expected artifact: 960 x 540, seven frames, looping GIF.
@@ -18,7 +18,7 @@ Regenerate it from a synchronized development environment with ImageMagick on
 
 ```powershell
 uv sync --frozen --all-groups
-uv run python scripts/render_readme_demo.py
+uv run python tools/docs/render_readme_demo.py
 magick identify docs/assets/showcase/glr-counter-collector.gif
 ```
 

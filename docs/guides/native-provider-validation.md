@@ -11,10 +11,10 @@ this does not make a Mono BepInEx bootstrap an IL2CPP loader.
 Use new/empty output directories. Run from the repository environment:
 
 ```text
-python scripts/check_unity_provider.py --editor <Unity.exe> --output <new-project> --backend mono
-python scripts/check_unity_provider.py --editor <Unity.exe> --output <new-project> --backend il2cpp
-python scripts/check_unreal_provider.py --editor <UnrealEditor-Cmd.exe> --output <new-project>
-python scripts/check_godot_provider.py --godot <godot-executable>
+python tools/providers/check_unity_provider.py --editor <Unity.exe> --output <new-project> --backend mono
+python tools/providers/check_unity_provider.py --editor <Unity.exe> --output <new-project> --backend il2cpp
+python tools/providers/check_unreal_provider.py --editor <UnrealEditor-Cmd.exe> --output <new-project>
+python tools/providers/check_godot_provider.py --godot <godot-executable>
 ```
 
 Unity needs a valid existing editor license, its matching Windows Player
@@ -51,7 +51,7 @@ Install the optional `cua` dependency. Launch the generated Unity Player with
 Take a fresh exact-window image and choose the Advance button coordinates.
 
 ```text
-python scripts/check_cua_provider.py --cli <dcc-cua.exe> --pid <pid> --hwnd <hwnd> --x <x> --y <y> --width <image-width> --height <image-height> --state-file <player-directory>/glr-external-state.json
+python tools/providers/check_cua_provider.py --cli <dcc-cua.exe> --pid <pid> --hwnd <hwnd> --x <x> --y <y> --width <image-width> --height <image-height> --state-file <player-directory>/glr-external-state.json
 ```
 
 The checker rejects changed image geometry and requires both a fresh frame

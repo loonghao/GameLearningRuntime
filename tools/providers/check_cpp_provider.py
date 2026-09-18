@@ -7,7 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "sdk" / "cpp" / "tests" / "provider_contract_smoke.cpp"
 INCLUDE = ROOT / "sdk" / "cpp" / "include"
 

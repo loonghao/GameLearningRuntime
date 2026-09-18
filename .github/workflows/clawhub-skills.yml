@@ -5,8 +5,8 @@ on:
     paths:
       - '.agents/skills/**'
       - 'plugins/**'
-      - 'scripts/*skills*'
-      - 'scripts/package_agent_plugin.py'
+      - 'tools/packaging/*skills*'
+      - 'tools/packaging/package_agent_plugin.py'
       - 'tests/test_publish_skills.py'
       - 'pyproject.toml'
       - '.github/workflows/clawhub-skills.yml'
@@ -42,8 +42,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python scripts/package_agent_plugin.py --check
-      - run: python scripts/publish_skills.py
+      - run: python tools/packaging/package_agent_plugin.py --check
+      - run: python tools/packaging/publish_skills.py
       - uses: actions/upload-artifact@v4
         with:
           name: clawhub-preview
@@ -71,7 +71,7 @@ jobs:
       - name: Publish checksummed versioned skills
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
-        run: python scripts/publish_skills.py --publish
+        run: python tools/packaging/publish_skills.py --publish
       - uses: actions/upload-artifact@v4
         if: always()
         with:

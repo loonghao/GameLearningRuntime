@@ -19,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", required=True, type=Path)
     args = parser.parse_args()
-    project = Path(__file__).resolve().parents[1] / "sdk/godot"
+    project = Path(__file__).resolve().parents[2] / "sdk/godot"
     driver = HostBridgeDriver.from_process(
         HostProcessConfig(
             executable=args.godot.resolve(),

@@ -400,6 +400,32 @@ vx just check
 vx just ci
 ```
 
+Any agent or new contributor can bootstrap, run, test, and verify upstream alignment
+with one chain — see [the agent onboarding guide](docs/guides/agent-onboarding.md):
+
+```bash
+vx setup && vx just layout-check && vx just core-check && vx just glr-doctor && vx just glr-fork-gate
+```
+
+## Repository governance and unattended runs
+
+Automation is owned by capability domain under `tools/<domain>/` and registered in
+`tools/registry.toml`; `vx just layout-check` fails when a tool is unregistered or
+orphaned. Unattended training uses two scheduler-facing commands with explicit exit
+codes:
+
+```powershell
+# Supervision pass: 0 healthy, 3 recovered, 4 escalated.
+vx just glr-watchdog --source trainer --heartbeats .glr/heartbeats.jsonl --restart-limit 3
+
+# Anti-fork gate: 0 aligned, 5 drifted from canonical upstream.
+vx just glr-fork-gate
+```
+
+See [repository layout](docs/guides/repository-layout.md),
+[supervision and watchdog](docs/guides/supervision-watchdog.md), and
+[the anti-fork gate](docs/guides/fork-gate.md).
+
 ## Knowledge and rewards as data
 
 ```python
@@ -512,7 +538,7 @@ Before publishing a change, verify that the distributable payload has not
 drifted from the repository-owned skills:
 
 ```powershell
-vx uv run python scripts/package_agent_plugin.py --check
+vx uv run python tools/packaging/package_agent_plugin.py --check
 ```
 
 Maintainers can intentionally refresh the payload after editing a source skill
@@ -570,7 +596,7 @@ Before publishing a change, verify that the distributable payload has not
 drifted from the repository-owned Skills:
 
 ```powershell
-vx uv run python scripts/package_agent_plugin.py --check
+vx uv run python tools/packaging/package_agent_plugin.py --check
 ```
 
 Maintainers can intentionally refresh the payload after editing a source Skill
@@ -669,6 +695,10 @@ runbook](docs/runbooks/release.md).
 - [Compose custom Torch objectives](docs/guides/using-torch-objectives.md)
 - [Architecture](docs/architecture/overview.md) and [data flow](docs/architecture/data-flow.md)
 - [Local development](docs/runbooks/local-development.md)
+- [Agent onboarding](docs/guides/agent-onboarding.md)
+- [Repository layout and tool ownership](docs/guides/repository-layout.md)
+- [Supervision and watchdog](docs/guides/supervision-watchdog.md)
+- [Anti-fork gate](docs/guides/fork-gate.md)
 - [Benchmark baseline](docs/benchmarks/2026-08-31-data-plane-baseline.md)
 - [Roadmap](docs/planning/roadmap.md) and [architecture decisions](docs/decisions/README.md)
 

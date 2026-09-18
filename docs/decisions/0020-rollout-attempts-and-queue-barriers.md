@@ -61,7 +61,7 @@ stores while preserving their version and Python-owned tables. CLI-only stores
 remain version 1 until Python opens them. This fixes shared-store access without
 adding Rust rollout management APIs. Older CLIs (including 0.18.0) reject schema 2;
 upgrade the CLI instead of lowering the store version or splitting data roots.
-`scripts/check_store_interop.py` tests both creation orders with the real Python
+`tools/ci/check_store_interop.py` tests both creation orders with the real Python
 API and compiled CLI, including metrics and reports.
 
 This batch adds no automatic game retries, remote scheduler, model gateway,

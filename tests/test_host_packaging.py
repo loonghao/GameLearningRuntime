@@ -16,7 +16,7 @@ def test_host_packager_emits_a_deterministic_portable_archive(tmp_path: Path) ->
     subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "package_host.py"),
+            str(ROOT / "tools" / "packaging" / "package_host.py"),
             "--binary",
             str(binary),
             "--target",

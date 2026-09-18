@@ -56,6 +56,26 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  layout:
+    name: Repository layout
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      UV_PROJECT_ENVIRONMENT: .venv-glr
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
+        with:
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "uv just"
+          cache: "true"
+      - run: vx just setup
+      - name: Enforce tool registration and domain ownership
+        run: vx just layout-check
+
   godot-provider:
     name: Godot native provider
     runs-on: ubuntu-latest
@@ -82,7 +102,7 @@ jobs:
           echo "d0bc2113065e481c9c2c2b2c37daa4e8be3fe9e27f0ab9ab0b6096e9a37907f3  $RUNNER_TEMP/godot.zip" | sha256sum --check
           unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
       - name: Check native reset, action and stale-request behavior
-        run: vx uv run --no-sync python scripts/check_godot_provider.py --godot "$RUNNER_TEMP/godot/Godot_v4.6.3-stable_linux.x86_64"
+        run: vx uv run --no-sync python tools/providers/check_godot_provider.py --godot "$RUNNER_TEMP/godot/Godot_v4.6.3-stable_linux.x86_64"
 
   core:
     # Keep this context stable: main branch protection requires these names.

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from game_learning_runtime.run_store import RunStatus, TrainingStore
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def main() -> None:

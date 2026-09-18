@@ -126,3 +126,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101"]
 "src/game_learning_runtime/qa.py" = ["E501"]
+
+# `tomllib` ships with Python 3.11+, which is newer than the lint target.
+[tool.ruff.lint.isort]
+extra-standard-library = ["tomllib"]

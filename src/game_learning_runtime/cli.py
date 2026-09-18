@@ -23,6 +23,11 @@ from game_learning_runtime.agent_goal import (
 )
 from game_learning_runtime.capture import build_capture_manifest
 from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.fork_gate import (
+    ForkGatePolicy,
+    GitRepositoryProbe,
+    evaluate_fork_gate,
+)
 from game_learning_runtime.game_launcher import GameLauncher, GameLaunchError, LaunchCommand
 from game_learning_runtime.model_bundle import verify_model_bundle
 from game_learning_runtime.plugins import (
@@ -45,6 +50,7 @@ from game_learning_runtime.readiness import (
     run_readiness_window,
 )
 from game_learning_runtime.run_store import (
+    RUN_STORE_SCHEMA_VERSION,
     ArtifactRecord,
     MetricRecord,
     RouteWaypoint,
@@ -55,9 +61,43 @@ from game_learning_runtime.run_store import (
     SpatialRoute,
     TrainingStore,
 )
+from game_learning_runtime.runtime_health import RUNTIME_HEALTH_SCHEMA_VERSION
 from game_learning_runtime.spatial_knowledge import SpatialKnowledgeBundle
+from game_learning_runtime.supervision import SUPERVISION_SCHEMA_VERSION
+from game_learning_runtime.watchdog import (
+    WATCHDOG_SCHEMA_VERSION,
+    Heartbeat,
+    HeartbeatLog,
+    SupervisionWatchdog,
+    WatchdogPolicy,
+    WatchdogTarget,
+)
 
 CLI_OUTPUT_SCHEMA_VERSION = "glr.cli-output.v1"
+
+#: Canonical upstream identity enforced by `glr fork-gate`.
+CANONICAL_ORIGIN_URL = "https://github.com/loonghao/GameLearningRuntime.git"
+
+#: Canonical wire schema versions a derived checkout must keep aligned. These
+#: are pinned literals rather than imports so the gate compares a fixed
+#: expectation against whatever this checkout's own modules report; editing a
+#: schema constant locally is then detected instead of silently matching.
+FORK_GATE_SCHEMA_VERSIONS: Mapping[str, str] = {
+    # `RUN_STORE_SCHEMA_VERSION` is a numeric protocol revision, not a string label.
+    "run-store": "2",
+    "runtime-health": "glr.runtime-health.v1",
+    "process-supervision": "glr.process-supervision.v1",
+    "watchdog": "glr.watchdog-report.v1",
+}
+
+#: Schema versions reported by the modules in this checkout, used as the
+#: observed side of the fork gate comparison.
+LOCAL_SCHEMA_VERSIONS: Mapping[str, str] = {
+    "run-store": str(RUN_STORE_SCHEMA_VERSION),
+    "runtime-health": RUNTIME_HEALTH_SCHEMA_VERSION,
+    "process-supervision": SUPERVISION_SCHEMA_VERSION,
+    "watchdog": WATCHDOG_SCHEMA_VERSION,
+}
 RUNTIME_NOT_READY_EXIT_CODE = 78
 _MAX_READINESS_RECEIPT_BYTES = 64 * 1024
 
@@ -1355,6 +1395,61 @@ def _run_plugin_command(arguments: argparse.Namespace) -> int:
     raise AssertionError("unreachable plugin command")
 
 
+def _fork_gate(arguments: argparse.Namespace, *, as_json: bool) -> int:
+    """Evaluate the anti-fork drift gate for one checkout."""
+
+    target = Path(arguments.project).resolve()
+    root = target.parent if target.is_file() else target
+    policy = ForkGatePolicy(
+        expected_origin_url=arguments.origin,
+        default_branch=arguments.default_branch,
+        max_commits_behind=arguments.max_behind,
+        max_commits_ahead=arguments.max_ahead,
+        require_origin_match=not arguments.allow_foreign_origin,
+        require_version_alignment=not arguments.allow_version_drift,
+        require_upstream_ref=not arguments.allow_missing_upstream,
+        required_schema_versions=(
+            None if arguments.ignore_schema_versions else dict(FORK_GATE_SCHEMA_VERSIONS)
+        ),
+    )
+    probe = GitRepositoryProbe(root, schema_versions=dict(LOCAL_SCHEMA_VERSIONS))
+    report = evaluate_fork_gate(probe, policy)
+    _emit("fork-gate", report.to_mapping(), as_json=as_json)
+    return report.exit_code
+
+
+def _watchdog_tick(arguments: argparse.Namespace, *, as_json: bool) -> int:
+    """Run one scheduler-friendly supervision pass and report the outcome."""
+
+    policy = WatchdogPolicy(
+        heartbeat_timeout_seconds=arguments.timeout,
+        max_missed_heartbeats=arguments.max_missed,
+        restart_limit=arguments.restart_limit,
+    )
+    latest: dict[str, Heartbeat] = {}
+    if arguments.heartbeats:
+        latest = HeartbeatLog(Path(arguments.heartbeats).resolve()).latest_by_source()
+    sources: list[str] = list(arguments.source)
+    for name in sorted(latest):
+        if name not in sources:
+            sources.append(name)
+    if not sources:
+        raise ContractViolation(
+            "watchdog tick requires at least one --source or a readable --heartbeats log"
+        )
+    recovery = tuple(arguments.recovery_command) if arguments.recovery_command else None
+    watchdog = SupervisionWatchdog(policy=policy)
+    for name in sources:
+        watchdog.register(WatchdogTarget(name=name, policy=policy, recovery_command=recovery))
+    watchdog.observe_all(tuple(latest.values()))
+    if arguments.interval is None:
+        report = watchdog.tick()
+    else:
+        report = watchdog.run(interval_seconds=arguments.interval, max_ticks=arguments.max_ticks)
+    _emit("watchdog.tick", report.to_mapping(), as_json=as_json)
+    return report.exit_code
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="glr", description="Game Learning Runtime control plane")
     parser.add_argument("--project", default=".", help="project root or glr-project.json")
@@ -1368,6 +1463,74 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     commands.add_parser("doctor", help="validate configured roles and game launch readiness")
+
+    fork_gate = commands.add_parser(
+        "fork-gate", help="verify this checkout still tracks the canonical upstream"
+    )
+    fork_gate.add_argument("--origin", default=CANONICAL_ORIGIN_URL, help="canonical origin URL")
+    fork_gate.add_argument("--default-branch", default="main", help="canonical default branch")
+    fork_gate.add_argument("--max-behind", type=int, default=50, help="allowed commits behind")
+    fork_gate.add_argument("--max-ahead", type=int, default=200, help="allowed commits ahead")
+    fork_gate.add_argument(
+        "--allow-foreign-origin",
+        action="store_true",
+        help="report a non-canonical origin without failing the gate",
+    )
+    fork_gate.add_argument(
+        "--allow-version-drift",
+        action="store_true",
+        help="report version misalignment without failing the gate",
+    )
+    fork_gate.add_argument(
+        "--allow-missing-upstream",
+        action="store_true",
+        help="report an unfetched upstream ref without failing the gate",
+    )
+    fork_gate.add_argument(
+        "--ignore-schema-versions",
+        action="store_true",
+        help="skip required wire schema version checks",
+    )
+
+    watchdog = commands.add_parser(
+        "watchdog", help="evaluate supervision heartbeats and recover bounded failures"
+    )
+    watchdog_commands = watchdog.add_subparsers(dest="watchdog_command", required=True)
+    watchdog_tick = watchdog_commands.add_parser(
+        "tick", help="run one scheduler-friendly supervision pass"
+    )
+    watchdog_tick.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="supervised source name; repeatable",
+    )
+    watchdog_tick.add_argument(
+        "--heartbeats", help="JSON Lines heartbeat log to read the newest beat per source"
+    )
+    watchdog_tick.add_argument(
+        "--timeout", type=float, default=30.0, help="seconds before a heartbeat is late"
+    )
+    watchdog_tick.add_argument(
+        "--max-missed", type=int, default=3, help="late intervals tolerated before starvation"
+    )
+    watchdog_tick.add_argument(
+        "--restart-limit", type=int, default=3, help="total automatic restarts allowed per source"
+    )
+    watchdog_tick.add_argument(
+        "--recovery-command",
+        action="append",
+        default=[],
+        metavar="TOKEN",
+        help="recovery argv tokens, e.g. --recovery-command glr --recovery-command train",
+    )
+    watchdog_tick.add_argument(
+        "--interval", type=float, help="run repeatedly with this many seconds between passes"
+    )
+    watchdog_tick.add_argument(
+        "--max-ticks", type=int, help="stop after this many passes in interval mode"
+    )
 
     runs = commands.add_parser("runs", help="query persisted runtime and training runs")
     run_commands = runs.add_subparsers(dest="runs_command", required=True)
@@ -1469,6 +1632,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments.json = arguments.json or arguments.format == "json"
     if arguments.command == "plugin":
         return _run_plugin_command(arguments)
+    if arguments.command == "fork-gate":
+        return _fork_gate(arguments, as_json=arguments.json)
+    if arguments.command == "watchdog" and arguments.watchdog_command == "tick":
+        return _watchdog_tick(arguments, as_json=arguments.json)
     project = load_project(Path(arguments.project))
     if arguments.command == "doctor":
         return _doctor(project, as_json=arguments.json)

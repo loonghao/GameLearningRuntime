@@ -19,7 +19,7 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 CLI_VERSION = "0.23.1"
 
 

@@ -1,6 +1,6 @@
 import pytest
 
-from scripts.publish_skills import registry_environment, validate_receipt
+from tools.packaging.publish_skills import registry_environment, validate_receipt
 
 
 def test_publisher_passes_an_isolated_config_and_cleans_it(monkeypatch):

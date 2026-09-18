@@ -19,7 +19,7 @@ from game_learning_runtime import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "rollout_control_demo.py"
+SCRIPT = ROOT / "tools" / "demo" / "rollout_control_demo.py"
 
 
 def test_synthetic_demo_persists_retry_queue_metrics_and_hashed_sidecars(tmp_path: Path) -> None:
