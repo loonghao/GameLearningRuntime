@@ -281,11 +281,49 @@ pub struct CommandInvocation<'a> {
 }
 
 pub fn run_command(invocation: CommandInvocation<'_>) -> Result<i32> {
+    let child = spawn_command(invocation)?;
+    child.wait()
+}
+
+/// A spawned project role: its pid is available while it runs, which is what
+/// window recording binds to.
+pub struct RunningChild {
+    child: Child,
+    timeout: Option<Duration>,
+    _log_mirror: LogMirror,
+}
+
+impl RunningChild {
+    /// Operating system process id of the running child.
+    #[must_use]
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// Waits for the child, applying the caller's timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying error when polling or killing the child fails, or
+    /// when the child exceeds its timeout.
+    pub fn wait(mut self) -> Result<i32> {
+        let timeout = self.timeout;
+        wait_for_child(&mut self.child, timeout)
+    }
+}
+
+/// Spawns a project role without waiting for it.
+///
+/// # Errors
+///
+/// Returns the underlying error when the log file cannot be created or the
+/// program cannot be spawned.
+pub fn spawn_command(invocation: CommandInvocation<'_>) -> Result<RunningChild> {
     if let Some(parent) = invocation.log_path.parent() {
         fs::create_dir_all(parent)?;
     }
     let log = File::create(invocation.log_path)?;
-    let _log_mirror = LogMirror::start(invocation.log_path);
+    let log_mirror = LogMirror::start(invocation.log_path);
     let stderr = log.try_clone()?;
     let mut process = configure_command_with_argv(
         invocation.command,
@@ -296,12 +334,16 @@ pub fn run_command(invocation: CommandInvocation<'_>) -> Result<i32> {
         invocation.extra,
         invocation.arguments,
     )?;
-    let mut child = process
+    let child = process
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(stderr))
         .spawn()?;
-    wait_for_child(&mut child, invocation.timeout)
+    Ok(RunningChild {
+        child,
+        timeout: invocation.timeout,
+        _log_mirror: log_mirror,
+    })
 }
 
 pub fn start_capture(project: &Project, run_id: &str, run_dir: &Path) -> Result<CaptureSession> {
