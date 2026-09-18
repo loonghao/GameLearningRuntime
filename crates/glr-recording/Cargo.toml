@@ -1,0 +1,31 @@
+[package]
+name = "glr-recording"
+description = "PID-scoped training window recording for Game Learning Runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "glr_recording"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+parking_lot = "0.12.5"
+windows = { version = "0.62.2", features = [
+  "Graphics_Capture",
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
+windows-capture = "2.0.1"
