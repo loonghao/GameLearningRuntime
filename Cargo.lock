@@ -483,7 +483,7 @@ dependencies = [
 
 [[package]]
 name = "glr-cli"
-version = "0.22.0"
+version = "0.22.0" # x-release-please-version
 dependencies = [
  "axum",
  "clap",
@@ -508,7 +508,7 @@ dependencies = [
 
 [[package]]
 name = "glr-host"
-version = "0.22.0"
+version = "0.22.0" # x-release-please-version
 dependencies = [
  "base64",
  "serde",
@@ -519,7 +519,7 @@ dependencies = [
 
 [[package]]
 name = "glr-recording"
-version = "0.22.0"
+version = "0.22.0" # x-release-please-version
 dependencies = [
  "parking_lot",
  "serde",

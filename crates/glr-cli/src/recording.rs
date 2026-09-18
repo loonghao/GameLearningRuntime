@@ -48,14 +48,19 @@ impl TrainingRecording {
         register_segments(store, run_id, run_dir, &report);
         report.to_json()
     }
-
 }
-
 
 /// Registers every segment as run evidence; registration never fails a run.
 fn register_segments(store: &Store, run_id: &str, run_dir: &Path, report: &RecordingReport) {
     for segment in &report.segments {
-        register(store, run_id, run_dir, &segment.video, "capture_video", "video/mp4");
+        register(
+            store,
+            run_id,
+            run_dir,
+            &segment.video,
+            "capture_video",
+            "video/mp4",
+        );
         register(
             store,
             run_id,
