@@ -122,14 +122,27 @@ Reviewers should reject these outright.
 `tools/governance/check_tool_registry.py` is a pure reader: it walks `tools/`,
 parses the registry, and reports problems. It never edits. It fails when:
 
-- any `scripts/*.py` exists at the repository root level;
-- a discovered tool has no registry entry;
+- any `scripts/*.py` exists at any depth (skill payloads under `plugins/` and
+  `.agents/` are products, not automation, and are exempt), or a Python file
+  sits outside an allowed source root such as `src/`, `tests/`, `tools/`;
+- a discovered tool has no registry entry — this covers `.sh` and `.ps1` helpers,
+  not just Python;
 - an entry points at a missing file;
 - two entries share an `id` or a `path`;
-- an entry's `domain` disagrees with its path;
-- an entry has no `purpose`, no `entrypoints`, or a path outside `tools/`.
+- an entry's `domain` is not one of the declared domains, or disagrees with its
+  path;
+- an entry's `id` is not `<domain>.<kebab-name>` with the domain as prefix;
+- an entry has an empty or non-string `purpose`, or a path outside `tools/`;
+- `entrypoints` is missing, empty, not a list of strings, or names a `just`
+  recipe that does not exist, a workflow file that is missing, or a workflow that
+  never invokes the tool.
 
-It runs as part of `just check`, so an unregistered tool cannot merge.
+Entry point verification is what keeps the registry honest: an entry claiming
+`just build` fails once that recipe is renamed, instead of quietly pointing at
+nothing. `manual` remains valid for a tool only a human runs.
+
+It runs as part of `just check` and as its own CI job, so an unregistered or
+mis-declared tool cannot merge.
 
 ## Related
 

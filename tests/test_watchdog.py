@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,7 @@ def _policy(**overrides: float | int) -> WatchdogPolicy:
     defaults: dict[str, float | int] = {
         "heartbeat_timeout_seconds": 10.0,
         "max_missed_heartbeats": 3,
-        "restart_limit": 2,
+        "restart_attempt_limit": 2,
         "restart_backoff_seconds": 0.0,
         "restart_cooldown_seconds": 0.0,
     }
@@ -50,6 +51,7 @@ def _build(
     recovery_command: tuple[str, ...] | None = None,
     supervisor: ProcessSupervisor | None = None,
     recovery_result: bool = True,
+    recovery_runner: object | None = None,
 ):
     """Build a watchdog with one `trainer` target registered at t=0."""
 
@@ -66,7 +68,7 @@ def _build(
         policy=resolved,
         clock=clock,
         sleep_fn=lambda _seconds: None,
-        recovery_runner=runner,
+        recovery_runner=recovery_runner or runner,  # type: ignore[arg-type]
     )
     watchdog.register(
         WatchdogTarget(
@@ -84,8 +86,8 @@ def test_policy_rejects_invalid_budgets() -> None:
         WatchdogPolicy(heartbeat_timeout_seconds=0)
     with pytest.raises(ValueError, match="max_missed_heartbeats"):
         WatchdogPolicy(max_missed_heartbeats=0)
-    with pytest.raises(ValueError, match="restart_limit"):
-        WatchdogPolicy(restart_limit=-1)
+    with pytest.raises(ValueError, match="restart_attempt_limit"):
+        WatchdogPolicy(restart_attempt_limit=-1)
 
 
 def test_policy_starvation_window_is_timeout_times_missed() -> None:
@@ -156,14 +158,14 @@ def test_starved_source_restarts_once_and_reports_recovery() -> None:
     report = watchdog.tick()
     assert report.decisions[0].action is WatchdogAction.RESTART
     assert report.decisions[0].status is WatchdogStatus.RECOVERING
-    assert watchdog.restart_count("trainer") == 1
+    assert watchdog.restart_attempts("trainer") == 1
     assert calls == [(["glr", "train"], 60.0)]
     assert report.exit_code == WATCHDOG_EXIT_RECOVERED
 
 
 def test_failed_restart_escalates_when_budget_is_exhausted() -> None:
     watchdog, _, clock = _build(
-        policy=_policy(restart_limit=1),
+        policy=_policy(restart_attempt_limit=1),
         recovery_command=("glr",),
         recovery_result=False,
     )
@@ -174,15 +176,40 @@ def test_failed_restart_escalates_when_budget_is_exhausted() -> None:
     assert report.exit_code == WATCHDOG_EXIT_ESCALATED
 
 
-def test_failed_restart_below_budget_keeps_source_starved() -> None:
+def test_failed_restart_never_reports_recovered_even_below_budget() -> None:
     watchdog, _, clock = _build(
-        policy=_policy(restart_limit=3), recovery_command=("glr",), recovery_result=False
+        policy=_policy(restart_attempt_limit=3), recovery_command=("glr",), recovery_result=False
     )
     clock.now = 500 * NS
     report = watchdog.tick()
-    assert report.decisions[0].action is WatchdogAction.RESTART
-    assert report.decisions[0].status is WatchdogStatus.STARVED
+    assert report.decisions[0].action is WatchdogAction.ESCALATE
+    assert report.decisions[0].status is WatchdogStatus.FAILED
     assert report.decisions[0].reason == "restart-failed"
+    assert report.decisions[0].restart_attempts == 1
+    assert report.recovered == ()
+    assert [d.source for d in report.recovery_failures] == ["trainer"]
+    # A failed intervention is never exit code 3; the budget is not yet exhausted
+    # but the scheduler must still be told a human is needed.
+    assert report.exit_code == WATCHDOG_EXIT_ESCALATED
+
+
+def test_recovery_timeout_is_escalated_not_raised() -> None:
+    """`subprocess.run(timeout=...)` raises `TimeoutExpired`; it must be swallowed."""
+
+    def runner(argv: object, *, timeout_seconds: float) -> bool:
+        raise subprocess.TimeoutExpired(list(argv), timeout_seconds)  # type: ignore[arg-type]
+
+    watchdog, _, clock = _build(
+        policy=_policy(restart_attempt_limit=3),
+        recovery_command=("glr",),
+        recovery_runner=runner,
+    )
+    clock.now = 500 * NS
+    report = watchdog.tick()
+    assert report.decisions[0].reason == "restart-failed"
+    assert report.decisions[0].status is WatchdogStatus.FAILED
+    assert report.exit_code == WATCHDOG_EXIT_ESCALATED
+    assert watchdog.restart_attempts("trainer") == 1
 
 
 def test_restart_budget_is_finite_and_then_escalates() -> None:
@@ -194,7 +221,7 @@ def test_restart_budget_is_finite_and_then_escalates() -> None:
     assert len(calls) == 2
     final = watchdog.tick()
     assert final.decisions[0].action is WatchdogAction.ESCALATE
-    assert final.decisions[0].reason == "restart-budget-exhausted"
+    assert final.decisions[0].reason == "restart-attempts-exhausted"
     assert len(calls) == 2
     assert final.exit_code == WATCHDOG_EXIT_ESCALATED
 
@@ -251,7 +278,7 @@ def test_operations_on_unknown_source_raise() -> None:
     with pytest.raises(WatchdogStateError):
         watchdog.evaluate("missing")
     with pytest.raises(WatchdogStateError):
-        watchdog.restart_count("missing")
+        watchdog.restart_attempts("missing")
 
 
 def test_target_requires_non_empty_recovery_command() -> None:
@@ -269,31 +296,35 @@ def test_run_loop_stops_on_max_ticks() -> None:
     seen: list[float] = []
     clock = _Clock()
     watchdog = SupervisionWatchdog(
-        policy=_policy(restart_limit=100),
+        policy=_policy(restart_attempt_limit=100),
         clock=clock,
         sleep_fn=seen.append,
         recovery_runner=lambda argv, timeout_seconds: True,
     )
     watchdog.register(
-        WatchdogTarget(name="trainer", policy=_policy(restart_limit=100), recovery_command=("glr",))
+        WatchdogTarget(
+            name="trainer", policy=_policy(restart_attempt_limit=100), recovery_command=("glr",)
+        )
     )
     clock.now = 500 * NS
     report = watchdog.run(interval_seconds=1.0, max_ticks=3)
     assert len(seen) == 2
-    assert report.decisions[0].restart_count == 3
+    assert report.decisions[0].restart_attempts == 3
 
 
 def test_run_loop_returns_early_on_escalation() -> None:
     seen: list[float] = []
     clock = _Clock()
     watchdog = SupervisionWatchdog(
-        policy=_policy(restart_limit=1),
+        policy=_policy(restart_attempt_limit=1),
         clock=clock,
         sleep_fn=seen.append,
         recovery_runner=lambda argv, timeout_seconds: False,
     )
     watchdog.register(
-        WatchdogTarget(name="trainer", policy=_policy(restart_limit=1), recovery_command=("glr",))
+        WatchdogTarget(
+            name="trainer", policy=_policy(restart_attempt_limit=1), recovery_command=("glr",)
+        )
     )
     clock.now = 500 * NS
     report = watchdog.run(interval_seconds=1.0, max_ticks=5)
@@ -342,7 +373,7 @@ def test_heartbeat_log_requires_a_path(tmp_path: Path) -> None:
 def test_policy_from_mapping_rejects_unknown_keys() -> None:
     with pytest.raises(ValueError, match="unexpected fields"):
         watchdog_policy_from_mapping({"unknown": 1})
-    assert watchdog_policy_from_mapping({"restart_limit": 5}).restart_limit == 5
+    assert watchdog_policy_from_mapping({"restart_attempt_limit": 5}).restart_attempt_limit == 5
 
 
 class _Probe:
@@ -383,7 +414,7 @@ def test_supervisor_restart_failure_is_escalated() -> None:
             raise SupervisionError("target did not stop")
 
     watchdog, _, clock = _build(
-        policy=_policy(restart_limit=1),
+        policy=_policy(restart_attempt_limit=1),
         supervisor=FailingSupervisor(),  # type: ignore[arg-type]
     )
     clock.now = 500 * NS
