@@ -1424,7 +1424,7 @@ def _watchdog_tick(arguments: argparse.Namespace, *, as_json: bool) -> int:
     policy = WatchdogPolicy(
         heartbeat_timeout_seconds=arguments.timeout,
         max_missed_heartbeats=arguments.max_missed,
-        restart_limit=arguments.restart_limit,
+        restart_attempt_limit=arguments.restart_attempt_limit,
     )
     latest: dict[str, Heartbeat] = {}
     if arguments.heartbeats:
@@ -1516,7 +1516,10 @@ def _parser() -> argparse.ArgumentParser:
         "--max-missed", type=int, default=3, help="late intervals tolerated before starvation"
     )
     watchdog_tick.add_argument(
-        "--restart-limit", type=int, default=3, help="total automatic restarts allowed per source"
+        "--restart-attempt-limit",
+        type=int,
+        default=3,
+        help="total automatic recovery attempts allowed per source, success or failure",
     )
     watchdog_tick.add_argument(
         "--recovery-command",

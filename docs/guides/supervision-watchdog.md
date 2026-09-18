@@ -50,7 +50,7 @@ external scheduler. The watchdog only reads it.
 | --- | --- | --- |
 | `heartbeat_timeout_seconds` | `30.0` | Gap tolerated before a heartbeat is *late*. |
 | `max_missed_heartbeats` | `3` | Late intervals tolerated before the source is *starved*. |
-| `restart_limit` | `3` | Total automatic restarts allowed per source, ever. |
+| `restart_attempt_limit` | `3` | Total automatic recovery **attempts** allowed per source, ever — counted whether each attempt succeeds or fails. |
 | `restart_backoff_seconds` | `5.0` | Wait before another restart is attempted. |
 | `restart_cooldown_seconds` | `30.0` | Grace period after a restart, before lateness counts again. |
 | `recovery_timeout_seconds` | `60.0` | Bound on one recovery command. |
@@ -58,9 +58,13 @@ external scheduler. The watchdog only reads it.
 `starvation_seconds = heartbeat_timeout_seconds * max_missed_heartbeats` — with
 defaults, a source silent for 90 seconds is starved.
 
-The restart budget is the important number. It is finite and per source: once
+The attempt budget is the important number. It is finite and per source: once
 exhausted the watchdog **escalates and stops touching that source**. A
 supervisor that silently restarts forever hides a bug; this one reports it.
+Because the budget counts *attempts*, a source that is restarted three times and
+dies three times is escalated after the third attempt — the same budget that
+allows three recoveries also bounds the noise a persistently broken trainer can
+produce.
 
 ## Status, action, exit code
 
@@ -70,22 +74,30 @@ supervisor that silently restarts forever hides a bug; this one reports it.
 | `DEGRADED` | Heartbeat late, or none yet but inside the grace window. | `NOTIFY` | `0` |
 | `STARVED` | Silent past starvation. | `RESTART` when recovery is wired, `ESCALATE` when it is not. | `3` / `4` |
 | `RECOVERING` | Restart issued, or inside backoff/cooldown. | `RESTART` or `NONE` | `3` / `0` |
-| `FAILED` | Restart failed or budget exhausted. | `ESCALATE` | `4` |
+| `FAILED` | A recovery attempt failed, or the attempt budget is exhausted. | `ESCALATE` | `4` |
 
 A starved source with **no** recovery wiring escalates rather than reporting
 healthy: a watchdog that cannot fix anything must not tell its scheduler that
 all is well.
+
+A **failed** recovery attempt is likewise never reported as a recovery. The
+attempt is counted against the budget and the pass escalates with reason
+`restart-failed`, so exit code `3` is reserved for interventions that actually
+succeeded. A timed-out recovery command is a failed attempt, not a crash:
+`subprocess.TimeoutExpired` is caught and reported the same way.
 
 The scheduler contract is three exit codes:
 
 | Code | Meaning | What a scheduler should do |
 | --- | --- | --- |
 | `0` | Healthy or degraded. | Nothing. |
-| `3` | Recovered — a restart was issued. | Log it; optionally alert. |
+| `3` | Recovered — a recovery attempt was issued and succeeded. | Log it; optionally alert. |
 | `4` | Escalated — needs a human. | Alert and stop retrying. |
 
 `WatchdogReport.exit_code` is derived, never guessed: `4` if any decision
-escalated, `3` if any recovered, otherwise `0`.
+escalated, `3` if any recovered, otherwise `0`. The report also carries
+`recovered` and `recovery_failures` source lists, so an operator can tell a
+failed intervention from one that was never attempted.
 
 ## Running it
 
@@ -101,14 +113,15 @@ vx just glr-watchdog --source trainer --heartbeats .glr/heartbeats.jsonl
 # Tune the budget and wire a recovery command.
 vx just glr-watchdog --source trainer \
   --heartbeats .glr/heartbeats.jsonl \
-  --timeout 30 --max-missed 3 --restart-limit 3 \
+  --timeout 30 --max-missed 3 --restart-attempt-limit 3 \
   --recovery-command glr --recovery-command train
 ```
 
 `--recovery-command` takes argv **tokens**, repeated once per token. It is
 executed with `shell=False`, captured, and bounded by
 `recovery_timeout_seconds`. There is no shell, so there is no injection surface
-and no quoting problem.
+and no quoting problem. Exceeding the timeout is a failed attempt — the watchdog
+reports `restart-failed` and exit `4` instead of raising.
 
 For a long-lived supervisor, pass `--interval` (and optionally `--max-ticks`)
 to loop; the loop returns immediately on escalation.
@@ -132,8 +145,8 @@ reading code:
 | `heartbeat-starved` | Silence exceeded `starvation_seconds`. |
 | `detect-only-no-recovery-wiring` | Starved, but neither a supervisor nor a recovery command is wired, so escalation is the only honest answer. |
 | `restart-issued` | A restart was issued this pass. |
-| `restart-failed` | The recovery command or supervisor restart failed. |
-| `restart-budget-exhausted` | `restart_limit` reached; escalating from here on. |
+| `restart-failed` | The recovery command or supervisor restart failed (including a timeout); escalated immediately, never reported as exit `3`. |
+| `restart-attempts-exhausted` | `restart_attempt_limit` attempts reached; escalating from here on. |
 | `restart-backoff-active` | Inside `restart_backoff_seconds`; wait. |
 | `awaiting-heartbeat-after-restart` | Inside `restart_cooldown_seconds`; give the source a chance. |
 
@@ -147,7 +160,7 @@ code**. Nothing needs a daemon.
 
 ```cron
 # Every 5 minutes: one pass. Exit code is the outcome.
-*/5 * * * * cd /srv/GameLearningRuntime && vx just glr-watchdog --source trainer --heartbeats /srv/glr/heartbeats.jsonl --restart-limit 3 >> /var/log/glr-watchdog.log 2>&1
+*/5 * * * * cd /srv/GameLearningRuntime && vx just glr-watchdog --source trainer --heartbeats /srv/glr/heartbeats.jsonl --restart-attempt-limit 3 >> /var/log/glr-watchdog.log 2>&1
 
 # Hourly: fail loudly if the checkout has drifted from canonical upstream.
 7 * * * * cd /srv/GameLearningRuntime && git fetch --quiet origin && vx just glr-fork-gate >> /var/log/glr-fork-gate.log 2>&1
@@ -184,7 +197,9 @@ SuccessExitStatus=0 3
 ```
 
 `SuccessExitStatus=0 3` is the point: a recovery is *successful supervision*,
-not a unit failure. Only `4` should page someone.
+not a unit failure. Only `4` should page someone — and because `3` is emitted
+only when the recovery attempt actually succeeded, a unit marked successful can
+never hide a failed restart.
 
 ### Windows Scheduled Task
 

@@ -416,7 +416,7 @@ codes:
 
 ```powershell
 # Supervision pass: 0 healthy, 3 recovered, 4 escalated.
-vx just glr-watchdog --source trainer --heartbeats .glr/heartbeats.jsonl --restart-limit 3
+vx just glr-watchdog --source trainer --heartbeats .glr/heartbeats.jsonl --restart-attempt-limit 3
 
 # Anti-fork gate: 0 aligned, 5 drifted from canonical upstream.
 vx just glr-fork-gate

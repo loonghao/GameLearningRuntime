@@ -2,9 +2,9 @@
 
 A watchdog answers one question per supervised source: is the source still
 proving that it is alive, and if not, what bounded recovery is allowed?  The
-policy is deliberately finite.  A source that exhausts its restart budget is
-escalated instead of being restarted forever, because an unbounded restart loop
-hides a real defect and burns scheduler capacity.
+policy is deliberately finite.  A source that exhausts its recovery attempt
+budget is escalated instead of being restarted forever, because an unbounded
+restart loop hides a real defect and burns scheduler capacity.
 
 The module is policy-only.  Process liveness and restart mechanics stay behind
 :class:`ProcessSupervisor` or an injected recovery runner, so the watchdog can
@@ -15,6 +15,8 @@ changing its decisions.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -30,8 +32,9 @@ WATCHDOG_SCHEMA_VERSION = "glr.watchdog-report.v1"
 HEARTBEAT_SCHEMA_VERSION = "glr.heartbeat.v1"
 
 #: Exit codes are part of the scheduler contract. A scheduler can branch on
-#: them without parsing output: 0 = healthy, 3 = recovery was attempted,
-#: 4 = escalation required and no further automatic action will be taken.
+#: them without parsing output: 0 = healthy, 3 = a recovery attempt succeeded,
+#: 4 = escalation required because an intervention failed, is unavailable, or
+#: its attempt budget is exhausted.
 WATCHDOG_EXIT_HEALTHY = 0
 WATCHDOG_EXIT_RECOVERED = 3
 WATCHDOG_EXIT_ESCALATED = 4
@@ -106,14 +109,15 @@ class WatchdogPolicy:
 
     ``heartbeat_timeout_seconds`` is the longest gap tolerated before a
     heartbeat is considered late. ``max_missed_heartbeats`` converts repeated
-    lateness into starvation. ``restart_limit`` is the total number of automatic
-    restarts allowed for one source; once exhausted the watchdog escalates and
-    stops touching the source.
+    lateness into starvation. ``restart_attempt_limit`` is the total number of
+    automatic recovery *attempts* allowed for one source, counted whether each
+    attempt succeeds or fails; once exhausted the watchdog escalates and stops
+    touching the source.
     """
 
     heartbeat_timeout_seconds: float = 30.0
     max_missed_heartbeats: int = 3
-    restart_limit: int = 3
+    restart_attempt_limit: int = 3
     restart_backoff_seconds: float = 5.0
     restart_cooldown_seconds: float = 30.0
     recovery_timeout_seconds: float = 60.0
@@ -131,7 +135,7 @@ class WatchdogPolicy:
             raise ValueError("watchdog max_missed_heartbeats must be an integer")
         if self.max_missed_heartbeats < 1:
             raise ValueError("watchdog max_missed_heartbeats must be at least 1")
-        _non_negative_int(self.restart_limit, path="watchdog restart_limit")
+        _non_negative_int(self.restart_attempt_limit, path="watchdog restart_attempt_limit")
 
     @property
     def starvation_seconds(self) -> float:
@@ -143,7 +147,7 @@ class WatchdogPolicy:
         return {
             "heartbeat_timeout_seconds": self.heartbeat_timeout_seconds,
             "max_missed_heartbeats": self.max_missed_heartbeats,
-            "restart_limit": self.restart_limit,
+            "restart_attempt_limit": self.restart_attempt_limit,
             "restart_backoff_seconds": self.restart_backoff_seconds,
             "restart_cooldown_seconds": self.restart_cooldown_seconds,
             "recovery_timeout_seconds": self.recovery_timeout_seconds,
@@ -215,8 +219,8 @@ class WatchdogDecision:
     reason: str
     age_seconds: float | None
     missed_heartbeats: int
-    restart_count: int
-    restart_limit: int
+    restart_attempts: int
+    restart_attempt_limit: int
 
     def to_mapping(self) -> dict[str, object]:
         return {
@@ -226,8 +230,8 @@ class WatchdogDecision:
             "reason": self.reason,
             "age_seconds": self.age_seconds,
             "missed_heartbeats": self.missed_heartbeats,
-            "restart_count": self.restart_count,
-            "restart_limit": self.restart_limit,
+            "restart_attempts": self.restart_attempts,
+            "restart_attempt_limit": self.restart_attempt_limit,
         }
 
 
@@ -250,11 +254,29 @@ class WatchdogReport:
 
     @property
     def recovered(self) -> tuple[WatchdogDecision, ...]:
+        """Sources whose recovery attempt actually succeeded this pass."""
+
         return tuple(d for d in self.decisions if d.action is WatchdogAction.RESTART)
 
     @property
+    def recovery_failures(self) -> tuple[WatchdogDecision, ...]:
+        """Sources whose recovery attempt failed this pass.
+
+        Reported separately from :attr:`escalated` so an operator can tell a
+        failed intervention from one that was never attempted. A failed attempt
+        is still escalated, so it never reports exit code ``3``.
+        """
+
+        return tuple(d for d in self.decisions if d.reason == "restart-failed")
+
+    @property
     def exit_code(self) -> int:
-        """Scheduler-facing exit code for this pass."""
+        """Scheduler-facing exit code for this pass.
+
+        ``3`` means a recovery *succeeded*. A recovery attempt that failed is
+        escalated instead, so a scheduler can never read a failed intervention
+        as "recovered".
+        """
 
         if self.escalated:
             return WATCHDOG_EXIT_ESCALATED
@@ -268,6 +290,7 @@ class WatchdogReport:
             "exit_code": self.exit_code,
             "escalated": [d.source for d in self.escalated],
             "recovered": [d.source for d in self.recovered],
+            "recovery_failures": [d.source for d in self.recovery_failures],
             "decisions": [d.to_mapping() for d in self.decisions],
         }
 
@@ -302,16 +325,34 @@ class WatchdogStateError(GLRError):
 
 
 def _command_recovery_runner(argv: Sequence[str], *, timeout_seconds: float) -> bool:
-    """Run one recovery command to completion and report whether it succeeded."""
+    """Run one recovery command to completion and report whether it succeeded.
 
-    completed: CompletedProcess[str] = run(
-        list(argv),
-        timeout=timeout_seconds,
-        capture_output=True,
-        text=True,
-        check=False,
-        shell=False,
-    )
+    A scheduler-driven recovery should not flash a console window, so on Windows
+    the child is started without one. The argv list is still passed with
+    ``shell=False``, which keeps the no-injection, no-quoting property.
+    """
+
+    command = list(argv)
+    if sys.platform == "win32":
+        # `CREATE_NO_WINDOW` keeps a scheduled pass from flashing a console.
+        completed: CompletedProcess[str] = run(
+            command,
+            timeout=timeout_seconds,
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    else:
+        completed = run(
+            command,
+            timeout=timeout_seconds,
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+        )
     return completed.returncode == 0
 
 
@@ -377,7 +418,7 @@ class HeartbeatLog:
 class _SourceState:
     registered_at_ns: int
     last_heartbeat: Heartbeat | None = None
-    restart_count: int = 0
+    restart_attempts: int = 0
     last_restart_at_ns: int | None = None
 
 
@@ -431,11 +472,11 @@ class SupervisionWatchdog:
         for heartbeat in heartbeats:
             self.observe(heartbeat)
 
-    def restart_count(self, source: str) -> int:
+    def restart_attempts(self, source: str) -> int:
         state = self._states.get(source)
         if state is None:
             raise WatchdogStateError(f"watchdog source {source!r} is not registered")
-        return state.restart_count
+        return state.restart_attempts
 
     def evaluate(self, source: str, *, now_ns: int | None = None) -> WatchdogDecision:
         """Decide status and action for one source without acting."""
@@ -458,8 +499,8 @@ class SupervisionWatchdog:
                     reason="no-heartbeat-yet",
                     age_seconds=age_seconds,
                     missed_heartbeats=missed,
-                    restart_count=state.restart_count,
-                    restart_limit=policy.restart_limit,
+                    restart_attempts=state.restart_attempts,
+                    restart_attempt_limit=policy.restart_attempt_limit,
                 )
             return self._starved_decision(target, state, age_seconds, missed, now)
 
@@ -477,8 +518,8 @@ class SupervisionWatchdog:
                     reason="awaiting-heartbeat-after-restart",
                     age_seconds=age_seconds,
                     missed_heartbeats=missed,
-                    restart_count=state.restart_count,
-                    restart_limit=policy.restart_limit,
+                    restart_attempts=state.restart_attempts,
+                    restart_attempt_limit=policy.restart_attempt_limit,
                 )
 
         if age_seconds <= policy.heartbeat_timeout_seconds:
@@ -489,8 +530,8 @@ class SupervisionWatchdog:
                 reason="heartbeat-current",
                 age_seconds=age_seconds,
                 missed_heartbeats=0,
-                restart_count=state.restart_count,
-                restart_limit=policy.restart_limit,
+                restart_attempts=state.restart_attempts,
+                restart_attempt_limit=policy.restart_attempt_limit,
             )
         if age_seconds <= policy.starvation_seconds:
             return WatchdogDecision(
@@ -500,8 +541,8 @@ class SupervisionWatchdog:
                 reason="heartbeat-late",
                 age_seconds=age_seconds,
                 missed_heartbeats=missed,
-                restart_count=state.restart_count,
-                restart_limit=policy.restart_limit,
+                restart_attempts=state.restart_attempts,
+                restart_attempt_limit=policy.restart_attempt_limit,
             )
         return self._starved_decision(target, state, age_seconds, missed, now)
 
@@ -559,16 +600,16 @@ class SupervisionWatchdog:
         now: int,
     ) -> WatchdogDecision:
         policy = target.policy
-        if state.restart_count >= policy.restart_limit:
+        if state.restart_attempts >= policy.restart_attempt_limit:
             return WatchdogDecision(
                 source=target.name,
                 status=WatchdogStatus.FAILED,
                 action=WatchdogAction.ESCALATE,
-                reason="restart-budget-exhausted",
+                reason="restart-attempts-exhausted",
                 age_seconds=age_seconds,
                 missed_heartbeats=missed,
-                restart_count=state.restart_count,
-                restart_limit=policy.restart_limit,
+                restart_attempts=state.restart_attempts,
+                restart_attempt_limit=policy.restart_attempt_limit,
             )
         if state.last_restart_at_ns is not None:
             since_restart = (now - state.last_restart_at_ns) / _NS_PER_SECOND
@@ -580,8 +621,8 @@ class SupervisionWatchdog:
                     reason="restart-backoff-active",
                     age_seconds=age_seconds,
                     missed_heartbeats=missed,
-                    restart_count=state.restart_count,
-                    restart_limit=policy.restart_limit,
+                    restart_attempts=state.restart_attempts,
+                    restart_attempt_limit=policy.restart_attempt_limit,
                 )
         if not target.restartable:
             # Nothing can restart this source, so the only honest signal is to
@@ -594,8 +635,8 @@ class SupervisionWatchdog:
                 reason="detect-only-no-recovery-wiring",
                 age_seconds=age_seconds,
                 missed_heartbeats=missed,
-                restart_count=state.restart_count,
-                restart_limit=policy.restart_limit,
+                restart_attempts=state.restart_attempts,
+                restart_attempt_limit=policy.restart_attempt_limit,
             )
         return WatchdogDecision(
             source=target.name,
@@ -604,8 +645,8 @@ class SupervisionWatchdog:
             reason="heartbeat-starved",
             age_seconds=age_seconds,
             missed_heartbeats=missed,
-            restart_count=state.restart_count,
-            restart_limit=policy.restart_limit,
+            restart_attempts=state.restart_attempts,
+            restart_attempt_limit=policy.restart_attempt_limit,
         )
 
     def _recover(self, source: str, decision: WatchdogDecision, now: int) -> WatchdogDecision:
@@ -624,9 +665,13 @@ class SupervisionWatchdog:
                 recovered = self._recovery_runner(
                     target.recovery_command, timeout_seconds=policy.recovery_timeout_seconds
                 )
-            except (OSError, TimeoutError):
+            except (OSError, subprocess.TimeoutExpired):
+                # `subprocess.run(timeout=...)` raises `TimeoutExpired`, which is
+                # neither `OSError` nor `TimeoutError`. Swallowing it here keeps
+                # the scheduler contract intact: a timed-out recovery is a failed
+                # intervention, reported as exit code 4 rather than a traceback.
                 recovered = False
-        state.restart_count += 1
+        state.restart_attempts += 1
         state.last_restart_at_ns = now
         if recovered:
             return WatchdogDecision(
@@ -636,26 +681,21 @@ class SupervisionWatchdog:
                 reason="restart-issued",
                 age_seconds=decision.age_seconds,
                 missed_heartbeats=decision.missed_heartbeats,
-                restart_count=state.restart_count,
-                restart_limit=policy.restart_limit,
+                restart_attempts=state.restart_attempts,
+                restart_attempt_limit=policy.restart_attempt_limit,
             )
+        # A failed intervention never reports "recovered". It escalates on the
+        # first failure so a scheduler cannot be told the run is fine; further
+        # attempts still happen on later passes until the budget is exhausted.
         return WatchdogDecision(
             source=source,
-            status=(
-                WatchdogStatus.FAILED
-                if state.restart_count >= policy.restart_limit
-                else WatchdogStatus.STARVED
-            ),
-            action=(
-                WatchdogAction.ESCALATE
-                if state.restart_count >= policy.restart_limit
-                else WatchdogAction.RESTART
-            ),
+            status=WatchdogStatus.FAILED,
+            action=WatchdogAction.ESCALATE,
             reason="restart-failed",
             age_seconds=decision.age_seconds,
             missed_heartbeats=decision.missed_heartbeats,
-            restart_count=state.restart_count,
-            restart_limit=policy.restart_limit,
+            restart_attempts=state.restart_attempts,
+            restart_attempt_limit=policy.restart_attempt_limit,
         )
 
 
@@ -666,7 +706,7 @@ def watchdog_policy_from_mapping(mapping: Mapping[str, object]) -> WatchdogPolic
         {
             "heartbeat_timeout_seconds",
             "max_missed_heartbeats",
-            "restart_limit",
+            "restart_attempt_limit",
             "restart_backoff_seconds",
             "restart_cooldown_seconds",
             "recovery_timeout_seconds",

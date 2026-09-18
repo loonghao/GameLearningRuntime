@@ -5,8 +5,25 @@ from pathlib import Path
 
 import pytest
 
-from game_learning_runtime.cli import CANONICAL_ORIGIN_URL, main
+from game_learning_runtime.cli import (
+    CANONICAL_ORIGIN_URL,
+    FORK_GATE_SCHEMA_VERSIONS,
+    LOCAL_SCHEMA_VERSIONS,
+    main,
+)
 from game_learning_runtime.errors import ContractViolation
+
+
+def test_pinned_fork_gate_schema_versions_match_this_checkout() -> None:
+    """The gate's expectation and the modules' own constants must stay equal.
+
+    The expectation side is pinned as a literal so a local edit to a schema
+    constant is *detected* rather than silently matching itself. Keeping the two
+    in sync is then a mechanical step: bump the literal with the module.
+    """
+
+    assert dict(FORK_GATE_SCHEMA_VERSIONS) == dict(LOCAL_SCHEMA_VERSIONS)
+    assert FORK_GATE_SCHEMA_VERSIONS.keys() == LOCAL_SCHEMA_VERSIONS.keys()
 
 
 def _fork_gate_payload(tmp_path: Path, *arguments: str) -> dict[str, object]:
@@ -136,7 +153,7 @@ def test_watchdog_tick_escalates_when_recovery_keeps_failing(tmp_path: Path) -> 
         str(log),
         "--timeout",
         "0.001",
-        "--restart-limit",
+        "--restart-attempt-limit",
         "1",
         "--recovery-command",
         "cmd",

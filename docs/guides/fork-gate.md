@@ -28,8 +28,27 @@ the result is lowercased.
 
 The schema check is the subtle one. `FORK_GATE_SCHEMA_VERSIONS` in `cli.py`
 holds **pinned literals**; the probe reports what this checkout's own modules
-actually say. A derived checkout that edits a schema constant therefore fails,
-instead of trivially comparing a constant against itself.
+actually say (`LOCAL_SCHEMA_VERSIONS`). A derived checkout that edits a schema
+constant therefore fails, instead of trivially comparing a constant against
+itself.
+
+### Bumping a wire schema version
+
+Because the expectation is pinned, bumping a schema is a two-place change. Both
+sides live in `src/game_learning_runtime/cli.py`, and
+`tests/test_cli_governance.py::test_pinned_fork_gate_schema_versions_match_this_checkout`
+fails if you do only one of them:
+
+1. Bump the constant in its owning module (for example
+   `WATCHDOG_SCHEMA_VERSION` in `watchdog.py`), with a migration note and an
+   ADR if the payload shape changed.
+2. Update the pinned literal for the same label in `FORK_GATE_SCHEMA_VERSIONS`.
+3. Run `vx just core-check`. The parity test is the guard: forgetting step 2
+   makes the gate report drift on the canonical repository, and forgetting step 1
+   makes it report drift on every derived checkout.
+
+Do not "fix" a schema-version blocker by editing only the pinned literal — that
+is the drift the check exists to detect.
 
 ## Exit codes
 

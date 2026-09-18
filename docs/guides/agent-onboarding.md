@@ -112,5 +112,5 @@ Unattended training uses the same entry points with explicit exit codes:
 
 ```bash
 # One supervision pass: 0 healthy, 3 recovered, 4 escalated.
-vx just glr-watchdog --source trainer --timeout 30 --restart-limit 3
+vx just glr-watchdog --source trainer --timeout 30 --restart-attempt-limit 3
 ```
