@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.23.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.22.0...v0.23.0) (2026-09-18)
+
+
+### Features
+
+* **glr-cli:** bind a default goal per project ([#151](https://github.com/loonghao/GameLearningRuntime/issues/151)) ([8422166](https://github.com/loonghao/GameLearningRuntime/commit/8422166dcbeb3890db167fc6578a3e36c11565f0))
+* **glr-cli:** record the trainer window during glr train ([fd652f1](https://github.com/loonghao/GameLearningRuntime/commit/fd652f1267b85918148edefd3c4dffda7cd220e3))
+* **glr-recording:** add PID-scoped Windows Graphics Capture recording ([345a5fe](https://github.com/loonghao/GameLearningRuntime/commit/345a5fe54fb212b9ec5dac6f5450ac59055c328a))
+* **governance:** add agent onboarding, modular tools, watchdog and fork gate ([852332f](https://github.com/loonghao/GameLearningRuntime/commit/852332fcc005f58cf1ac73d7a9cfb52e25447741))
+
+
+### Bug Fixes
+
+* align release metadata and formatting with the recording crate ([0bb5d2e](https://github.com/loonghao/GameLearningRuntime/commit/0bb5d2e0e0b4eb03c7a9a2d923ef9d852ebadfdd))
+* **governance:** harden the watchdog contract and the layout gate ([e6d132e](https://github.com/loonghao/GameLearningRuntime/commit/e6d132eeb167369e7cdf808e69dddeb043383163))
+* **recording:** resolve review findings on PID window recording ([78d003d](https://github.com/loonghao/GameLearningRuntime/commit/78d003dcc406f1ffa7818af38138cac088c9da44))
+
+
+### Documentation
+
+* document window recording configuration and outputs ([cb3e42e](https://github.com/loonghao/GameLearningRuntime/commit/cb3e42eb8296b768d428eb75da8b8630953fd428))
+
 ## [0.22.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.21.0...v0.22.0) (2026-09-17)
 
 
