@@ -1,4 +1,8 @@
-"""Episode termination contract: every episode must record why it ended (GLR #156)."""
+"""Episode termination contract (GLR #156) and its absorbing outcome (GLR #155).
+
+#156: every episode must record why it ended. #155: an ``indeterminate``
+action outcome is distinct from ``rejected`` and ends the episode at once.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ from game_learning_runtime import (
     EpisodeProgress,
     EpisodeTermination,
     EpisodeTerminationGuard,
+    IndeterminateOutcomeError,
     MissingTerminationReason,
     SyncCollector,
     TerminationReason,
@@ -431,3 +436,181 @@ def test_a_step_id_must_be_a_non_negative_integer() -> None:
 def test_the_detail_field_is_bounded() -> None:
     with pytest.raises(ValueError, match="cannot exceed 512"):
         EpisodeTermination(uuid4(), TerminationReason.FAILED, detail="x" * 513)
+
+
+# --- an indeterminate outcome is absorbing -----------------------------------
+
+
+def test_indeterminate_is_distinct_from_rejected() -> None:
+    rejected = ActionReceipt(
+        action_id="a1",
+        episode_id=uuid4(),
+        step_id=1,
+        outcome=ActionOutcome.REJECTED,
+        issued_timestamp_ns=0,
+        observed_timestamp_ns=1,
+    )
+    indeterminate = ActionReceipt(
+        action_id="a2",
+        episode_id=uuid4(),
+        step_id=1,
+        outcome=ActionOutcome.INDETERMINATE,
+        issued_timestamp_ns=0,
+        observed_timestamp_ns=1,
+    )
+    assert rejected.is_refusal is True
+    assert rejected.is_indeterminate is False
+    assert indeterminate.is_refusal is False
+    assert indeterminate.is_indeterminate is True
+
+
+def test_an_indeterminate_receipt_cannot_be_marked_retryable() -> None:
+    with pytest.raises(ValueError, match="cannot be retryable"):
+        ActionReceipt(
+            action_id="a1",
+            episode_id=uuid4(),
+            step_id=1,
+            outcome=ActionOutcome.INDETERMINATE,
+            issued_timestamp_ns=0,
+            observed_timestamp_ns=1,
+            retryable=True,
+        )
+
+
+def test_reporting_indeterminate_ends_the_episode_immediately() -> None:
+    environment = ScriptedTerminationEnvironment(
+        episode_length=4,
+        outcome=ActionOutcome.INDETERMINATE,
+        outcome_at_step=2,
+        caps=EpisodeCaps(max_steps=4),
+    )
+    collector = SyncCollector(environment)
+    unroll = collector.collect(_always_increment, steps=8)
+    # Step 2 is the latched one. Transition 1 is dropped too: its successor
+    # observation is the untrustworthy one the latched step produced.
+    assert [transition.step_id for transition in unroll.transitions] == [0]
+    assert bool(np.all(unroll.transitions[-1].truncated)) is True
+    assert environment._step_id == 2  # the environment was never stepped again
+    termination = collector.last_termination()
+    assert termination is not None
+    assert termination.reason is TerminationReason.ENV_INDETERMINATE
+    assert termination.step_id == 2
+    assert termination.attributed_by == "runtime"
+    assert termination.indeterminate is True
+
+
+def test_the_manifest_records_the_latch_time_and_last_known_sequence() -> None:
+    environment = ScriptedTerminationEnvironment(
+        episode_length=4,
+        outcome=ActionOutcome.INDETERMINATE,
+        outcome_at_step=3,
+        caps=EpisodeCaps(max_steps=4),
+    )
+    collector = SyncCollector(environment)
+    collector.collect(_always_increment, steps=8)
+    termination = collector.last_termination()
+    assert termination is not None
+    # The latched step is 3, whose timestep timestamp is 3_000_000 ns.
+    assert termination.latched_at_ns == 3_000_000
+    assert termination.step_id == 3
+    # The last known-good sequence is the one the latched receipt reported.
+    assert termination.last_known_sequence == 3
+    mapping = termination.to_mapping()
+    assert mapping["latched_at_ns"] == 3_000_000
+    assert mapping["last_known_sequence"] == 3
+
+
+def test_latching_on_the_first_step_records_nothing_and_says_why() -> None:
+    environment = ScriptedTerminationEnvironment(
+        episode_length=4,
+        outcome=ActionOutcome.INDETERMINATE,
+        outcome_at_step=1,
+        caps=EpisodeCaps(max_steps=4),
+    )
+    collector = SyncCollector(environment)
+    with pytest.raises(IndeterminateOutcomeError, match="indeterminate"):
+        collector.collect(_always_increment, steps=8)
+    termination = collector.last_termination()
+    assert termination is not None
+    assert termination.reason is TerminationReason.ENV_INDETERMINATE
+    assert termination.step_id == 1
+    assert termination.latched_at_ns == 1_000_000
+
+
+def test_no_step_is_admitted_after_the_latch() -> None:
+    environment = ScriptedTerminationEnvironment(
+        episode_length=8,
+        outcome=ActionOutcome.INDETERMINATE,
+        outcome_at_step=2,
+        caps=EpisodeCaps(max_steps=8),
+    )
+    collector = SyncCollector(environment)
+    unroll = collector.collect(_always_increment, steps=8)
+    latched = collector.last_termination()
+    assert latched is not None
+    assert latched.step_id == 2
+    assert max(transition.step_id for transition in unroll.transitions) < 2
+    assert environment._step_id == 2
+    # The episode is absorbing: collecting again is refused until the caller
+    # re-attaches explicitly.
+    with pytest.raises(IndeterminateOutcomeError, match="reattach"):
+        collector.collect(_always_increment, steps=8)
+    assert len(collector.terminations) == 1
+    # An explicit re-attach opens a new episode, which records its own reason.
+    collector.reattach()
+    collector.collect(_always_increment, steps=3)
+    assert len(collector.terminations) == 2
+    resumed = collector.last_termination()
+    assert resumed is not None
+    assert resumed.episode_id != latched.episode_id
+    assert resumed.indeterminate is True
+
+
+def test_a_plain_rejection_lets_the_episode_continue() -> None:
+    environment = ScriptedTerminationEnvironment(
+        episode_length=4,
+        outcome=ActionOutcome.REJECTED,
+        outcome_at_step=2,
+        info={TERMINATION_REASON_KEY: "goal_reached"},
+    )
+    collector = SyncCollector(environment)
+    unroll = collector.collect(_always_increment, steps=8, stop_on_done=True)
+    # The rejected step 2 is recorded and the episode runs to its own boundary.
+    assert [transition.step_id for transition in unroll.transitions] == [0, 1, 2, 3]
+    termination = collector.last_termination()
+    assert termination is not None
+    assert termination.reason is TerminationReason.GOAL_REACHED
+    assert termination.indeterminate is False
+    assert termination.latched_at_ns is None
+
+
+def test_an_indeterminate_receipt_is_not_routed_through_the_refusal_funnel() -> None:
+    from game_learning_runtime.refusals import RefusalFunnel
+
+    seen: list[ActionReceipt] = []
+    funnel = RefusalFunnel(seen.append)
+    indeterminate = ActionReceipt(
+        action_id="a1",
+        episode_id=uuid4(),
+        step_id=1,
+        outcome=ActionOutcome.INDETERMINATE,
+        issued_timestamp_ns=0,
+        observed_timestamp_ns=1,
+    )
+    assert funnel.observe(indeterminate) is indeterminate
+    assert seen == []
+
+
+def test_an_adapter_that_never_reports_indeterminate_is_unchanged() -> None:
+    environment = ScriptedTerminationEnvironment(
+        episode_length=3, info={TERMINATION_REASON_KEY: "goal_reached"}
+    )
+    collector = SyncCollector(environment)
+    unroll = collector.collect(_always_increment, steps=8, stop_on_done=True)
+    assert [transition.step_id for transition in unroll.transitions] == [0, 1, 2]
+    termination = collector.last_termination()
+    assert termination is not None
+    assert termination.reason is TerminationReason.GOAL_REACHED
+    assert termination.latched_at_ns is None
+    assert termination.indeterminate is False
+    assert collector.terminations == (termination,)

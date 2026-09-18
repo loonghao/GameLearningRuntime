@@ -162,6 +162,8 @@ class ActionReceipt:
             raise TypeError("realtime must be a RealtimeActionReceipt or None")
         if self.realtime is not None and self.realtime.action_id != self.action_id:
             raise ValueError("realtime receipt action_id must match action_id")
+        if self.retryable and self.outcome is ActionOutcome.INDETERMINATE:
+            raise ValueError("an indeterminate action outcome cannot be retryable")
 
     def validate_against(self, timestep: TimeStep) -> None:
         """Ensure the receipt belongs to the authoritative post-state."""
@@ -174,6 +176,17 @@ class ActionReceipt:
         """Whether this receipt represents a command refusal."""
 
         return self.outcome in {ActionOutcome.REJECTED, ActionOutcome.BLOCKED}
+
+    @property
+    def is_indeterminate(self) -> bool:
+        """Whether the consequence of this action is unknown.
+
+        A refusal is known not to have been applied. An indeterminate action
+        *may* have been applied, so the environment state after it cannot be
+        trusted and no further action may be issued against this episode.
+        """
+
+        return self.outcome is ActionOutcome.INDETERMINATE
 
 
 class ReconciliationOutcome(str, Enum):
