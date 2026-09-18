@@ -11,6 +11,11 @@ use crate::{RecordingConfig, RecordingReport, RecordingSkip, RecordingTarget};
 /// Result of a platform start attempt.
 pub(super) enum StartOutcome {
     /// A capture session is running.
+    ///
+    /// Never constructed on this platform: the stub always skips. The variant
+    /// exists only so [`crate::RecordingSession`] matches the same shape on
+    /// every platform.
+    #[allow(dead_code)]
     Started(Session),
     /// No session was started.
     Skipped(RecordingSkip),
@@ -22,7 +27,7 @@ pub(super) struct Session;
 
 /// Always skips: recording needs Windows Graphics Capture.
 pub(super) fn start(
-    target: RecordingTarget,
+    _target: RecordingTarget,
     config: &RecordingConfig,
     _base_dir: &Path,
 ) -> StartOutcome {

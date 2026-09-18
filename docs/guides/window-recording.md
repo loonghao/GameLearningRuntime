@@ -31,7 +31,7 @@ audio = false
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | Record the trainer window during `glr train`. |
-| `output_dir` | `recordings` | Directory relative to the run directory. Absolute paths are used as-is. |
+| `output_dir` | `recordings` | Directory relative to the run directory. `glr train` skips recording when this is an absolute path (segments outside the run directory cannot become run evidence); `recording run --output` accepts absolute paths. |
 | `fps` | `30` | Target frame rate; clamped to `1..=60`. |
 | `max_width` | `1920` | Long-edge cap for the encoded video; clamped to `2..=7680`. |
 | `bitrate_mbps` | `6` | H.264 target bitrate; clamped to `1..=200`. |
@@ -141,4 +141,5 @@ glr --project . --json recording run --pid 8124 --seconds 10 --output .glr/probe
 | `Windows Graphics Capture is unavailable in a remote desktop session` | Remote desktop or server session. |
 | `the target process has no capturable main window` | No visible, uncloaked window within three seconds. |
 | `the target window is minimized and auto_restore_minimized is disabled` | Minimized window and restore disabled. |
+| `the target window stayed minimized after an automatic restore attempt` | Minimized window was restored without activation but still no capturable window appeared within three seconds. |
 | `recording unavailable: <detail>` | Output directory or encoder could not be opened. |

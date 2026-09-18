@@ -68,6 +68,8 @@ pub enum RecordingSkip {
     NoMainWindow,
     /// The main window is minimized and auto restore is disabled.
     Minimized,
+    /// The main window stayed minimized after an automatic restore attempt.
+    StillMinimized,
     /// Any other start failure, described by the message.
     Unavailable(String),
 }
@@ -90,6 +92,9 @@ impl RecordingSkip {
             Self::NoMainWindow => "the target process has no capturable main window".into(),
             Self::Minimized => {
                 "the target window is minimized and auto_restore_minimized is disabled".into()
+            }
+            Self::StillMinimized => {
+                "the target window stayed minimized after an automatic restore attempt".into()
             }
             Self::Unavailable(detail) => format!("recording unavailable: {detail}"),
         }
@@ -252,6 +257,10 @@ mod tests {
         assert_eq!(
             RecordingSkip::Minimized.message(),
             "the target window is minimized and auto_restore_minimized is disabled"
+        );
+        assert_eq!(
+            RecordingSkip::StillMinimized.message(),
+            "the target window stayed minimized after an automatic restore attempt"
         );
         assert!(
             RecordingSkip::Unavailable("encoder busy".into())
