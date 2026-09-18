@@ -11,6 +11,7 @@ import numpy as np
 from game_learning_runtime.contracts import TensorTree, TimeStep
 from game_learning_runtime.environment import GameEnvironment
 from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKind, TensorSpec
+from game_learning_runtime.termination import EpisodeCaps, TerminationReason
 
 
 class CounterEnvironment(GameEnvironment):
@@ -43,6 +44,9 @@ class CounterEnvironment(GameEnvironment):
                 {"choice": TensorSpec((2,), np.bool_, kind=SpaceKind.BINARY)}
             ),
             capabilities=frozenset({"action-mask", "deterministic-reset"}),
+            # Declaring the step budget lets the runtime attribute a truncation
+            # instead of asking the adapter to report a reason it already declared.
+            episode_caps=EpisodeCaps(max_steps=max_steps),
         )
 
     @property
@@ -71,6 +75,11 @@ class CounterEnvironment(GameEnvironment):
     def _timestep(self) -> TimeStep:
         reached_target = self._position == self._target
         truncated = not reached_target and self._step_id >= self._max_steps
+        # Only the goal is game semantics the runtime cannot attribute; a
+        # truncation is covered by the declared step budget.
+        info = (
+            {"termination_reason": TerminationReason.GOAL_REACHED.value} if reached_target else {}
+        )
         return TimeStep(
             observation={"position": np.array([self._position], dtype=np.int64)},
             reward=np.array([1.0 if reached_target else -0.01], dtype=np.float32),
@@ -79,6 +88,7 @@ class CounterEnvironment(GameEnvironment):
             action_mask={"choice": np.array([True, not reached_target], dtype=np.bool_)},
             episode_id=self._episode_id,
             step_id=self._step_id,
+            info=info,
         )
 
 

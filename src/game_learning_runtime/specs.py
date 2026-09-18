@@ -15,6 +15,7 @@ from game_learning_runtime.declared_metrics import MetricDeclaration
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.realtime import RealtimeTimingContract
 from game_learning_runtime.runtime_health import RuntimeIdentity
+from game_learning_runtime.termination import EpisodeCaps
 
 
 class SpaceKind(str, Enum):
@@ -205,6 +206,9 @@ class EnvironmentSpec:
     # ledger before anything is counted, and a spec that declares nothing is
     # measured exactly as it was before the declaration existed.
     metrics: MetricDeclaration | None = None
+    # Adapter-declared budgets; the runtime attributes an episode close to them
+    # so an adapter never has to report the termination reason it already declared.
+    episode_caps: EpisodeCaps | None = None
 
     def __post_init__(self) -> None:
         if not self.environment_id or any(character.isspace() for character in self.environment_id):
@@ -223,5 +227,7 @@ class EnvironmentSpec:
             raise TypeError("runtime_identity must be a RuntimeIdentity or None")
         if self.metrics is not None and not isinstance(self.metrics, MetricDeclaration):
             raise TypeError("metrics must be a MetricDeclaration or None")
+        if self.episode_caps is not None and not isinstance(self.episode_caps, EpisodeCaps):
+            raise TypeError("episode_caps must be an EpisodeCaps or None")
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
