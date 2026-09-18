@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -17,6 +18,7 @@ from game_learning_runtime.run_store import (
     SpatialRoute,
     TrainingStore,
 )
+from game_learning_runtime.termination import EpisodeTermination, TerminationReason
 from game_learning_runtime.training import KnowledgeAuthority
 
 
@@ -534,6 +536,58 @@ def test_cli_runtime_queries_and_spatial_knowledge_round_trip(
     imported_output = json.loads(capsys.readouterr().out)  # type: ignore[attr-defined]
     assert imported_output["data"]["entities"] == 1
     assert imported_output["data"]["authority"] == "advisory"
+
+
+def test_cli_reports_why_each_episode_ended_without_parsing_logs(
+    tmp_path: Path, capsys: object
+) -> None:
+    """`glr runs show` must carry termination as JSON a scheduler can read."""
+
+    _project(tmp_path)
+    assert main(["--project", str(tmp_path), "--json", "runtime", "start"]) == 0
+    capsys.readouterr()  # type: ignore[attr-defined]
+
+    store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
+    run = store.create_run(
+        environment_id="example.adventure-v1", protocol_version="1.0", kind="training"
+    )
+    goal = EpisodeTermination(
+        episode_id=UUID("00000000-0000-0000-0000-000000000001"),
+        reason=TerminationReason.GOAL_REACHED,
+        step_id=41,
+        timestamp_ns=500,
+        last_known_sequence=40,
+    )
+    latched = EpisodeTermination(
+        episode_id=UUID("00000000-0000-0000-0000-000000000002"),
+        reason=TerminationReason.ENV_INDETERMINATE,
+        step_id=7,
+        timestamp_ns=900,
+        detail="host reconnect lost the outcome",
+        last_known_sequence=6,
+        latched_at_ns=900,
+    )
+    store.record_episode_termination(run.run_id, goal)
+    store.record_episode_termination(run.run_id, latched)
+
+    assert main(["--project", str(tmp_path), "--json", "runs", "show", run.run_id]) == 0
+    output = json.loads(capsys.readouterr().out)  # type: ignore[attr-defined]
+    assert output["schema_version"] == "glr.cli-output.v1"
+
+    terminations = output["data"]["terminations"]
+    assert [item["termination_reason"] for item in terminations] == [
+        "goal_reached",
+        "env_indeterminate",
+    ]
+    assert terminations[1]["latched_at_ns"] == 900
+    assert terminations[1]["last_known_sequence"] == 6
+    assert terminations[1]["termination_detail"] == "host reconnect lost the outcome"
+
+    summary = output["data"]["termination_summary"]
+    assert summary["episode_count"] == 2
+    assert summary["goal_reached"] == 1
+    assert summary["indeterminate"] == 1
+    assert summary["reason_counts"] == {"goal_reached": 1, "env_indeterminate": 1}
 
 
 def test_cli_rejects_missing_roles_incompatible_bundles_and_knowledge(

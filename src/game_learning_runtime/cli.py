@@ -65,6 +65,7 @@ from game_learning_runtime.run_store import (
 from game_learning_runtime.runtime_health import RUNTIME_HEALTH_SCHEMA_VERSION
 from game_learning_runtime.spatial_knowledge import SpatialKnowledgeBundle
 from game_learning_runtime.supervision import SUPERVISION_SCHEMA_VERSION
+from game_learning_runtime.termination import TERMINATION_SCHEMA_VERSION, EpisodeTermination
 from game_learning_runtime.watchdog import (
     WATCHDOG_SCHEMA_VERSION,
     Heartbeat,
@@ -126,6 +127,24 @@ def _event_value(event: RunEvent) -> dict[str, Any]:
         "episode_id": event.episode_id,
         "step_id": event.step_id,
         "payload": dict(event.payload),
+    }
+
+
+def _terminations_value(terminations: Sequence[EpisodeTermination]) -> list[dict[str, Any]]:
+    return [termination.to_mapping() for termination in terminations]
+
+
+def _termination_summary(terminations: Sequence[EpisodeTermination]) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    for termination in terminations:
+        reason = termination.reason.value
+        counts[reason] = counts.get(reason, 0) + 1
+    return {
+        "schema_version": TERMINATION_SCHEMA_VERSION,
+        "episode_count": len(terminations),
+        "reason_counts": counts,
+        "goal_reached": sum(1 for item in terminations if item.reached_goal),
+        "indeterminate": sum(1 for item in terminations if item.indeterminate),
     }
 
 
@@ -1712,6 +1731,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.command == "runs" and arguments.runs_command == "show":
         run = store.get_run(arguments.run_id)
         audits = store.list_declared_metric_audits(run.run_id)
+        terminations = store.list_episode_terminations(run.run_id)
         data = {
             "run": _run_value(run),
             "events": [_event_value(event) for event in store.list_events(run.run_id)],
@@ -1723,6 +1743,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             # counters without walking events, metrics, or a log.
             "declared_metrics": [audit.to_mapping() for audit in audits],
             "declared_metrics_summary": summarize_declared_metrics(audits),
+            # Projected so a scheduler can read why each episode ended without
+            # walking events or parsing a log.
+            "terminations": _terminations_value(terminations),
+            "termination_summary": _termination_summary(terminations),
         }
         _emit("runs.show", data, as_json=arguments.json)
         return 0

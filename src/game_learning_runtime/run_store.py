@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 from time import time_ns
 from types import MappingProxyType
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from game_learning_runtime.agent_goal import (
     ResearchBundle,
@@ -39,9 +39,23 @@ from game_learning_runtime.declared_metrics import (
     declared_metrics_for,
 )
 from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.termination import EpisodeTermination
 from game_learning_runtime.training import KnowledgeAuthority
 
 RUN_STORE_SCHEMA_VERSION = 2
+
+#: Event kind carrying an episode's terminal state in the run store.
+EPISODE_TERMINATION_EVENT = "episode.termination"
+
+
+def _episode_identifier(episode_id: UUID) -> str:
+    """Project a UUID episode id into the store's public-identifier column.
+
+    Episode UUIDs may start with a digit, which the store's identifier column
+    rejects, so the id is prefixed. The canonical UUID stays in the payload.
+    """
+
+    return f"episode-{episode_id}"
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _MAX_JSON_BYTES = 1024 * 1024
 _MAX_RUN_STATE_BYTES = 64 * 1024
@@ -1350,6 +1364,41 @@ class TrainingStore:
         return tuple(
             DeclaredMetricAudit.from_mapping(json.loads(row["payload_json"]))
             for row in reversed(rows)
+        )
+
+    def record_episode_termination(
+        self,
+        run_id: str,
+        termination: EpisodeTermination,
+        *,
+        timestamp_ns: int | None = None,
+    ) -> RunEvent:
+        """Persist why one episode ended as a first-class run event.
+
+        Termination is readable from the run store, from `glr runs show`, and
+        from the run manifest without parsing a log.
+        """
+
+        if not isinstance(termination, EpisodeTermination):
+            raise TypeError("termination must be an EpisodeTermination")
+        return self.append_event(
+            run_id,
+            kind=EPISODE_TERMINATION_EVENT,
+            payload=termination.to_mapping(),
+            episode_id=_episode_identifier(termination.episode_id),
+            step_id=termination.step_id,
+            timestamp_ns=termination.timestamp_ns if timestamp_ns is None else timestamp_ns,
+        )
+
+    def list_episode_terminations(
+        self, run_id: str, *, limit: int = 1000
+    ) -> tuple[EpisodeTermination, ...]:
+        """Return every persisted episode termination in sequence order."""
+
+        return tuple(
+            EpisodeTermination.from_mapping(event.payload)
+            for event in self.list_events(run_id, limit=limit)
+            if event.kind == EPISODE_TERMINATION_EVENT
         )
 
     def record_metric(

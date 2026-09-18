@@ -6,7 +6,7 @@ import math
 import threading
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
@@ -27,6 +27,13 @@ from game_learning_runtime.declared_metrics import (
     build_declared_metrics,
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
+from game_learning_runtime.termination import (
+    EpisodeCaps,
+    EpisodeTermination,
+    EpisodeTerminationGuard,
+    IndeterminateOutcomeError,
+    TerminationReason,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import; run_store is runtime-bound
     from game_learning_runtime.run_store import TrainingStore
@@ -529,6 +536,22 @@ class SyncCollector:
     :func:`~game_learning_runtime.declared_metrics.bind_declared_metrics` to
     keep the caller's binding. A collector that built the ledger owns the
     binding and releases it through :meth:`release_declared_metrics`.
+    The collector owns the episode termination seam. It opens one
+    :class:`~game_learning_runtime.termination.EpisodeTerminationGuard` per
+    episode, admits only steps the guard accepts, and closes every episode it
+    ends with a recorded :class:`~game_learning_runtime.termination.EpisodeTermination`.
+    An episode that ends without a reason is a contract violation, so a
+    collection that cannot say why an episode ended raises instead of returning
+    silent data.
+
+    Terminal states stay in memory unless the caller supplies
+    ``on_termination``. Pass
+    :meth:`~game_learning_runtime.run_store.TrainingStore.termination_sink`
+    to make every episode this collector ends readable from the run store:
+
+    ```python
+    collector = SyncCollector(env, on_termination=store.termination_sink(run.run_id))
+    ```
     """
 
     def __init__(
@@ -541,6 +564,8 @@ class SyncCollector:
         declared_metrics: MetricDeclaration | DeclaredMetricLedger | None = None,
         store: TrainingStore | None = None,
         run_id: str | None = None,
+        episode_caps: EpisodeCaps | None = None,
+        on_termination: Callable[[EpisodeTermination], None] | None = None,
     ) -> None:
         if not actor_id:
             raise ValueError("actor_id cannot be empty")
@@ -548,6 +573,10 @@ class SyncCollector:
             raise ValueError("start_mode must be 'reset' or 'attach'")
         if (store is None) != (run_id is None):
             raise ValueError("store and run_id must be supplied together")
+        if episode_caps is not None and not isinstance(episode_caps, EpisodeCaps):
+            raise TypeError("episode_caps must be an EpisodeCaps or None")
+        if on_termination is not None and not callable(on_termination):
+            raise TypeError("on_termination must be callable or None")
         self._environment = (
             environment
             if isinstance(environment, ContractEnvironment)
@@ -562,6 +591,13 @@ class SyncCollector:
         self._store = store
         self._run_id = run_id
         self._declared_metrics = self._resolve_declared_metrics(declared_metrics)
+        self._guard: EpisodeTerminationGuard | None = None
+        self._terminations: list[EpisodeTermination] = []
+        self._on_termination = on_termination
+        if episode_caps is None:
+            declared = self._environment.spec.episode_caps
+            episode_caps = declared if isinstance(declared, EpisodeCaps) else None
+        self._episode_caps = episode_caps
 
     def _resolve_declared_metrics(
         self, value: MetricDeclaration | DeclaredMetricLedger | None
@@ -649,6 +685,74 @@ class SyncCollector:
         self._environment_config_snapshot = self._environment.config_snapshot()
         return timestep
 
+    def _open_episode(
+        self, timestep: TimeStep, *, now_ns: int | None = None
+    ) -> EpisodeTerminationGuard:
+        guard = EpisodeTerminationGuard(
+            timestep.episode_id, caps=self._episode_caps, now_ns=now_ns or timestep.timestamp_ns
+        )
+        self._guard = guard
+        return guard
+
+    def _close_episode(
+        self,
+        *,
+        reason: TerminationReason | None = None,
+        detail: str | None = None,
+        info: Mapping[str, Any] | None = None,
+        step_id: int | None = None,
+        now_ns: int | None = None,
+    ) -> EpisodeTermination | None:
+        """Close the current episode, if needed, and remember why it ended.
+
+        An episode that an absorbing outcome already latched is closed; this
+        only has to record the terminal state it produced.
+
+        The terminal state is published to ``on_termination`` exactly once,
+        so a sink that persists to the run store mirrors this collector
+        instead of silently reporting zero episodes.
+        """
+
+        guard = self._guard
+        if guard is None:
+            return None
+        if guard.closed:
+            termination = guard.termination
+        else:
+            termination = guard.close(
+                reason=reason, detail=detail, info=info, step_id=step_id, now_ns=now_ns
+            )
+        if termination is not None and not any(item is termination for item in self._terminations):
+            self._terminations.append(termination)
+            if self._on_termination is not None:
+                self._on_termination(termination)
+        return termination
+
+    def reattach(self, *, seed: int | None = None) -> TimeStep:
+        """Open a fresh episode after an absorbing outcome closed the last one.
+
+        An episode that latched leaves the host state unknown, so collecting
+        again is refused until the caller re-attaches here. The restart itself
+        is supervised elsewhere; this is the seam that makes "no further step
+        without an explicit re-attach" enforceable.
+        """
+
+        timestep = self._start(seed=seed)
+        self._open_episode(timestep)
+        self._current = timestep
+        return timestep
+
+    @property
+    def terminations(self) -> tuple[EpisodeTermination, ...]:
+        """Terminal state of every episode this collector has ended."""
+
+        return tuple(self._terminations)
+
+    def last_termination(self) -> EpisodeTermination | None:
+        """Terminal state of the most recently ended episode, if any."""
+
+        return self._terminations[-1] if self._terminations else None
+
     def collect(
         self,
         policy: Policy,
@@ -667,6 +771,17 @@ class SyncCollector:
 
         A declared-metric ledger is audited at every episode close, so an
         episode that measured nothing is named before the next one starts.
+        Steps taken after an episode ended are never recorded. An
+        :attr:`~game_learning_runtime.contracts.ActionOutcome.INDETERMINATE`
+        receipt ends the episode immediately and its own step is dropped, so a
+        latched episode contributes zero steps to the dataset.
+
+        When ``environment.step`` raises, the episode is abandoned: its
+        consequence is unknown, so it is closed with
+        :attr:`~game_learning_runtime.termination.TerminationReason.FAILED`
+        before the exception propagates (``on_error="raise"``) or before the
+        partial unroll is returned. Either way the episode owes a reason and
+        the next collection starts a fresh one.
         """
 
         if steps <= 0:
@@ -675,17 +790,45 @@ class SyncCollector:
             raise ValueError("policy_version cannot be negative")
         if on_error not in {"raise", "partial"}:
             raise ValueError("on_error must be 'raise' or 'partial'")
+        if self._guard is not None and self._guard.indeterminate:
+            # Absorbing: the host state is unknown, so stepping a fresh episode
+            # would attribute its consequences to the wrong episode. The caller
+            # has to re-attach explicitly first.
+            termination = self._guard.termination
+            raise IndeterminateOutcomeError(
+                episode_id=self._guard.episode_id,
+                step_id=None if termination is None else termination.step_id,
+                detail="call reattach() to open a new episode",
+            )
         if self._current is None or self._current.done:
             self._current = self._start(seed=seed)
+            self._open_episode(self._current)
+        guard = self._guard if self._guard is not None else self._open_episode(self._current)
 
         config_snapshot = self._environment_config_snapshot
         transitions: list[Transition] = []
         for _ in range(steps):
             current = self._current
             action = policy(current)
+            guard.note_step(
+                current.step_id,
+                observation_sequence=_observation_sequence(current),
+                now_ns=current.timestamp_ns,
+            )
             try:
                 following = self._environment.step(action)
-            except Exception:
+            except Exception as error:
+                # The episode is abandoned, so it still owes a terminal state:
+                # the environment consequence of the failed step is unknown.
+                # It is settled before the error leaves the collector, in both
+                # collection modes, so no caller can observe an episode that
+                # neither recorded a reason nor raised a violation.
+                self._close_episode(
+                    reason=TerminationReason.FAILED,
+                    detail=f"step raised {type(error).__name__}",
+                    step_id=current.step_id,
+                    now_ns=current.timestamp_ns,
+                )
                 # The episode ends here too. Recording its audit keeps an
                 # aborted episode from looking like an adapter that never
                 # declared anything -- the one difference the counters exist
@@ -694,8 +837,10 @@ class SyncCollector:
                 self._close_declared_metrics(
                     current.episode_id, timestamp_ns=time.time_ns(), require=False
                 )
-                if on_error == "raise" or not transitions:
-                    self._current = None if on_error == "partial" else self._current
+                self._current = None
+                if on_error == "raise":
+                    raise
+                if not transitions:
                     raise
                 # The environment state after a failed step is unknown. Mark the
                 # last valid transition as a learner truncation and force reset.
@@ -704,7 +849,6 @@ class SyncCollector:
                     last,
                     truncated=np.ones_like(last.truncated, dtype=np.bool_),
                 )
-                self._current = None
                 unroll = Unroll(
                     transitions=tuple(transitions),
                     actor_id=self._actor_id,
@@ -714,6 +858,29 @@ class SyncCollector:
                 )
                 self._sequence_id += 1
                 return unroll
+            if guard.observe_outcome(
+                following.action_receipt,
+                step_id=following.step_id,
+                observation_sequence=_observation_sequence(following),
+                now_ns=following.timestamp_ns,
+            ):
+                # Absorbing: the step that produced the receipt is itself
+                # untrustworthy, so it is dropped rather than recorded.
+                self._close_episode(step_id=following.step_id, now_ns=following.timestamp_ns)
+                self._current = None
+                if not transitions:
+                    raise IndeterminateOutcomeError(
+                        episode_id=guard.episode_id, step_id=following.step_id
+                    )
+                # The state after the latched step is unknown, so the last
+                # trustworthy transition is cut off here instead of inviting
+                # the learner to bootstrap past it.
+                last = transitions[-1]
+                transitions[-1] = replace(
+                    last,
+                    truncated=np.ones_like(last.truncated, dtype=np.bool_),
+                )
+                break
             transitions.append(
                 Transition(
                     episode_id=current.episode_id,
@@ -740,10 +907,16 @@ class SyncCollector:
                 self._close_declared_metrics(
                     current.episode_id, timestamp_ns=following.timestamp_ns
                 )
+                self._close_episode(
+                    info=following.info,
+                    step_id=following.step_id,
+                    now_ns=following.timestamp_ns,
+                )
                 if stop_on_done:
                     break
                 if len(transitions) < steps:
                     self._current = self._start(seed=seed)
+                    guard = self._open_episode(self._current)
 
         unroll = Unroll(
             transitions=tuple(transitions),
@@ -754,3 +927,13 @@ class SyncCollector:
         )
         self._sequence_id += 1
         return unroll
+
+
+def _observation_sequence(timestep: TimeStep) -> int | None:
+    """Read the runtime-owned liveness counter a timestep carries, if any."""
+
+    receipt = timestep.action_receipt
+    if receipt is not None and receipt.authoritative_observation_sequence is not None:
+        return receipt.authoritative_observation_sequence
+    value = timestep.info.get("observation_sequence")
+    return value if isinstance(value, int) and not isinstance(value, bool) else None

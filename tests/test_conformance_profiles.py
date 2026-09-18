@@ -19,6 +19,7 @@ from game_learning_runtime import (
     TimeStep,
 )
 from game_learning_runtime.contracts import TensorTree
+from game_learning_runtime.termination import TERMINATION_REASON_KEY, TerminationReason
 from game_learning_runtime.testing import run_environment_conformance
 
 Boundary = Literal["terminated", "truncated", "conflict"]
@@ -72,6 +73,14 @@ class ScriptedProfileEnvironment(GameEnvironment):
             if self._fixture.emits_events and self._step_id > 0
             else ()
         )
+        # Every episode owes a reason for ending. A synthetic profile has no game
+        # semantics to attribute, so it declares the reason itself.
+        reason = (
+            TerminationReason.GOAL_REACHED
+            if self._fixture.boundary in {"terminated", "conflict"}
+            else TerminationReason.STEP_BUDGET
+        )
+        info = {TERMINATION_REASON_KEY: reason.value} if boundary else {}
         return TimeStep(
             observation=self._fixture.observation(self._step_id),
             reward=np.array([0.25], dtype=np.float32),
@@ -81,6 +90,7 @@ class ScriptedProfileEnvironment(GameEnvironment):
             step_id=self._step_id,
             action_mask=self._fixture.action_mask,
             events=events,
+            info=info,
             timestamp_ns=self._step_id,
         )
 

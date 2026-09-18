@@ -54,7 +54,13 @@ def environment_config_digest(snapshot: EnvironmentConfigSnapshot | None) -> str
 
 
 class ActionOutcome(str, Enum):
-    """Portable outcome of one mutating realtime action."""
+    """Portable outcome of one mutating realtime action.
+
+    ``INDETERMINATE`` is distinct from ``REJECTED``: a rejected action is known
+    not to have been applied, while an indeterminate one *may* have been applied
+    and the environment consequence is unknown. The correct response is to stop
+    and restart under supervision, never to try another action.
+    """
 
     ACCEPTED = "accepted"
     REJECTED = "rejected"
@@ -62,6 +68,7 @@ class ActionOutcome(str, Enum):
     NO_EFFECT = "no_effect"
     PARTIAL = "partial"
     BLOCKED = "blocked"
+    INDETERMINATE = "indeterminate"
 
 
 class RefusalReasonClass(str, Enum):
