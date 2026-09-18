@@ -87,8 +87,10 @@ fn select_main_window(candidates: &[WindowCandidate], pid: u32) -> Option<&Windo
 enum WindowLookup {
     /// A visible, capturable window was found.
     Found(HWND),
-    /// A window exists but stays minimized.
+    /// A window exists but stays minimized (auto restore disabled).
     Minimized,
+    /// A window exists but stayed minimized after an automatic restore attempt.
+    StillMinimized,
     /// No capturable window appeared before the deadline.
     Missing,
 }
@@ -193,7 +195,7 @@ fn wait_for_main_window(pid: u32, auto_restore_minimized: bool) -> WindowLookup 
                     return WindowLookup::Minimized;
                 }
                 restore_without_activation(hwnd);
-                lookup = WindowLookup::Minimized;
+                lookup = WindowLookup::StillMinimized;
             } else {
                 return WindowLookup::Found(hwnd);
             }
@@ -600,6 +602,9 @@ pub(super) fn start(
     let hwnd = match wait_for_main_window(target.pid, config.auto_restore_minimized) {
         WindowLookup::Found(hwnd) => hwnd,
         WindowLookup::Minimized => return StartOutcome::Skipped(RecordingSkip::Minimized),
+        WindowLookup::StillMinimized => {
+            return StartOutcome::Skipped(RecordingSkip::StillMinimized);
+        }
         WindowLookup::Missing => return StartOutcome::Skipped(RecordingSkip::NoMainWindow),
     };
     let window = Window::from_raw_hwnd(hwnd.0);
