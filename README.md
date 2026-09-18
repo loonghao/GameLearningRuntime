@@ -661,6 +661,7 @@ runbook](docs/runbooks/release.md).
 - [Reproduce trained models](docs/guides/reproducible-model-bundles.md)
 - [Build offline interactive run reports](docs/guides/run-reports.md)
 - [Normalize project output layout](docs/guides/project-output-layout.md)
+- [Record the training window on Windows](docs/guides/window-recording.md)
 - [Configure knowledge sources and rewards](docs/guides/knowledge-and-rewards.md)
 - [Enforce reward budgets and BC provenance](docs/guides/training-safety.md)
 - [Validate an adapter](docs/guides/adapter-conformance.md)
