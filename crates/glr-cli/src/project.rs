@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use glr_recording::RecordingConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -454,6 +455,8 @@ struct ProjectFile {
     #[serde(default)]
     lifecycle: Option<LifecycleConfig>,
     #[serde(default)]
+    recording: Option<RecordingConfig>,
+    #[serde(default)]
     extensions: HashMap<String, ExtensionConfig>,
 }
 
@@ -483,6 +486,10 @@ pub struct Project {
     pub capture: Option<CaptureConfig>,
     pub progress: Option<ProgressConfig>,
     pub lifecycle: Option<LifecycleConfig>,
+    /// Automatic window recording; defaults to the documented contract values.
+    pub recording: RecordingConfig,
+    /// Corrections applied while sanitizing `recording`.
+    pub recording_warnings: Vec<String>,
     pub run_context: Option<crate::run_context::RunContext>,
 }
 
@@ -631,6 +638,8 @@ pub fn load_project(requested: &Path) -> Result<Project> {
         }
         extensions.insert(namespace, resolved);
     }
+    let mut recording = value.recording.unwrap_or_default();
+    let recording_warnings = recording.sanitize();
     Ok(Project {
         root,
         manifest_path: fs::canonicalize(config_path)?,
@@ -650,6 +659,8 @@ pub fn load_project(requested: &Path) -> Result<Project> {
         capture: value.capture,
         progress: value.progress,
         lifecycle: value.lifecycle,
+        recording,
+        recording_warnings,
         run_context: None,
     })
 }

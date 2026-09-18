@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 
 use crate::args::{
     CaptureCommand, CheckpointCommand, Cli, Command as CliCommand, GoalCommand, KnowledgeCommand,
-    QueryCommand, ReportCommand, RunsCommand, RuntimeCommand, TransactionCommand, UpdateArgs,
+    QueryCommand, RecordingCommand, ReportCommand, RunsCommand, RuntimeCommand, TransactionCommand,
+    UpdateArgs,
 };
 use crate::contracts::{
     AgentGoal, GoalEvaluation, GoalEvidenceBundle, ResearchBundle, SpatialKnowledgeBundle,
@@ -21,7 +22,7 @@ use crate::learning_checkpoint::{
 };
 use crate::process::{
     CaptureLifecycle, CaptureSession, CaptureState, CommandInvocation, executable_available,
-    finish_capture, relative_portable, run_command, start_capture,
+    finish_capture, relative_portable, run_command, spawn_command, start_capture,
 };
 use crate::project::{
     ProgressConfig, Project, ProjectCommand, RuntimeReadinessConfig, find_project, load_project,
@@ -275,10 +276,23 @@ pub fn execute(cli: Cli) -> Result<i32> {
         CliCommand::Train {
             no_capture,
             no_observe,
+            no_recording,
         } => {
             let _observer = crate::observe::start_default(&project, !no_observe);
-            run_training(&project, &store, cli.json, !no_capture)
+            run_training(&project, &store, cli.json, !no_capture, !no_recording)
         }
+        CliCommand::Recording { command } => match command {
+            RecordingCommand::Run {
+                pid,
+                seconds,
+                output,
+            } => {
+                let report =
+                    crate::recording::record_window(&project, pid, seconds, output.as_deref())?;
+                emit("recording.run", &report.to_json(), cli.json)?;
+                Ok(0)
+            }
+        },
         CliCommand::Host {
             no_telemetry,
             timeout_seconds,
@@ -784,7 +798,13 @@ fn run_transaction(store: &Store, command: TransactionCommand, as_json: bool) ->
     }
 }
 
-fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) -> Result<i32> {
+fn run_training(
+    project: &Project,
+    store: &Store,
+    as_json: bool,
+    capture: bool,
+    recording: bool,
+) -> Result<i32> {
     let lifecycle = project
         .lifecycle
         .as_ref()
@@ -822,7 +842,10 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         None
     };
     let extra = training_trial_context(&trial_id, &trial_path);
-    let result = run_command(CommandInvocation {
+    for warning in &project.recording_warnings {
+        eprintln!("GLR recording warning: {warning}");
+    }
+    let spawned = spawn_command(CommandInvocation {
         command: &project.trainer,
         project,
         run_id: &run.run_id,
@@ -833,6 +856,26 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         timeout: None,
         arguments: crate::process::ArgumentMode::ExpandPlaceholders,
     });
+    let child = match spawned {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = store.finish_run(&run.run_id, "failed", Some(1));
+            return Err(error);
+        }
+    };
+    // Recording binds to the trainer pid, so it starts after the spawn and
+    // always stops with the trainer, whatever the trainer's outcome.
+    let recording_session = recording
+        .then(|| crate::recording::TrainingRecording::start(project, &run_dir, child.id()));
+    let trainer_exit = match child.wait() {
+        Ok(code) => code,
+        Err(error) => {
+            let _ = store.finish_run(&run.run_id, "failed", Some(1));
+            return Err(error);
+        }
+    };
+    let recording_output =
+        recording_session.map(|session| session.stop(store, &run.run_id, &run_dir));
     let capture = if let Some(session) = capture_session {
         Some(finish_capture(
             project,
@@ -844,13 +887,6 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
         )?)
     } else {
         None
-    };
-    let trainer_exit = match result {
-        Ok(code) => code,
-        Err(error) => {
-            let _ = store.finish_run(&run.run_id, "failed", Some(1));
-            return Err(error);
-        }
     };
     store.register_artifact(
         &run.run_id,
@@ -882,6 +918,12 @@ fn run_training(project: &Project, store: &Store, as_json: bool, capture: bool) 
             .as_object_mut()
             .expect("RunRecord serializes as an object")
             .insert("capture".into(), serde_json::to_value(capture)?);
+    }
+    if let Some(recording) = recording_output {
+        output
+            .as_object_mut()
+            .expect("RunRecord serializes as an object")
+            .insert("recording".into(), recording);
     }
     emit("train", &output, as_json)?;
     Ok(exit_code)
