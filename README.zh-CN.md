@@ -424,7 +424,7 @@ codex plugin add game-learning-runtime-skills@game-learning-runtime
 发布前可检查分发副本是否与仓库 Skill 漂移：
 
 ```powershell
-vx uv run python scripts/package_agent_plugin.py --check
+vx uv run python tools/packaging/package_agent_plugin.py --check
 ```
 
 维护者在修改源 Skill 后可明确执行 `--sync` 刷新副本，再运行上述检查和
@@ -471,7 +471,7 @@ codex plugin add game-learning-runtime-skills@game-learning-runtime
 发布前可检查分发副本是否与仓库 Skills 漂移：
 
 ```powershell
-vx uv run python scripts/package_agent_plugin.py --check
+vx uv run python tools/packaging/package_agent_plugin.py --check
 ```
 
 维护者在修改源 Skill 后可明确执行 `--sync` 刷新副本，再运行上述检查和
@@ -554,6 +554,10 @@ Runtime Host、安装清单和两套 GLR Skills；Release 还包含 C# Provider 
 - [组合自定义 Torch objectives](docs/guides/using-torch-objectives.md)
 - [架构](docs/architecture/overview.md)与[数据流](docs/architecture/data-flow.md)
 - [本地开发](docs/runbooks/local-development.md)
+- [Agent 上手引导](docs/guides/agent-onboarding.md)
+- [仓库目录与工具归属规范](docs/guides/repository-layout.md)
+- [supervisor 与看门狗](docs/guides/supervision-watchdog.md)
+- [防 fork 门阀](docs/guides/fork-gate.md)
 - [基准测试基线](docs/benchmarks/2026-08-31-data-plane-baseline.md)
 - [路线图](docs/planning/roadmap.md)与[架构决策](docs/decisions/README.md)
 

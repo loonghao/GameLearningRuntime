@@ -25,6 +25,10 @@ vx just rust-check
 vx just provider-sdk-check
 ```
 
+New to this repository, or arriving as an agent? Start with
+[the agent onboarding guide](docs/guides/agent-onboarding.md): one command chain
+bootstraps, tests, runs, and verifies upstream alignment.
+
 ## Python package baseline
 
 This baseline also applies to downstream projects using GLR. The
@@ -108,6 +112,12 @@ Reviewers must reject new violations even when source-tree tests pass.
 ## Change contract
 
 - Keep game adapters independent from learning algorithms.
+- Every new script or tool must have an owning capability domain under
+  `tools/<domain>/` and an entry in `tools/registry.toml` in the same commit.
+  There is no `scripts/` directory. See
+  [the repository layout guide](docs/guides/repository-layout.md).
+- Do not add one-off automation next to the code it patches. Register it or do
+  not add it.
 - Add or update an ADR when changing a public boundary or wire format.
 - Treat protocol and dataset schemas as versioned compatibility contracts.
 - Keep engine providers behind the shared C# or C++ provider vocabulary; do

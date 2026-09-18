@@ -16,7 +16,7 @@ def main():
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
         raise ValueError("Output must be a new or empty isolated project directory")
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     assets = output / "Assets/GLR"
     (assets / "Editor").mkdir(parents=True)
     for source in (root / "sdk/csharp/GameLearningRuntime.Provider").glob("*.cs"):

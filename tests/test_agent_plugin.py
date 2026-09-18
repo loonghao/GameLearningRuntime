@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "game-learning-runtime-skills"
-PACKAGE_SCRIPT = ROOT / "scripts" / "package_agent_plugin.py"
+PACKAGE_SCRIPT = ROOT / "tools" / "packaging" / "package_agent_plugin.py"
 MARKETPLACE = ROOT / ".agents" / "plugins" / "marketplace.json"
 
 

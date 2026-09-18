@@ -122,6 +122,19 @@ from game_learning_runtime.errors import (
     HostRemoteError,
     OptionalDependencyError,
 )
+from game_learning_runtime.fork_gate import (
+    FORK_GATE_EXIT_BLOCKED,
+    FORK_GATE_EXIT_OK,
+    FORK_GATE_SCHEMA_VERSION,
+    ForkGateFinding,
+    ForkGatePolicy,
+    ForkGateReport,
+    GitRepositoryProbe,
+    RepositoryProbe,
+    StaticRepositoryProbe,
+    evaluate_fork_gate,
+    normalize_remote_url,
+)
 from game_learning_runtime.game_launcher import (
     GAME_INSTANCES_SCHEMA_VERSION,
     GAME_LAUNCH_SCHEMA_VERSION,
@@ -402,6 +415,25 @@ from game_learning_runtime.visual_acceptance import (
     require_visual_acceptance,
     silhouette_iou,
     write_capture_atomically,
+)
+from game_learning_runtime.watchdog import (
+    HEARTBEAT_SCHEMA_VERSION,
+    WATCHDOG_EXIT_ESCALATED,
+    WATCHDOG_EXIT_HEALTHY,
+    WATCHDOG_EXIT_RECOVERED,
+    WATCHDOG_SCHEMA_VERSION,
+    Heartbeat,
+    HeartbeatLog,
+    RecoveryRunner,
+    SupervisionWatchdog,
+    WatchdogAction,
+    WatchdogDecision,
+    WatchdogPolicy,
+    WatchdogReport,
+    WatchdogStateError,
+    WatchdogStatus,
+    WatchdogTarget,
+    watchdog_policy_from_mapping,
 )
 
 try:
@@ -760,4 +792,36 @@ __all__ += [
     "RunContextSource",
     "load_inherited_run_context",
     "load_run_context",
+]
+__all__ += [
+    "FORK_GATE_EXIT_BLOCKED",
+    "FORK_GATE_EXIT_OK",
+    "FORK_GATE_SCHEMA_VERSION",
+    "ForkGateFinding",
+    "ForkGatePolicy",
+    "ForkGateReport",
+    "GitRepositoryProbe",
+    "RepositoryProbe",
+    "StaticRepositoryProbe",
+    "evaluate_fork_gate",
+    "normalize_remote_url",
+]
+__all__ += [
+    "HEARTBEAT_SCHEMA_VERSION",
+    "WATCHDOG_EXIT_ESCALATED",
+    "WATCHDOG_EXIT_HEALTHY",
+    "WATCHDOG_EXIT_RECOVERED",
+    "WATCHDOG_SCHEMA_VERSION",
+    "Heartbeat",
+    "HeartbeatLog",
+    "RecoveryRunner",
+    "SupervisionWatchdog",
+    "WatchdogAction",
+    "WatchdogDecision",
+    "WatchdogPolicy",
+    "WatchdogReport",
+    "WatchdogStateError",
+    "WatchdogStatus",
+    "WatchdogTarget",
+    "watchdog_policy_from_mapping",
 ]

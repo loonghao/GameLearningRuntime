@@ -12,11 +12,11 @@ Set up the repository environment using the
 [local development runbook](../runbooks/local-development.md), then run:
 
 ```powershell
-.venv-glr/Scripts/python.exe scripts/rollout_control_demo.py --output-dir .glr/rollout-demo
+.venv-glr/Scripts/python.exe tools/demo/rollout_control_demo.py --output-dir .glr/rollout-demo
 ```
 
 The output directory must not already exist. Choose a new directory for each
-run. The [complete example](../../scripts/rollout_control_demo.py) uses the
+run. The [complete example](../../tools/demo/rollout_control_demo.py) uses the
 synthetic Counter environment, records one failed attempt and one successful
 retry, and registers two attempt sidecars with SHA-256 artifact records.
 Its JSON result contains these stable values, plus generated run and rollout

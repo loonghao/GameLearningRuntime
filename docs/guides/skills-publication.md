@@ -1,11 +1,11 @@
 # Versioned ClawHub skills
 
 Canonical skill sources live in `.agents/skills`; the checked-in agent plugin
-is synchronized with `python scripts/package_agent_plugin.py --sync` and
+is synchronized with `python tools/packaging/package_agent_plugin.py --sync` and
 validated with `--check`. Supporting templates use a Markdown extension so
 ClawHub includes them in the uploaded bundle.
 
-`python scripts/publish_skills.py` uses the pinned ClawHub CLI 0.23.1 and the
+`python tools/packaging/publish_skills.py` uses the pinned ClawHub CLI 0.23.1 and the
 project version in `pyproject.toml`. It previews all three skills without
 publishing, checks selected file counts, and writes portable per-file SHA-256
 digests plus registry fingerprints to `dist/clawhub-receipts.json`. Node.js

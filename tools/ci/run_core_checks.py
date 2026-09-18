@@ -8,7 +8,7 @@ from pathlib import Path
 
 import game_learning_runtime
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 COMMANDS = (
     (sys.executable, "-m", "ruff", "check", "."),
     (sys.executable, "-m", "ruff", "format", "--check", "."),

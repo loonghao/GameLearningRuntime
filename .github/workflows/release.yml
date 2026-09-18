@@ -184,7 +184,7 @@ jobs:
           --release --locked --target "${{ matrix.target }}"
       - name: Package the unified GLR distribution
         run: >-
-          vx python scripts/package_cli.py
+          vx python tools/packaging/package_cli.py
           --cli "${{ matrix.cli_binary }}"
           --host "${{ matrix.host_binary }}"
           --target "${{ matrix.target }}"

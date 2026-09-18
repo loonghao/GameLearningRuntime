@@ -6,7 +6,9 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("package_cli", ROOT / "scripts/package_cli.py")
+SPEC = importlib.util.spec_from_file_location(
+    "package_cli", ROOT / "tools/packaging/package_cli.py"
+)
 assert SPEC is not None and SPEC.loader is not None
 PACKAGE_CLI = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PACKAGE_CLI)

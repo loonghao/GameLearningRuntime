@@ -37,6 +37,9 @@
 - [ADR-0033: Package trained-stage installers](0033-package-trained-stage-installers.md)
 
 - [ADR-0034: Bind a default goal per project](0034-bind-a-default-goal-per-project.md)
+- [ADR-0035: Own repository automation by capability domain and register it](0035-modular-tools-and-registry.md)
+- [ADR-0036: Add a policy-only supervision watchdog with a scheduler exit-code contract](0036-supervision-watchdog-and-scheduler-contract.md)
+- [ADR-0037: Add a read-only anti-fork drift gate](0037-anti-fork-drift-gate.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.

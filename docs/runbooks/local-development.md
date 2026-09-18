@@ -43,7 +43,7 @@ vx cargo run --package glr-cli -- --help
 ```
 
 The CLI is the canonical deployment entrypoint; the Python package remains an
-optional SDK. A release distribution is produced with `scripts/package_cli.py`
+optional SDK. A release distribution is produced with `tools/packaging/package_cli.py`
 and must contain `glr`, `glr-hostd`, `glr-release.json`, `install.md`, `LICENSE`,
 and both repository Skills.
 
@@ -68,6 +68,7 @@ vx just origin
 
 | Problem | Resolution |
 |---|---|
+| A new tool is rejected by `vx just layout-check` | Register it in `tools/registry.toml` under its owning domain; see [repository layout](../guides/repository-layout.md) |
 | Lock file changed unexpectedly | Run `vx uv lock --check`; inspect dependency inputs before accepting a relock |
 | vx tool versions drifted | Run `vx lock --check`; update `vx.toml` and `vx.lock` together after review |
 | Existing `.venv` is unrelated or broken | GLR uses the project-owned `.venv-glr` through just; do not delete another environment as a workaround |

@@ -1,0 +1,129 @@
+# Canonical registry of repository automation entry points.
+#
+# Every executable under `tools/` MUST have an entry here. An entry declares the
+# capability domain that owns the tool, what the tool is for, and the just or
+# workflow entry points that call it. `just layout-check` fails when a tool is
+# missing from this file, when an entry points at a file that no longer exists,
+# or when a tool sits in a directory that is not its declared domain.
+#
+# Adding a tool is a two-step change: create the file under its owning domain,
+# then register it here in the same commit. See docs/guides/repository-layout.md.
+
+[[entries]]
+id = "ci.check-store-interop"
+path = "tools/ci/check_store_interop.py"
+domain = "ci"
+purpose = "Exercise the compiled CLI and Python API against the same run store."
+entrypoints = ["just ci-runtime-host"]
+
+[[entries]]
+id = "ci.run-core-checks"
+path = "tools/ci/run_core_checks.py"
+domain = "ci"
+purpose = "Run the core quality gates inside one selected uv environment."
+entrypoints = ["just core-check", "just ci-core"]
+
+[[entries]]
+id = "ci.run-host-smoke"
+path = "tools/ci/run_host_smoke.py"
+domain = "ci"
+purpose = "Smoke-test the Runtime Host against the built Rust binaries."
+entrypoints = ["just host-smoke"]
+
+[[entries]]
+id = "demo.rollout-control"
+path = "tools/demo/rollout_control_demo.py"
+domain = "demo"
+purpose = "Demonstrate the rollout lifecycle and learner queue barriers without a game."
+entrypoints = ["manual"]
+
+[[entries]]
+id = "docs.render-readme-demo"
+path = "tools/docs/render_readme_demo.py"
+domain = "docs"
+purpose = "Render the README GIF from a real synthetic GLR collection run."
+entrypoints = ["manual"]
+
+[[entries]]
+id = "governance.check-tool-registry"
+path = "tools/governance/check_tool_registry.py"
+domain = "governance"
+purpose = "Enforce that every repository tool is registered and domain-owned."
+entrypoints = ["just layout-check"]
+
+[[entries]]
+id = "packaging.check-dist"
+path = "tools/packaging/check_dist.py"
+domain = "packaging"
+purpose = "Check built distributions for the version declared by this checkout."
+entrypoints = ["just build"]
+
+[[entries]]
+id = "packaging.package-agent-plugin"
+path = "tools/packaging/package_agent_plugin.py"
+domain = "packaging"
+purpose = "Synchronize repository skills into the distributable agent plugin."
+entrypoints = ["just agent-plugin-check", ".github/workflows/clawhub-skills.yml"]
+
+[[entries]]
+id = "packaging.package-cli"
+path = "tools/packaging/package_cli.py"
+domain = "packaging"
+purpose = "Assemble the standalone Rust CLI release payload."
+entrypoints = [".github/workflows/release.yml"]
+
+[[entries]]
+id = "packaging.package-host"
+path = "tools/packaging/package_host.py"
+domain = "packaging"
+purpose = "Assemble the Runtime Host distribution payload."
+entrypoints = ["manual"]
+
+[[entries]]
+id = "packaging.publish-skills"
+path = "tools/packaging/publish_skills.py"
+domain = "packaging"
+purpose = "Publish versioned ClawHub skills with checksums and validated receipts."
+entrypoints = [".github/workflows/clawhub-skills.yml"]
+
+[[entries]]
+id = "providers.check-cpp-provider"
+path = "tools/providers/check_cpp_provider.py"
+domain = "providers"
+purpose = "Build and run the C++ provider SDK smoke sample."
+entrypoints = ["just cpp-check"]
+
+[[entries]]
+id = "providers.check-cua-provider"
+path = "tools/providers/check_cua_provider.py"
+domain = "providers"
+purpose = "Verify one DCC-CUA click against the isolated Unity external-input sample."
+entrypoints = ["manual"]
+
+[[entries]]
+id = "providers.check-godot-provider"
+path = "tools/providers/check_godot_provider.py"
+domain = "providers"
+purpose = "Exercise the real Godot provider sample through the GLR Host driver."
+entrypoints = [".github/workflows/ci.yml"]
+
+[[entries]]
+id = "providers.check-unity-provider"
+path = "tools/providers/check_unity_provider.py"
+domain = "providers"
+purpose = "Build and run an isolated Unity Mono or IL2CPP provider sample."
+entrypoints = ["manual"]
+
+[[entries]]
+id = "providers.check-unreal-provider"
+path = "tools/providers/check_unreal_provider.py"
+domain = "providers"
+purpose = "Run Actor, component and level checks in a new Unreal Editor project."
+entrypoints = ["manual"]
+
+[[entries]]
+id = "release.verify-release"
+path = "tools/release/verify_release.py"
+domain = "release"
+purpose = "Verify that a release tag exactly matches the package version."
+entrypoints = ["just release-check"]

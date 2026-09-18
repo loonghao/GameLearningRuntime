@@ -17,7 +17,7 @@ def main():
         raise ValueError("Output must be a new or empty isolated project directory")
     scripts = output / "Content/Python"
     scripts.mkdir(parents=True)
-    for source in (Path(__file__).resolve().parents[1] / "sdk/unreal").glob("*.py"):
+    for source in (Path(__file__).resolve().parents[2] / "sdk/unreal").glob("*.py"):
         shutil.copy2(source, scripts)
     project = output / "GlrSmoke.uproject"
     project.write_text(

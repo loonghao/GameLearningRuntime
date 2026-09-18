@@ -33,7 +33,7 @@ test:
     vx uv run python -m pytest -m "not torchrl" --cov=game_learning_runtime --cov-report=term-missing
 
 core-check:
-    vx uv run python scripts/run_core_checks.py
+    vx uv run python tools/ci/run_core_checks.py
 
 rust-format-check:
     vx cargo fmt --all -- --check
@@ -57,7 +57,7 @@ rust-build:
     vx cargo build --workspace --bins --locked
 
 host-smoke: rust-build
-    vx uv run python scripts/run_host_smoke.py
+    vx uv run python tools/ci/run_host_smoke.py
 
 rust-check: rust-format-check rust-clippy rust-test host-smoke
 
@@ -66,12 +66,16 @@ csharp-check:
     vx dotnet run --project sdk/csharp/GameLearningRuntime.Provider.Smoke/GameLearningRuntime.Provider.Smoke.csproj --configuration Release --no-build
 
 cpp-check:
-    vx uv run python scripts/check_cpp_provider.py
+    vx uv run python tools/providers/check_cpp_provider.py
 
 provider-sdk-check: csharp-check cpp-check
 
 agent-plugin-check:
-    vx uv run python scripts/package_agent_plugin.py --check
+    vx uv run python tools/packaging/package_agent_plugin.py --check
+
+# Repository governance: every tool under tools/ must be registered and domain-owned.
+layout-check:
+    vx uv run --no-sync python tools/governance/check_tool_registry.py
 
 # Standard project control-plane entry points. Human output is a table; add
 # `--format json` when a script or CI job needs the stable JSON envelope.
@@ -87,15 +91,23 @@ glr-runs limit="20" project=".":
 glr-query world="default" project=".":
     vx uv run --no-sync python -m game_learning_runtime.cli --project "{{project}}" query entities --world {{world}}
 
+# Anti-fork gate. Exits 5 when this checkout has drifted from the canonical upstream.
+glr-fork-gate:
+    vx uv run --no-sync python -m game_learning_runtime.cli --format json fork-gate
+
+# One scheduler-friendly supervision pass. Exit 0 healthy, 3 recovered, 4 escalated.
+glr-watchdog *args:
+    vx uv run --no-sync python -m game_learning_runtime.cli --format json watchdog tick {{ args }}
+
 # Full local integration suite for the project, runtime host, providers and package.
 integration-suite: check build
 
-check: setup lock-check workflow-check core-check rust-check provider-sdk-check agent-plugin-check
+check: setup lock-check workflow-check core-check rust-check provider-sdk-check agent-plugin-check layout-check
 
 build:
     vx cargo build --release --workspace --bins --locked
     vx uv run --no-sync python -m build --no-isolation
-    vx uv run python scripts/check_dist.py
+    vx uv run python tools/packaging/check_dist.py
 
 # Local pre-push equivalent of the core CI and package gates.
 ci: check build
@@ -106,7 +118,7 @@ ci-core python_version:
     vx uv lock --check
     vx uv sync --python {{python_version}} --frozen --all-groups --no-install-project
     vx uv sync --python {{python_version}} --frozen --all-groups --no-build-isolation
-    vx uv run --no-sync python scripts/run_core_checks.py
+    vx uv run --no-sync python tools/ci/run_core_checks.py
 
 ci-gymnasium:
     vx uv sync --python 3.12.13 --frozen --all-groups --extra gymnasium --no-install-project
@@ -123,9 +135,9 @@ ci-torchrl:
 ci-package: setup workflow-check build
 
 ci-runtime-host: setup lock-check rust-check provider-sdk-check
-    vx uv run --no-sync python scripts/check_store_interop.py
+    vx uv run --no-sync python tools/ci/check_store_interop.py
 
 release-check tag:
-    vx uv run python scripts/verify_release.py {{tag}}
+    vx uv run python tools/release/verify_release.py {{tag}}
     vx just check
     vx just build
