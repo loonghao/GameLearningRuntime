@@ -17,20 +17,21 @@ use windows::Graphics::Capture::GraphicsCaptureSession;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GetSystemMetrics, GetWindow, GetWindowRect, GetWindowThreadProcessId, HWND_BOTTOM,
-    IsIconic, IsWindowVisible, SM_REMOTESESSION, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE,
-    SetWindowPos, ShowWindow,
+    EnumWindows, GW_OWNER, GetSystemMetrics, GetWindow, GetWindowRect, GetWindowThreadProcessId,
+    HWND_BOTTOM, IsIconic, IsWindowVisible, SM_REMOTESESSION, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow,
 };
 use windows::core::BOOL;
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
 use windows_capture::encoder::{
-    AudioSettingsBuilder, ContainerSettingsBuilder, VideoEncoder, VideoSettingsBuilder, VideoSettingsSubType,
+    AudioSettingsBuilder, ContainerSettingsBuilder, VideoEncoder, VideoSettingsBuilder,
+    VideoSettingsSubType,
 };
 use windows_capture::frame::Frame;
 use windows_capture::graphics_capture_api::InternalCaptureControl;
 use windows_capture::settings::{
-    ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings, MinimumUpdateIntervalSettings,
-    SecondaryWindowSettings, Settings,
+    ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+    MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
 };
 use windows_capture::window::Window;
 
@@ -73,7 +74,11 @@ fn select_main_window(candidates: &[WindowCandidate], pid: u32) -> Option<&Windo
     candidates
         .iter()
         .filter(|candidate| {
-            candidate.pid == pid && candidate.visible && !candidate.cloaked && !candidate.owned && candidate.area > 0
+            candidate.pid == pid
+                && candidate.visible
+                && !candidate.cloaked
+                && !candidate.owned
+                && candidate.area > 0
         })
         .max_by_key(|candidate| candidate.area)
 }
@@ -299,8 +304,10 @@ impl RecordingFlags {
     /// Paths of one segment: the MP4 and its frame index.
     fn segment_paths(&self, segment: u64) -> (PathBuf, PathBuf) {
         (
-            self.directory.join(format!("{}_seg{segment}.mp4", self.stem)),
-            self.directory.join(format!("{}_seg{segment}.frames.jsonl", self.stem)),
+            self.directory
+                .join(format!("{}_seg{segment}.mp4", self.stem)),
+            self.directory
+                .join(format!("{}_seg{segment}.frames.jsonl", self.stem)),
         )
     }
 }
@@ -365,7 +372,10 @@ impl RecordingHandler {
 
     /// Encodes one frame and records it in the index.
     fn record(&mut self, frame: &mut Frame) -> Result<(), String> {
-        let ticks = frame.timestamp().map(|value| value.Duration).unwrap_or_default();
+        let ticks = frame
+            .timestamp()
+            .map(|value| value.Duration)
+            .unwrap_or_default();
         let utc_ms = utc_now_ms();
         let size = FrameGeometry {
             width: frame.width(),
@@ -377,7 +387,8 @@ impl RecordingHandler {
         let geometry = match self.geometry {
             Some(geometry) => geometry,
             None => {
-                let planned = canvas::plan_size(size.width, size.height, self.flags.config.max_width);
+                let planned =
+                    canvas::plan_size(size.width, size.height, self.flags.config.max_width);
                 self.direct = planned.width == size.width && planned.height == size.height;
                 self.canvas = vec![0u8; planned.byte_len()];
                 self.geometry = Some(planned);
@@ -572,7 +583,11 @@ fn report(handler: &RecordingHandler) -> RecordingReport {
 }
 
 /// Starts a Windows recording session for `target`.
-pub(super) fn start(target: RecordingTarget, config: &RecordingConfig, base_dir: &Path) -> StartOutcome {
+pub(super) fn start(
+    target: RecordingTarget,
+    config: &RecordingConfig,
+    base_dir: &Path,
+) -> StartOutcome {
     if !config.enabled {
         return StartOutcome::Skipped(RecordingSkip::Disabled);
     }
@@ -647,7 +662,8 @@ pub(super) fn start(target: RecordingTarget, config: &RecordingConfig, base_dir:
 #[cfg(test)]
 mod tests {
     use super::{
-        WindowCandidate, civil_from_days, resolve_output_dir, sanitize_label, select_main_window, utc_stamp,
+        WindowCandidate, civil_from_days, resolve_output_dir, sanitize_label, select_main_window,
+        utc_stamp,
     };
     use std::path::{Path, PathBuf};
     use std::time::Duration;

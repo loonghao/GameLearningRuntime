@@ -63,7 +63,8 @@ pub fn composite_bgra(
     destination_width: u32,
     destination_height: u32,
 ) {
-    if source_width == 0 || source_height == 0 || destination_width == 0 || destination_height == 0 {
+    if source_width == 0 || source_height == 0 || destination_width == 0 || destination_height == 0
+    {
         return;
     }
     let required = source_width as usize * source_height as usize * BYTES_PER_PIXEL;
@@ -89,12 +90,14 @@ pub fn composite_bgra(
 
     for row in 0..scaled_height {
         let source_row_start = (row as usize * source_height as usize) / scaled_height as usize;
-        let source_row_end = (((row as usize + 1) * source_height as usize) / scaled_height as usize)
+        let source_row_end = (((row as usize + 1) * source_height as usize)
+            / scaled_height as usize)
             .max(source_row_start + 1)
             .min(source_height as usize);
         let destination_row = destination_height - 1 - (offset_y + row);
         for column in 0..scaled_width {
-            let source_column_start = (column as usize * source_width as usize) / scaled_width as usize;
+            let source_column_start =
+                (column as usize * source_width as usize) / scaled_width as usize;
             let source_column_end = (((column as usize + 1) * source_width as usize)
                 / scaled_width as usize)
                 .max(source_column_start + 1)
@@ -102,16 +105,18 @@ pub fn composite_bgra(
             let (mut blue, mut green, mut red, mut samples) = (0u32, 0u32, 0u32, 0u32);
             for source_row in source_row_start..source_row_end {
                 for source_column in source_column_start..source_column_end {
-                    let index = (source_row * source_width as usize + source_column) * BYTES_PER_PIXEL;
+                    let index =
+                        (source_row * source_width as usize + source_column) * BYTES_PER_PIXEL;
                     blue += u32::from(source[index]);
                     green += u32::from(source[index + 1]);
                     red += u32::from(source[index + 2]);
                     samples += 1;
                 }
             }
-            let index =
-                (destination_row as usize * destination_width as usize + offset_x as usize + column as usize)
-                    * BYTES_PER_PIXEL;
+            let index = (destination_row as usize * destination_width as usize
+                + offset_x as usize
+                + column as usize)
+                * BYTES_PER_PIXEL;
             destination[index] = (blue / samples) as u8;
             destination[index + 1] = (green / samples) as u8;
             destination[index + 2] = (red / samples) as u8;
@@ -126,7 +131,12 @@ mod tests {
 
     fn pixel(buffer: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
         let index = (y as usize * width as usize + x as usize) * BYTES_PER_PIXEL;
-        [buffer[index], buffer[index + 1], buffer[index + 2], buffer[index + 3]]
+        [
+            buffer[index],
+            buffer[index + 1],
+            buffer[index + 2],
+            buffer[index + 3],
+        ]
     }
 
     fn source(width: u32, height: u32) -> Vec<u8> {
@@ -156,9 +166,27 @@ mod tests {
     #[test]
     fn plan_size_caps_the_long_edge_and_keeps_aspect() {
         let geometry = plan_size(3840, 2160, 1920);
-        assert_eq!(geometry, FrameGeometry { width: 1920, height: 1080 });
-        assert_eq!(plan_size(800, 600, 1920), FrameGeometry { width: 800, height: 600 });
-        assert_eq!(plan_size(800, 600, 0), FrameGeometry { width: 800, height: 600 });
+        assert_eq!(
+            geometry,
+            FrameGeometry {
+                width: 1920,
+                height: 1080
+            }
+        );
+        assert_eq!(
+            plan_size(800, 600, 1920),
+            FrameGeometry {
+                width: 800,
+                height: 600
+            }
+        );
+        assert_eq!(
+            plan_size(800, 600, 0),
+            FrameGeometry {
+                width: 800,
+                height: 600
+            }
+        );
     }
 
     #[test]

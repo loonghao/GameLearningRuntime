@@ -38,7 +38,12 @@ impl FrameIndexWriter {
     /// # Errors
     ///
     /// Returns the underlying [`std::io::Error`] when the write fails.
-    pub fn write(&mut self, frame: u64, timestamp_qpc: i64, timestamp_utc_ms: i64) -> std::io::Result<()> {
+    pub fn write(
+        &mut self,
+        frame: u64,
+        timestamp_qpc: i64,
+        timestamp_utc_ms: i64,
+    ) -> std::io::Result<()> {
         writeln!(
             self.writer,
             "{{\"frame\":{frame},\"timestamp_qpc\":{timestamp_qpc},\"timestamp_utc_ms\":{timestamp_utc_ms}}}"
@@ -68,8 +73,12 @@ mod tests {
             std::process::id()
         ));
         let mut writer = FrameIndexWriter::create(&path).expect("index file");
-        writer.write(0, 100, 1_700_000_000_000).expect("first frame");
-        writer.write(1, 433, 1_700_000_000_033).expect("second frame");
+        writer
+            .write(0, 100, 1_700_000_000_000)
+            .expect("first frame");
+        writer
+            .write(1, 433, 1_700_000_000_033)
+            .expect("second frame");
         writer.flush().expect("flush");
         drop(writer);
         let text = fs::read_to_string(&path).expect("read back");

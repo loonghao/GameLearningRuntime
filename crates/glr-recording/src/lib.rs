@@ -134,9 +134,15 @@ impl RecordingSession {
     /// Never fails: an unavailable session is reported as
     /// [`RecordingStart::Skipped`] so callers can log a warning and continue.
     #[must_use]
-    pub fn start(target: RecordingTarget, config: &RecordingConfig, base_dir: &Path) -> RecordingStart {
+    pub fn start(
+        target: RecordingTarget,
+        config: &RecordingConfig,
+        base_dir: &Path,
+    ) -> RecordingStart {
         match platform::start(target, config, base_dir) {
-            platform::StartOutcome::Started(session) => RecordingStart::Started(Self { inner: session }),
+            platform::StartOutcome::Started(session) => {
+                RecordingStart::Started(Self { inner: session })
+            }
             platform::StartOutcome::Skipped(reason) => RecordingStart::Skipped(reason),
         }
     }

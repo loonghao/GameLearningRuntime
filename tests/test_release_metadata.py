@@ -34,7 +34,11 @@ def test_release_strategy_supports_the_virtual_rust_workspace() -> None:
         workspace = tomllib.load(stream)
 
     assert "package" not in workspace
-    assert workspace["workspace"]["members"] == ["crates/glr-cli", "crates/glr-host"]
+    assert workspace["workspace"]["members"] == [
+        "crates/glr-cli",
+        "crates/glr-host",
+        "crates/glr-recording",
+    ]
     assert config["packages"]["."]["release-type"] == "python"
 
 
@@ -77,28 +81,25 @@ def test_rust_workspace_and_lock_versions_match_manifest() -> None:
     manifest = json.loads((ROOT / ".release-please-manifest.json").read_text(encoding="utf-8"))
     workspace = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
     lock = (ROOT / "Cargo.lock").read_text(encoding="utf-8")
+    with (ROOT / "Cargo.toml").open("rb") as stream:
+        workspace_toml = tomllib.load(stream)
     workspace_match = re.search(
         r'^version = "(?P<version>\d+\.\d+\.\d+)"$', workspace, re.MULTILINE
     )
-    host_lock_match = re.search(
-        r'^name = "glr-host"\n'
-        r'version = "(?P<version>\d+\.\d+\.\d+)" # x-release-please-version$',
-        lock,
-        re.MULTILINE,
-    )
-    cli_lock_match = re.search(
-        r'^name = "glr-cli"\n'
-        r'version = "(?P<version>\d+\.\d+\.\d+)" # x-release-please-version$',
-        lock,
-        re.MULTILINE,
-    )
 
     assert workspace_match is not None
-    assert host_lock_match is not None
-    assert cli_lock_match is not None
     assert workspace_match.group("version") == manifest["."]
-    assert host_lock_match.group("version") == manifest["."]
-    assert cli_lock_match.group("version") == manifest["."]
+
+    for member in workspace_toml["workspace"]["members"]:
+        crate = member.rsplit("/", maxsplit=1)[-1]
+        crate_lock_match = re.search(
+            rf'^name = "{crate}"\n'
+            r'version = "(?P<version>\d+\.\d+\.\d+)" # x-release-please-version$',
+            lock,
+            re.MULTILINE,
+        )
+        assert crate_lock_match is not None, f"missing release marker for {crate}"
+        assert crate_lock_match.group("version") == manifest["."]
 
 
 def test_bilingual_readme_release_pins_match_manifest() -> None:

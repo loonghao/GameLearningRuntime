@@ -86,9 +86,11 @@ impl RecordingConfig {
     /// Returns [`RecordingConfigError`] when the text is not valid TOML or the
     /// table is missing.
     pub fn from_toml(text: &str) -> Result<Self, RecordingConfigError> {
-        let document: RecordingDocument =
-            toml::from_str(text).map_err(|error| RecordingConfigError::Invalid(error.to_string()))?;
-        let mut config = document.recording.ok_or(RecordingConfigError::MissingTable)?;
+        let document: RecordingDocument = toml::from_str(text)
+            .map_err(|error| RecordingConfigError::Invalid(error.to_string()))?;
+        let mut config = document
+            .recording
+            .ok_or(RecordingConfigError::MissingTable)?;
         let _ = config.sanitize();
         Ok(config)
     }
