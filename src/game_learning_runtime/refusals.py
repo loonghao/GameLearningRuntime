@@ -44,7 +44,12 @@ class RefusalFunnel:
         self._lock = RLock()
 
     def observe(self, receipt: ActionReceipt) -> ActionReceipt:
-        """Route a typed refusal receipt through the policy exactly once."""
+        """Route a typed refusal receipt through the policy exactly once.
+
+        An ``INDETERMINATE`` receipt is not a refusal and is never routed
+        through retry or backoff policy: the action may have been applied, so
+        retrying is forbidden and the caller must stop instead.
+        """
 
         if receipt.outcome not in {ActionOutcome.REJECTED, ActionOutcome.BLOCKED}:
             return receipt

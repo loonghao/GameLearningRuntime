@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 
 from .contracts import TimeStep, Transition
+from .termination import TERMINATION_DETAIL_KEY, TERMINATION_REASON_KEY, termination_from_info
 
 
 class TrainingContractError(ValueError):
@@ -30,6 +31,13 @@ def validate_timestep(timestep: TimeStep) -> TimeStep:
         and not np.any(timestep.truncated)
     ):
         raise TrainingContractError("failed infrastructure outcome must be truncated")
+    receipt = timestep.action_receipt
+    if receipt is not None and receipt.is_indeterminate:
+        raise TrainingContractError(
+            "an indeterminate action outcome is not learner-facing data; "
+            "the episode ends instead of recording the step"
+        )
+    termination_from_info(timestep.info)
     return timestep
 
 
@@ -52,6 +60,8 @@ def transition_provenance(timestep: TimeStep, *, segment: int = 0) -> dict[str, 
         "terminated": bool(np.all(timestep.terminated)),
         "truncated": bool(np.all(timestep.truncated)),
         "infrastructure_failure": bool(timestep.info.get("infrastructure_failure", False)),
+        TERMINATION_REASON_KEY: timestep.info.get(TERMINATION_REASON_KEY),
+        TERMINATION_DETAIL_KEY: timestep.info.get(TERMINATION_DETAIL_KEY),
     }
 
 
@@ -68,6 +78,12 @@ def assert_transition_provenance(transition: Transition) -> Transition:
         raise TrainingContractError("transition step_id does not match provenance")
     if bool(provenance.get("terminated")) and bool(provenance.get("truncated")):
         raise TrainingContractError("provenance cannot terminate and truncate together")
+    if transition.action_receipt is not None and transition.action_receipt.is_indeterminate:
+        raise TrainingContractError(
+            "an indeterminate action outcome is not learner-facing data; "
+            "the episode ends instead of recording the step"
+        )
+    termination_from_info(provenance)
     return transition
 
 
