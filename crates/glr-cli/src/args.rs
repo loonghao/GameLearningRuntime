@@ -51,6 +51,14 @@ pub enum Command {
         /// Disable the automatic localhost observation server.
         #[arg(long)]
         no_observe: bool,
+        /// Disable automatic recording of the trainer window.
+        #[arg(long)]
+        no_recording: bool,
+    },
+    /// Record the main window of a running process (Windows only).
+    Recording {
+        #[command(subcommand)]
+        command: RecordingCommand,
     },
     /// Host a caller-owned long-lived loop inside a GLR run.
     ///
@@ -201,6 +209,22 @@ pub enum CaptureCommand {
     },
     /// Show canonical logs, capture, dataset, checkpoint, and report paths.
     Layout,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum RecordingCommand {
+    /// Record the main window of one process for a fixed duration.
+    Run {
+        /// Process id whose main window is recorded.
+        #[arg(long)]
+        pid: u32,
+        /// Stop recording after this many seconds.
+        #[arg(long, default_value_t = 10)]
+        seconds: u64,
+        /// Output directory; defaults to the configured recording directory.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
