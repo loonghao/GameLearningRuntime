@@ -9,6 +9,7 @@ from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
+from uuid import UUID
 
 import numpy as np
 
@@ -18,6 +19,12 @@ from game_learning_runtime.contracts import (
     TimeStep,
     Transition,
     Unroll,
+)
+from game_learning_runtime.declared_metrics import (
+    DeclaredMetricAudit,
+    DeclaredMetricLedger,
+    MetricDeclaration,
+    build_declared_metrics,
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
 
@@ -503,7 +510,15 @@ def _wait_interval(
 
 
 class SyncCollector:
-    """Collect fixed-length unrolls without coupling to a learner framework."""
+    """Collect fixed-length unrolls without coupling to a learner framework.
+
+    When a :class:`~game_learning_runtime.declared_metrics.MetricDeclaration` or
+    a ready :class:`~game_learning_runtime.declared_metrics.DeclaredMetricLedger`
+    is supplied the collector also audits the run's metric promises: every
+    episode close counts what was declared against what was emitted, and strict
+    mode refuses to keep collecting on an episode that measured nothing.
+    Without a declaration nothing is audited and behaviour is unchanged.
+    """
 
     def __init__(
         self,
@@ -512,6 +527,7 @@ class SyncCollector:
         actor_id: str = "actor-0",
         start_mode: Literal["reset", "attach"] = "reset",
         reset_options: Mapping[str, Any] | None = None,
+        declared_metrics: MetricDeclaration | DeclaredMetricLedger | None = None,
     ) -> None:
         if not actor_id:
             raise ValueError("actor_id cannot be empty")
@@ -528,6 +544,51 @@ class SyncCollector:
         self._current: TimeStep | None = None
         self._sequence_id = 0
         self._environment_config_snapshot: EnvironmentConfigSnapshot | None = None
+        self._declared_metrics = self._resolve_declared_metrics(declared_metrics)
+
+    def _resolve_declared_metrics(
+        self, value: MetricDeclaration | DeclaredMetricLedger | None
+    ) -> DeclaredMetricLedger | None:
+        """Build a ledger from a declaration, or adopt a caller-owned one.
+
+        A bare declaration is resolved against the adapter's capabilities, so
+        ``strict-metrics-v1`` is what turns a gap into a failure. A caller that
+        already bound a ledger to a run keeps its store binding.
+        """
+
+        if value is None:
+            return None
+        if isinstance(value, DeclaredMetricLedger):
+            return value
+        if not isinstance(value, MetricDeclaration):
+            raise TypeError(
+                "declared_metrics must be a MetricDeclaration, a DeclaredMetricLedger, or None"
+            )
+        return build_declared_metrics(value, capabilities=self._environment.spec.capabilities)
+
+    @property
+    def declared_metrics(self) -> DeclaredMetricLedger | None:
+        """The metric ledger, or ``None`` when nothing was declared."""
+
+        return self._declared_metrics
+
+    def declared_metric_audits(self) -> tuple[DeclaredMetricAudit, ...]:
+        """Every closed episode's audit, or an empty tuple when nothing is watched."""
+
+        return () if self._declared_metrics is None else self._declared_metrics.audits
+
+    def _close_declared_metrics(self, episode_id: UUID, *, timestamp_ns: int) -> None:
+        """Audit one closed episode before the run can be reported complete.
+
+        Order matters: the audit is recorded first, so a strict failure still
+        leaves the counters on the record. Raising is the half that stops the
+        gap from recurring, not the half that reports it.
+        """
+
+        ledger = self._declared_metrics
+        if ledger is None:
+            return
+        ledger.close_episode(str(episode_id), timestamp_ns=timestamp_ns).require()
 
     def _start(self, *, seed: int | None = None) -> TimeStep:
         if self._start_mode == "attach":
@@ -554,6 +615,9 @@ class SyncCollector:
         By default a terminal transition starts a fresh episode so the result
         remains fixed length. Set ``stop_on_done`` for long-running live games
         where an unroll must never mix progression from multiple episodes.
+
+        A declared-metric ledger is audited at every episode close, so an
+        episode that measured nothing is named before the next one starts.
         """
 
         if steps <= 0:
@@ -613,6 +677,12 @@ class SyncCollector:
             )
             self._current = following
             if following.done:
+                # Episode close. A metric that was declared and never arrived is
+                # a property of the episode that just ended, so it is checked
+                # here rather than when a report is finally rendered.
+                self._close_declared_metrics(
+                    current.episode_id, timestamp_ns=following.timestamp_ns
+                )
                 if stop_on_done:
                     break
                 if len(transitions) < steps:

@@ -30,6 +30,14 @@ from game_learning_runtime.contracts import (
     environment_config_digest,
     normalize_environment_config,
 )
+from game_learning_runtime.declared_metrics import (
+    DECLARED_METRICS_EVENT,
+    DECLARED_METRICS_METRIC,
+    EMITTED_METRICS_METRIC,
+    MISSING_METRICS_METRIC,
+    DeclaredMetricAudit,
+    declared_metrics_for,
+)
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.training import KnowledgeAuthority
 
@@ -1279,6 +1287,51 @@ class TrainingStore:
             for row in rows
         )
 
+    def record_declared_metric_audit(
+        self,
+        run_id: str,
+        audit: DeclaredMetricAudit,
+        *,
+        timestamp_ns: int | None = None,
+    ) -> RunEvent:
+        """Persist one closed episode's metric accounting as an event plus counters.
+
+        ``declared_metrics``, ``emitted_metrics`` and ``missing_metrics`` are
+        written as first-class metrics so all three are readable from the run
+        store and from `glr runs show` without parsing a log. The audit is
+        written whether or not strict mode is on: the counters are what gets
+        the instrumentation fixed, the error only stops it coming back.
+        """
+
+        if not isinstance(audit, DeclaredMetricAudit):
+            raise TypeError("audit must be a DeclaredMetricAudit")
+        # The episode id travels in the payload: a run-store event episode_id is
+        # an identifier, and a raw UUID is not one.
+        event = self.append_event(
+            run_id,
+            kind=DECLARED_METRICS_EVENT,
+            payload=audit.to_mapping(),
+            timestamp_ns=timestamp_ns,
+        )
+        for name, value in (
+            (DECLARED_METRICS_METRIC, float(audit.declared_metrics)),
+            (EMITTED_METRICS_METRIC, float(audit.emitted_metrics)),
+            (MISSING_METRICS_METRIC, float(audit.missing_metrics_count)),
+        ):
+            self.record_metric(run_id, name=name, value=value, timestamp_ns=timestamp_ns)
+        return event
+
+    def list_declared_metric_audits(
+        self, run_id: str, *, limit: int = 1000
+    ) -> tuple[DeclaredMetricAudit, ...]:
+        """Return every persisted metric audit in sequence order."""
+
+        return tuple(
+            DeclaredMetricAudit.from_mapping(event.payload)
+            for event in self.list_events(run_id, limit=limit)
+            if event.kind == DECLARED_METRICS_EVENT
+        )
+
     def record_metric(
         self,
         run_id: str,
@@ -1336,6 +1389,12 @@ class TrainingStore:
             if cursor.lastrowid is None:
                 raise ContractViolation("SQLite did not return a metric identifier")
             metric_id = int(cursor.lastrowid)
+        ledger = declared_metrics_for(self.path, run_id)
+        if ledger is not None:
+            # The only place a metric can enter a run. Counting here means an
+            # adapter that routes its metrics through Telemetry, or straight to
+            # the store, is counted the same way.
+            ledger.record(name)
         return MetricRecord(
             run_id=run_id,
             metric_id=metric_id,
