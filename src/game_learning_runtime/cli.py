@@ -22,6 +22,7 @@ from game_learning_runtime.agent_goal import (
     TrialPlan,
 )
 from game_learning_runtime.capture import build_capture_manifest
+from game_learning_runtime.declared_metrics import summarize_declared_metrics
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.fork_gate import (
     ForkGatePolicy,
@@ -1710,6 +1711,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if arguments.command == "runs" and arguments.runs_command == "show":
         run = store.get_run(arguments.run_id)
+        audits = store.list_declared_metric_audits(run.run_id)
         data = {
             "run": _run_value(run),
             "events": [_event_value(event) for event in store.list_events(run.run_id)],
@@ -1717,6 +1719,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "artifacts": [
                 _artifact_value(artifact) for artifact in store.list_artifacts(run.run_id)
             ],
+            # Projected so a scheduler can read all three declared-metric
+            # counters without walking events, metrics, or a log.
+            "declared_metrics": [audit.to_mapping() for audit in audits],
+            "declared_metrics_summary": summarize_declared_metrics(audits),
         }
         _emit("runs.show", data, as_json=arguments.json)
         return 0

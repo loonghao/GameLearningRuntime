@@ -40,6 +40,7 @@
 - [ADR-0035: Own repository automation by capability domain and register it](0035-modular-tools-and-registry.md)
 - [ADR-0036: Add a policy-only supervision watchdog with a scheduler exit-code contract](0036-supervision-watchdog-and-scheduler-contract.md)
 - [ADR-0037: Add a read-only anti-fork drift gate](0037-anti-fork-drift-gate.md)
+- [ADR-0040: Fail closed on a declared metric that is never emitted](0040-fail-closed-on-a-declared-metric-that-is-never-emitted.md)
 
 Accepted ADRs describe implemented architecture. Proposed future designs belong
 in `docs/planning` until accepted and built.
