@@ -20,6 +20,13 @@ from game_learning_runtime.contracts import (
     Unroll,
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
+from game_learning_runtime.learnability import (
+    LEARNABILITY_CELL_KEY,
+    LearnabilityPlan,
+    LearnabilityReport,
+    LearnabilityTracker,
+    build_tracker,
+)
 
 
 class Policy(Protocol):
@@ -503,7 +510,14 @@ def _wait_interval(
 
 
 class SyncCollector:
-    """Collect fixed-length unrolls without coupling to a learner framework."""
+    """Collect fixed-length unrolls without coupling to a learner framework.
+
+    When a :class:`~game_learning_runtime.learnability.LearnabilityPlan` is
+    supplied the collector also watches the run's learnability budget: every
+    recorded transition contributes a state cell, and a configured coverage
+    floor stops collection as soon as the remaining budget provably cannot
+    reach it. Without a plan nothing is measured and behaviour is unchanged.
+    """
 
     def __init__(
         self,
@@ -512,11 +526,14 @@ class SyncCollector:
         actor_id: str = "actor-0",
         start_mode: Literal["reset", "attach"] = "reset",
         reset_options: Mapping[str, Any] | None = None,
+        learnability: LearnabilityPlan | None = None,
     ) -> None:
         if not actor_id:
             raise ValueError("actor_id cannot be empty")
         if start_mode not in {"reset", "attach"}:
             raise ValueError("start_mode must be 'reset' or 'attach'")
+        if learnability is not None and not isinstance(learnability, LearnabilityPlan):
+            raise TypeError("learnability must be a LearnabilityPlan or None")
         self._environment = (
             environment
             if isinstance(environment, ContractEnvironment)
@@ -528,6 +545,13 @@ class SyncCollector:
         self._current: TimeStep | None = None
         self._sequence_id = 0
         self._environment_config_snapshot: EnvironmentConfigSnapshot | None = None
+        self._learnability: LearnabilityTracker | None = None
+        if learnability is not None:
+            self._learnability = build_tracker(
+                learnability,
+                declaration=learnability.declaration or self._environment.spec.learnability,
+                observation_spec=self._environment.spec.observation,
+            )
 
     def _start(self, *, seed: int | None = None) -> TimeStep:
         if self._start_mode == "attach":
@@ -538,6 +562,38 @@ class SyncCollector:
             timestep = self._environment.reset(seed=seed, options=self._reset_options)
         self._environment_config_snapshot = self._environment.config_snapshot()
         return timestep
+
+    @property
+    def learnability(self) -> LearnabilityTracker | None:
+        """The learnability tracker, or ``None`` when no plan was supplied."""
+
+        return self._learnability
+
+    def learnability_report(self) -> LearnabilityReport | None:
+        """Current learnability verdict, or ``None`` when nothing is watched."""
+
+        return None if self._learnability is None else self._learnability.report()
+
+    def _observe_learnability(self, timestep: TimeStep) -> None:
+        """Charge one recorded step to the learnability budget.
+
+        A declared binning resolves the cell from the observation; otherwise an
+        adapter may report it through ``info[LEARNABILITY_CELL_KEY]``. A step that resolves
+        to no cell is still charged, because an untracked step is not free.
+        """
+
+        tracker = self._learnability
+        if tracker is None:
+            return
+        declared = tracker.declaration.state
+        cell = timestep.info.get(LEARNABILITY_CELL_KEY)
+        observation = None if declared is None or not declared.bins else timestep.observation
+        tracker.observe(
+            cell=cell if isinstance(cell, (int, str)) else None,
+            observation=observation,
+            now_ns=timestep.timestamp_ns,
+        )
+        tracker.require()
 
     def collect(
         self,
@@ -554,6 +610,10 @@ class SyncCollector:
         By default a terminal transition starts a fresh episode so the result
         remains fixed length. Set ``stop_on_done`` for long-running live games
         where an unroll must never mix progression from multiple episodes.
+
+        A learnability plan is enforced here, so a configuration that cannot
+        reach its coverage floor stops mid-collection instead of after the last
+        budgeted step.
         """
 
         if steps <= 0:
@@ -611,6 +671,7 @@ class SyncCollector:
                     timestamp_ns=following.timestamp_ns,
                 )
             )
+            self._observe_learnability(current)
             self._current = following
             if following.done:
                 if stop_on_done:
