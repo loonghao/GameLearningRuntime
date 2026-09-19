@@ -215,6 +215,50 @@ synthetic training/reproduction; authorized live runtime binding; whole-match
 evidence. Report which gate ran. TOML source support must be built/released and
 adopted by the consumer before claiming its installed GLR is compatible.
 
+### Pinned entry point and single-owner invariants
+
+A project may pin the one entry point allowed to launch it, so a fresh agent
+context cannot drift onto a stale launcher:
+
+```toml
+[entry_point]
+schema_version = "glr.entry-point.v1"
+id = "campaign-driver"
+command = "python -m campaign.driver"
+version = "1.4.0"
+strict = false
+
+[[entry_point.invariants]]
+id = "single-learner"
+root = "src"
+suffix = ".py"
+marker = "class Learner"
+```
+
+`command` is provenance text GLR reports; it never executes it. The launching
+process claims its door with `GLR_ENTRY_ID` and optional `GLR_ENTRY_VERSION`.
+The attestation is `undeclared` (nothing declared, nothing compared), `matched`,
+or `entry_drift` — a run that claims nothing at all is drift, not an unknown.
+
+An invariant asserts that exactly one file under `root` contains the literal,
+case-sensitive `marker`. It reports `ok`, `missing`, `multiple`, or `truncated`,
+and `multiple` names every matching path. The scan stays inside the project,
+skips `.git`/`target`/`node_modules`/`.venv`/`__pycache__`, never follows
+symlinks, and is bounded (32 invariants, 32 levels, 20 000 files, 64 MiB total,
+1 MiB per file); exceeding a bound is `truncated` and fails closed.
+
+Invariant results always decide `glr doctor`'s verdict: exit `0` when every
+included check passes, `4` when any fails. The attestation is **reported, and
+gates only when `strict = true`** — `doctor` is a diagnosis, not a run, so it
+never carries `GLR_ENTRY_ID`, and a non-strict project must not fail every round
+for pinning an entry point. Read `doctor.data.entry_point` for `status`,
+`declared`, `observed`, `strict`, `ready`, `invariants`, and `elapsed_ms`;
+`doctor.data.last_run` carries the previous run's verdict with its own
+`entry_point` attestation, and is reported without gating. With `strict = true`,
+a drifting run is refused before the run row is created, with exit code `79`;
+nothing is recorded and no budget is consumed. Absent an `[entry_point]` table,
+every project behaves exactly as before.
+
 ## Commands
 
 Use `--json` for compact `glr.cli-output.v1` output.

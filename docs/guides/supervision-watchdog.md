@@ -229,5 +229,7 @@ exit_code = watchdog.run_once()
 
 - [Agent onboarding](agent-onboarding.md) — bootstrap and verify chain.
 - [Anti-fork gate](fork-gate.md) — drift detection for derived checkouts.
+- [Pin one entry point per project](entry-point.md) — which command is allowed
+  to launch the project, and the aggregate `doctor` verdict.
 - [Repository layout](repository-layout.md) — where automation lives.
 - ADR-0036 in [the decision index](../decisions/README.md).

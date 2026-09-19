@@ -599,6 +599,8 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
     ready &= tasks
         .as_ref()
         .is_none_or(|report| report["ready"].as_bool() == Some(true));
+    let entry_point = crate::entry_point::report(project)?;
+    ready &= entry_point.ready;
     emit(
         "doctor",
         &json!({
@@ -619,10 +621,70 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
                 .transpose()?,
             "run_context": crate::run_context::metadata(project)?,
             "goal_binding": crate::goal_binding::doctor_metadata(project),
+            "entry_point": serde_json::to_value(&entry_point)?,
+            "last_run": last_run_verdict(project),
         }),
         as_json,
     )?;
     Ok(if ready { 0 } else { 4 })
+}
+
+/// Enforce the declared entry point before a run is created.
+///
+/// Returns the metadata fragment to record, or `None` when a strict entry point
+/// refused the run. The caller must then return immediately: no run row exists,
+/// so no role was attached and no budget was consumed.
+fn entry_point_gate(project: &Project, as_json: bool) -> Result<Option<Value>> {
+    let report = crate::entry_point::enforce_at_run_start(project)?;
+    if report.strict
+        && let Some(reason) = report.drift_summary()
+    {
+        emit(
+            "entry.drift",
+            &json!({
+                "status": report.status,
+                "strict": true,
+                "refused": true,
+                "reason": reason,
+                "declared": report.declared,
+                "observed": report.observed,
+            }),
+            as_json,
+        )?;
+        return Ok(None);
+    }
+    Ok(Some(report.as_metadata()?))
+}
+
+/// The most recent run's verdict, merged into `doctor` so a scheduler needs one
+/// call rather than two.
+///
+/// This is **reported, not gating**. A run that failed yesterday is information
+/// for whoever reads the report; it is not evidence that the project is unready
+/// today, and failing on it would change behaviour for projects that declare
+/// nothing.
+fn last_run_verdict(project: &Project) -> Value {
+    let path = project.data_dir.join("runs.sqlite3");
+    let store = match crate::store::Store::read_only(path.clone()) {
+        Ok(store) => store,
+        // No store is not a failure: a project that has never run has nothing
+        // to report, and `doctor` must not create the database to find that out.
+        Err(_) => return json!({"status": "none", "store_path": path}),
+    };
+    match store.list_runs(&project.environment_id, None, 1) {
+        Ok(runs) => match runs.into_iter().next() {
+            Some(run) => json!({
+                "run_id": run.run_id,
+                "kind": run.kind,
+                "status": run.status,
+                "exit_code": run.exit_code,
+                "started_at_ns": run.started_at_ns,
+                "entry_point": run.metadata.get("entry_point").cloned().unwrap_or(Value::Null),
+            }),
+            None => json!({"status": "none"}),
+        },
+        Err(error) => json!({"status": "unknown", "error": error.to_string()}),
+    }
 }
 
 fn run_update(cli: &Cli, arguments: &UpdateArgs) -> Result<i32> {
@@ -698,12 +760,16 @@ fn run_host(
         Some(seconds) => Some(Duration::from_secs_f64(seconds)),
         None => None,
     };
+    let Some(entry_point) = entry_point_gate(project, as_json)? else {
+        return Ok(crate::entry_point::ENTRY_DRIFT_REFUSED_EXIT_CODE);
+    };
     let run = store.create_run(
         &project.environment_id,
         &project.protocol_version,
         "hosted",
         json!({
             "environment_family": project.environment_family,
+            "entry_point": entry_point,
             "dashboard_job_id": std::env::var("GLR_DASHBOARD_JOB_ID").ok(),
             "run_context": crate::run_context::metadata(project)?,
             "status_scope": "process_execution",
@@ -827,6 +893,9 @@ fn run_training(
         .as_ref()
         .map(|value| value.manifest(&project.root))
         .transpose()?;
+    let Some(entry_point) = entry_point_gate(project, as_json)? else {
+        return Ok(crate::entry_point::ENTRY_DRIFT_REFUSED_EXIT_CODE);
+    };
     let run = store.create_run(
         &project.environment_id,
         &project.protocol_version,
@@ -838,7 +907,8 @@ fn run_training(
             "run_context": crate::run_context::metadata(project)?,
             "status_scope": "process_execution",
             "learning_status": "unverified",
-            "improvement_status": "unverified"
+            "improvement_status": "unverified",
+            "entry_point": entry_point
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);
@@ -1071,6 +1141,12 @@ fn run_project_role(
             .transpose()?
             .unwrap_or(Value::Null),
     );
+    // The declared entry point is enforced before the run row exists, so a
+    // strict refusal attaches no role and consumes no budget.
+    let Some(entry_point) = entry_point_gate(project, invocation.as_json)? else {
+        return Ok(crate::entry_point::ENTRY_DRIFT_REFUSED_EXIT_CODE);
+    };
+    combined_metadata.insert("entry_point".into(), entry_point);
     let run = store.create_run(
         &project.environment_id,
         &project.protocol_version,
@@ -1158,6 +1234,9 @@ fn run_goal(
         .as_ref()
         .map(|value| value.manifest(&project.root))
         .transpose()?;
+    let Some(entry_point) = entry_point_gate(project, as_json)? else {
+        return Ok(crate::entry_point::ENTRY_DRIFT_REFUSED_EXIT_CODE);
+    };
     let run = store.create_run(
         &project.environment_id,
         &project.protocol_version,
@@ -1176,6 +1255,7 @@ fn run_goal(
                 project.run_context.as_ref(),
                 context_source,
             ),
+            "entry_point": entry_point
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);

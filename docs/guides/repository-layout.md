@@ -149,4 +149,7 @@ mis-declared tool cannot merge.
 - [Agent onboarding](agent-onboarding.md) — the one-command bootstrap chain.
 - [Supervision and watchdog](supervision-watchdog.md) — scheduled runs.
 - [Anti-fork gate](fork-gate.md) — drift detection for derived checkouts.
-- ADR-0035, ADR-0036, ADR-0037 in [the decision index](../decisions/README.md).
+- [Pin one entry point per project](entry-point.md) — launch attestation and
+  single-owner invariants.
+- ADR-0035, ADR-0036, ADR-0037, ADR-0042 in [the decision
+  index](../decisions/README.md).

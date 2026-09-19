@@ -5,6 +5,7 @@ mod checkpoint;
 mod commands;
 mod contracts;
 mod dashboard;
+mod entry_point;
 mod error;
 mod filesystem;
 mod goal_binding;

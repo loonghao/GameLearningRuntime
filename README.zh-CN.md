@@ -561,6 +561,7 @@ Runtime Host、安装清单和两套 GLR Skills；Release 还包含 C# Provider 
 - [仓库目录与工具归属规范](docs/guides/repository-layout.md)
 - [supervisor 与看门狗](docs/guides/supervision-watchdog.md)
 - [防 fork 门阀](docs/guides/fork-gate.md)
+- [为项目固定唯一入口](docs/guides/entry-point.md)
 - [基准测试基线](docs/benchmarks/2026-08-31-data-plane-baseline.md)
 - [路线图](docs/planning/roadmap.md)与[架构决策](docs/decisions/README.md)
 

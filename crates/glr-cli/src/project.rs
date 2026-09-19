@@ -456,6 +456,10 @@ struct ProjectFile {
     lifecycle: Option<LifecycleConfig>,
     #[serde(default)]
     recording: Option<RecordingConfig>,
+    /// Optional `entry-point-v1` declaration. Absent means the project pins no
+    /// entry point and behaves exactly as it did before the capability existed.
+    #[serde(default)]
+    entry_point: Option<crate::entry_point::EntryPointConfig>,
     #[serde(default)]
     extensions: HashMap<String, ExtensionConfig>,
 }
@@ -486,6 +490,8 @@ pub struct Project {
     pub capture: Option<CaptureConfig>,
     pub progress: Option<ProgressConfig>,
     pub lifecycle: Option<LifecycleConfig>,
+    /// The declared `entry-point-v1` capability, when the project opts in.
+    pub entry_point: Option<crate::entry_point::EntryPointConfig>,
     /// Automatic window recording; defaults to the documented contract values.
     pub recording: RecordingConfig,
     /// Corrections applied while sanitizing `recording`.
@@ -609,6 +615,9 @@ pub fn load_project(requested: &Path) -> Result<Project> {
             }
         }
     }
+    if let Some(entry_point) = &value.entry_point {
+        entry_point.validate(&root)?;
+    }
     let data_dir = inside_project(&root, &value.data_dir, "project.data_dir")?;
     let bridge_path = inside_project(&root, &value.bridge_path, "project.bridge_path")?;
     if !bridge_path.exists() {
@@ -659,13 +668,14 @@ pub fn load_project(requested: &Path) -> Result<Project> {
         capture: value.capture,
         progress: value.progress,
         lifecycle: value.lifecycle,
+        entry_point: value.entry_point,
         recording,
         recording_warnings,
         run_context: None,
     })
 }
 
-fn inside_project(root: &Path, value: &str, label: &str) -> Result<PathBuf> {
+pub(crate) fn inside_project(root: &Path, value: &str, label: &str) -> Result<PathBuf> {
     let relative = portable_relative(value, label)?;
     let joined = root.join(relative);
     let normalized = normalize_path(&joined);
@@ -725,7 +735,7 @@ pub fn validate_identifier(value: &str, label: &str) -> Result<()> {
     }
 }
 
-fn validate_text(value: &str, label: &str) -> Result<()> {
+pub(crate) fn validate_text(value: &str, label: &str) -> Result<()> {
     if value.is_empty() || value.chars().any(char::is_control) {
         Err(Error::Invalid(format!(
             "{label} must be non-empty printable text"

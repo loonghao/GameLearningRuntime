@@ -43,6 +43,7 @@
 - [ADR-0038: Register lifecycle hooks per environment and dimension](0038-register-lifecycle-hooks-per-environment-and-dimension.md)
 - [ADR-0040: Fail closed on a declared metric that is never emitted](0040-fail-closed-on-a-declared-metric-that-is-never-emitted.md)
 - [ADR-0041: Ship portable training packages as group-scoped, non-executing envelopes](0041-portable-training-packages.md)
+- [ADR-0042: Pin one entry point per project](0042-pin-one-entry-point-per-project.md)
 
 Accepted ADRs describe implemented architecture. Its staged delivery plan for
 issue #116 is [the phased plan](../planning/training-package-phases.md). Proposed future designs belong

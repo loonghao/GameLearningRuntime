@@ -415,8 +415,7 @@ vx setup && vx just layout-check && vx just core-check && vx just glr-doctor && 
 
 Automation is owned by capability domain under `tools/<domain>/` and registered in
 `tools/registry.toml`; `vx just layout-check` fails when a tool is unregistered or
-orphaned. Unattended training uses two scheduler-facing commands with explicit exit
-codes:
+orphaned. Unattended training uses explicit scheduler-facing exit codes:
 
 ```powershell
 # Supervision pass: 0 healthy, 3 recovered, 4 escalated.
@@ -424,11 +423,21 @@ vx just glr-watchdog --source trainer --heartbeats .glr/heartbeats.jsonl --resta
 
 # Anti-fork gate: 0 aligned, 5 drifted from canonical upstream.
 vx just glr-fork-gate
+
+# Aggregate doctor: 0 every check passed, 4 at least one failed.
+glr --project . doctor
 ```
 
+A project can also pin the one entry point that is allowed to launch it, so an
+unattended agent cannot drift onto a stale launcher. `glr doctor` reports the
+attestation and fails on it only for a strict project — which is the one whose
+drifting runs are refused with exit code `79` before any budget is spent — see
+[pin one entry point per project](docs/guides/entry-point.md).
+
 See [repository layout](docs/guides/repository-layout.md),
-[supervision and watchdog](docs/guides/supervision-watchdog.md), and
-[the anti-fork gate](docs/guides/fork-gate.md).
+[supervision and watchdog](docs/guides/supervision-watchdog.md),
+[the anti-fork gate](docs/guides/fork-gate.md), and
+[the entry point guide](docs/guides/entry-point.md).
 
 ## Knowledge and rewards as data
 
@@ -705,6 +714,7 @@ runbook](docs/runbooks/release.md).
 - [Repository layout and tool ownership](docs/guides/repository-layout.md)
 - [Supervision and watchdog](docs/guides/supervision-watchdog.md)
 - [Anti-fork gate](docs/guides/fork-gate.md)
+- [Pin one entry point per project](docs/guides/entry-point.md)
 - [Benchmark baseline](docs/benchmarks/2026-08-31-data-plane-baseline.md)
 - [Roadmap](docs/planning/roadmap.md) and [architecture decisions](docs/decisions/README.md)
 
