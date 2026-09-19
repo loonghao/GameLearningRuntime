@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.learnability import LearnabilityDeclaration
 from game_learning_runtime.realtime import RealtimeTimingContract
 from game_learning_runtime.runtime_health import RuntimeIdentity
 
@@ -200,6 +201,9 @@ class EnvironmentSpec:
     metadata: Mapping[str, str] = field(default_factory=dict)
     realtime_timing: RealtimeTimingContract | None = None
     runtime_identity: RuntimeIdentity | None = None
+    # Adapter-declared state-action cardinality. Inert on its own: a caller has
+    # to supply a LearnabilityPlan before anything is measured or enforced.
+    learnability: LearnabilityDeclaration | None = None
 
     def __post_init__(self) -> None:
         if not self.environment_id or any(character.isspace() for character in self.environment_id):
@@ -216,5 +220,9 @@ class EnvironmentSpec:
             self.runtime_identity, RuntimeIdentity
         ):
             raise TypeError("runtime_identity must be a RuntimeIdentity or None")
+        if self.learnability is not None and not isinstance(
+            self.learnability, LearnabilityDeclaration
+        ):
+            raise TypeError("learnability must be a LearnabilityDeclaration or None")
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
