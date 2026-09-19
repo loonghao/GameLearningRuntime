@@ -1,5 +1,5 @@
 //! Offline, explicit source-only packages. No role, installer, or hook execution.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -11,15 +11,47 @@ use sha2::{Digest, Sha256};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use crate::args::PackageCommand;
+use crate::commands::emit;
 use crate::error::{Error, Result};
 use crate::filesystem::promote;
-use crate::project::find_project;
+use crate::process::executable_available;
+use crate::project::{Project, find_project, load_project};
 
 const SCHEMA: &str = "glr.source-package.v1";
+const CONFORMANCE_SCHEMA: &str = "glr.package-conformance.v1";
 const MAX_FILE: u64 = 16 * 1024 * 1024;
 const MAX_TOTAL: u64 = 128 * 1024 * 1024;
 const MAX_FILES: usize = 1024;
+const MAX_DEPTH: usize = 16;
 const MANIFEST: &str = "glr-package.json";
+/// Exit code for a materialized package whose reproduction is blocked.
+const BLOCKED_EXIT_CODE: i32 = 4;
+
+/// Roots that must never appear inside a freshly materialized package: they are
+/// caches, local run state, or captured/output artifacts, never redistributable
+/// source. The denied roots of the export allowlist, plus the default run store.
+const FORBIDDEN_ARTIFACT_DIRS: &[&str] = &[
+    ".glr",
+    "cache",
+    "credentials",
+    "datasets",
+    "logs",
+    "node_modules",
+    "recordings",
+    "screenshots",
+    "secrets",
+    "target",
+];
+const RUN_STORE_FILE: &str = "runs.sqlite3";
+
+/// Recipient-local override forms. `source_path` refuses them in a package; a
+/// conformance scan ignores them in the destination and never merges them.
+const LOCAL_OVERRIDE_PATTERNS: &[&str] = &["*.local.*", "*.local"];
+
+fn is_local_override(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains(".local.") || lower.ends_with(".local")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -388,7 +420,350 @@ fn absolute(path: &Path) -> Result<PathBuf> {
     })
 }
 
-pub(crate) fn execute(project: &Path, command: &PackageCommand) -> Result<Value> {
+/// One materialized destination, inventoried without following any link.
+#[derive(Debug, Default)]
+struct Scan {
+    files: BTreeMap<String, u64>,
+    local_overrides: Vec<String>,
+    forbidden: Vec<String>,
+}
+
+fn scan_tree(root: &Path, prefix: &str, depth: usize, scan: &mut Scan) -> Result<()> {
+    if depth > MAX_DEPTH {
+        return Err(refusal("materialized tree exceeds the depth limit"));
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let relative = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        no_links(&entry.path())?;
+        let metadata = fs::symlink_metadata(entry.path())?;
+        if metadata.is_dir() {
+            if FORBIDDEN_ARTIFACT_DIRS
+                .iter()
+                .any(|denied| *denied == name.to_ascii_lowercase())
+            {
+                scan.forbidden.push(relative);
+                continue;
+            }
+            scan_tree(&entry.path(), &relative, depth + 1, scan)?;
+        } else if metadata.is_file() {
+            if name.to_ascii_lowercase() == RUN_STORE_FILE {
+                scan.forbidden.push(relative.clone());
+            }
+            if relative.split('/').any(is_local_override) {
+                scan.local_overrides.push(relative);
+                continue;
+            }
+            if scan.files.len() >= MAX_FILES {
+                return Err(refusal("materialized tree exceeds the file limit"));
+            }
+            scan.files.insert(relative, metadata.len());
+        } else {
+            return Err(refusal("materialized tree has a non-regular entry"));
+        }
+    }
+    Ok(())
+}
+
+/// Declared roles whose executable must already exist on the recipient machine.
+///
+/// Unavailability is a blocker and a remediation hint. Nothing is fetched.
+fn prerequisites(project: &Project) -> Result<Vec<Value>> {
+    let roles = [
+        ("runtime", Some(&project.runtime)),
+        ("trainer", Some(&project.trainer)),
+        ("player", Some(&project.player)),
+        ("researcher", project.researcher.as_ref()),
+        ("planner", project.planner.as_ref()),
+        ("evaluator", project.evaluator.as_ref()),
+    ];
+    let mut results = Vec::new();
+    for (name, command) in roles {
+        let Some(command) = command else { continue };
+        let Some(program) = command.argv.first() else {
+            continue;
+        };
+        let available = executable_available(project, command);
+        results.push(json!({
+            "name": name,
+            "kind": "role",
+            "program": program,
+            "available": available,
+            "blocker": !available,
+            "remediation": if available { Value::Null } else { json!(
+                format!("make {program:?} available for the {name:?} role, then re-run conformance; GLR never downloads or installs a prerequisite")
+            )},
+        }));
+    }
+    if let Some(report) = crate::task::doctor_report(project)? {
+        for name in report["unavailable"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+        {
+            let name = name.as_str().unwrap_or_default().to_string();
+            results.push(json!({
+                "name": name,
+                "kind": "task",
+                "program": Value::Null,
+                "available": false,
+                "blocker": true,
+                "remediation": format!(
+                    "make the program required by the {name:?} task available, then re-run conformance; GLR never downloads or installs a prerequisite"
+                ),
+            }));
+        }
+    }
+    Ok(results)
+}
+
+fn blocker(kind: &str, detail: String, remediation: &str) -> Value {
+    json!({"kind": kind, "detail": detail, "remediation": remediation})
+}
+
+/// Offline synthetic conformance check for a package that is already on disk.
+///
+/// This validates and compares bytes. It never resolves or installs
+/// dependencies, never runs a role, hook or trainer, and never touches the
+/// network, so its result is a statement about the package and the materialized
+/// tree only — never about training.
+fn conformance(project: &Path, command: &PackageCommand) -> Result<Value> {
+    let PackageCommand::Conformance {
+        archive,
+        expected_environment,
+        expected_contract,
+    } = command
+    else {
+        return Err(refusal("not a conformance command"));
+    };
+    let archive = absolute(archive)?;
+    let (manifest, _) = inspect(&archive)?;
+    if expected_environment
+        .as_ref()
+        .is_some_and(|value| *value != manifest.selection.environment_id)
+        || expected_contract
+            .as_ref()
+            .is_some_and(|value| *value != manifest.selection.contract_sha256)
+    {
+        return Err(refusal("environment or contract fingerprint mismatch"));
+    }
+    let manifest_path = find_project(project)?;
+    let root = fs::canonicalize(
+        manifest_path
+            .parent()
+            .ok_or_else(|| refusal("missing project root"))?,
+    )?;
+    let mut scan = Scan::default();
+    scan_tree(&root, "", 0, &mut scan)?;
+
+    let mut missing = Vec::new();
+    let mut mismatched = Vec::new();
+    for entry in &manifest.entries {
+        let size_matches = scan.files.get(&entry.path) == Some(&entry.size_bytes);
+        let digest_matches = scan
+            .files
+            .contains_key(&entry.path)
+            .then(|| read_file(&root.join(&entry.path), MAX_FILE))
+            .transpose()?
+            .is_some_and(|bytes| digest(&bytes) == entry.sha256);
+        if size_matches && digest_matches {
+            continue;
+        }
+        if scan.files.contains_key(&entry.path) {
+            mismatched.push(entry.path.clone());
+        } else {
+            missing.push(entry.path.clone());
+        }
+    }
+    let declared: BTreeSet<&String> = manifest.entries.iter().map(|entry| &entry.path).collect();
+    let unexpected: Vec<String> = scan
+        .files
+        .keys()
+        .filter(|path| !declared.contains(path))
+        .cloned()
+        .collect();
+
+    let loaded = load_project(&manifest_path);
+    let identity_matches = match &loaded {
+        Ok(project) => {
+            project.environment_id == manifest.selection.environment_id
+                && project.protocol_version == manifest.selection.protocol_version
+        }
+        // A project that cannot be loaded is reported as its own blocker, not
+        // additionally as an identity mismatch.
+        Err(_) => true,
+    };
+    let prerequisites = match &loaded {
+        Ok(project) => prerequisites(project)?,
+        Err(_) => Vec::new(),
+    };
+    let lock_files: Vec<&String> = manifest
+        .selection
+        .files
+        .iter()
+        .filter(|path| path.ends_with(".lock"))
+        .collect();
+
+    let mut blockers = Vec::new();
+    if !missing.is_empty() {
+        blockers.push(blocker(
+            "materialization",
+            format!(
+                "{} declared file(s) are absent from the destination",
+                missing.len()
+            ),
+            "re-import the package into a new, empty directory",
+        ));
+    }
+    if !mismatched.is_empty() {
+        blockers.push(blocker(
+            "materialization",
+            format!(
+                "{} declared file(s) differ from the package digests",
+                mismatched.len()
+            ),
+            "re-import the package into a new, empty directory",
+        ));
+    }
+    if !unexpected.is_empty() {
+        blockers.push(blocker(
+            "materialization",
+            format!(
+                "{} file(s) are not declared by the package",
+                unexpected.len()
+            ),
+            "remove the undeclared files, or re-import into a new, empty directory",
+        ));
+    }
+    if !scan.forbidden.is_empty() {
+        blockers.push(blocker(
+            "artifacts",
+            format!(
+                "{} denied cache, output or run-store path(s) are present",
+                scan.forbidden.len()
+            ),
+            "remove the local run state; a package must materialize without it",
+        ));
+    }
+    if !identity_matches {
+        blockers.push(blocker(
+            "identity",
+            "the materialized project identity does not match the package selection".into(),
+            "import the package that matches this project's environment and protocol",
+        ));
+    }
+    if let Err(error) = &loaded {
+        blockers.push(blocker(
+            "project",
+            error.to_string(),
+            "supply the missing project file or directory, then re-run conformance",
+        ));
+    }
+    if lock_files.is_empty() {
+        blockers.push(blocker(
+            "dependencies",
+            "the package declares no dependency lock file".into(),
+            "export a package that includes the project's dependency lock",
+        ));
+    }
+    for prerequisite in &prerequisites {
+        if prerequisite["blocker"].as_bool() == Some(true) {
+            let kind = prerequisite["kind"].as_str().unwrap_or("prerequisite");
+            let name = prerequisite["name"].as_str().unwrap_or_default();
+            blockers.push(blocker(
+                "prerequisite",
+                format!("{kind} {name:?} has no available program"),
+                prerequisite["remediation"]
+                    .as_str()
+                    .unwrap_or("supply the prerequisite, then re-run conformance"),
+            ));
+        }
+    }
+
+    // `inspect` above already refused an invalid envelope, so reaching this
+    // point means the archive itself is valid and completely verified.
+    let package_valid = true;
+    let materialized =
+        missing.is_empty() && mismatched.is_empty() && unexpected.is_empty() && identity_matches;
+    let conformant =
+        loaded.is_ok() && materialized && scan.forbidden.is_empty() && blockers.is_empty();
+    let run_store = scan.forbidden.iter().any(|path| {
+        let last = path
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        last == RUN_STORE_FILE || last == ".glr"
+    });
+    Ok(json!({
+        "schema_version": CONFORMANCE_SCHEMA,
+        "status": "synthetic-conformance",
+        "archive": archive,
+        "destination": root,
+        "executed": false,
+        "offline": true,
+        "package": {
+            "valid": package_valid,
+            "environment_id": manifest.selection.environment_id,
+            "protocol_version": manifest.selection.protocol_version,
+            "contract_sha256": manifest.selection.contract_sha256,
+            "content_sha256": manifest.content_sha256,
+            "package_version": manifest.selection.package_version,
+            "file_count": manifest.entries.len(),
+        },
+        "materialization": {
+            "status": if materialized { "complete" } else { "incomplete" },
+            "missing": missing,
+            "mismatched": mismatched,
+            "unexpected": unexpected,
+        },
+        "local_overrides": {
+            "packaged": [],
+            "present_in_destination": scan.local_overrides,
+            "merged": false,
+            "ignored_patterns": LOCAL_OVERRIDE_PATTERNS,
+        },
+        "dependency_setup": {
+            "performed": false,
+            "status": if lock_files.is_empty() { "missing" } else { "declared" },
+            "lock_files": lock_files,
+            "remediation": "recreate dependencies from the lock with the project's own setup step; GLR never resolves, downloads or installs them",
+        },
+        "artifacts": {
+            "run_store": run_store,
+            "forbidden": scan.forbidden,
+        },
+        "prerequisites": prerequisites,
+        "project": match &loaded {
+            Ok(project) => json!({"loaded": true, "manifest": project.manifest_path}),
+            Err(error) => json!({"loaded": false, "error": error.to_string()}),
+        },
+        "blockers": blockers,
+        "axes": {
+            "package_validity": if package_valid { "valid" } else { "invalid" },
+            "materialization": if materialized { "complete" } else { "incomplete" },
+            "dependency_setup": if lock_files.is_empty() { "missing" } else { "declared" },
+            "synthetic_reproduction": if conformant { "pass" } else { "blocked" },
+            "training": "not-evaluated",
+            "live_acceptance": "not-evaluated",
+            "policy_quality": "not-evaluated",
+        },
+        "claims": {
+            "package_valid": package_valid,
+            "materialized": materialized,
+            "training_performed": false,
+            "training_succeeded": false,
+            "training_ready": false,
+        },
+    }))
+}
+
+pub(crate) fn execute(project: &Path, command: &PackageCommand, json: bool) -> Result<i32> {
     match command {
         PackageCommand::Plan { manifest } | PackageCommand::Export { manifest, .. } => {
             let project = find_project(project)?;
@@ -429,9 +804,12 @@ pub(crate) fn execute(project: &Path, command: &PackageCommand) -> Result<Value>
                     .persist_noclobber(output)
                     .map_err(|error| Error::Io(error.error))?;
             }
-            Ok(
-                json!({"status": "verified-source-inventory", "manifest": manifest, "executed": false}),
-            )
+            emit(
+                "package",
+                &json!({"status": "verified-source-inventory", "manifest": manifest, "executed": false}),
+                json,
+            )?;
+            Ok(0)
         }
         PackageCommand::Inspect { archive } | PackageCommand::Import { archive, .. } => {
             let (manifest, payload) = inspect(&absolute(archive)?)?;
@@ -467,9 +845,23 @@ pub(crate) fn execute(project: &Path, command: &PackageCommand) -> Result<Value>
                 }
                 promote(staging.path(), &destination)?;
             }
-            Ok(
-                json!({"status": "verified-source-package", "manifest": manifest, "executed": false, "training_ready": false}),
-            )
+            emit(
+                "package",
+                &json!({"status": "verified-source-package", "manifest": manifest, "executed": false, "training_ready": false}),
+                json,
+            )?;
+            Ok(0)
+        }
+        PackageCommand::Conformance { .. } => {
+            let report = conformance(project, command)?;
+            let exit_code =
+                if report["axes"]["synthetic_reproduction"] == Value::String("pass".into()) {
+                    0
+                } else {
+                    BLOCKED_EXIT_CODE
+                };
+            emit("package", &report, json)?;
+            Ok(exit_code)
         }
     }
 }
@@ -523,6 +915,7 @@ mod tests {
                     manifest: selection.clone(),
                     output: output.clone(),
                 },
+                false,
             )
             .unwrap();
         }
@@ -535,13 +928,274 @@ mod tests {
             expected_environment: "synthetic.package".into(),
             expected_contract: manifest.selection.contract_sha256,
         };
-        execute(root.path(), &command).unwrap();
+        assert_eq!(execute(root.path(), &command, false).unwrap(), 0);
         assert_eq!(
             fs::read(destination.join("train.py")).unwrap(),
             fs::read(root.path().join("train.py")).unwrap()
         );
         assert!(!destination.join("selection.json").exists());
-        assert!(execute(root.path(), &command).is_err());
+        assert!(execute(root.path(), &command, false).is_err());
+    }
+
+    /// A package fixture whose materialized destination is a loadable project.
+    ///
+    /// `trainer` selects the trainer program so a test can make it unavailable
+    /// without touching the network or the filesystem layout.
+    fn conformance_fixture(root: &Path, trainer: &str) -> PathBuf {
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        fs::write(
+            root.join("glr-project.json"),
+            serde_json::to_vec(&json!({
+                "schema_version": "glr.project.v1",
+                "environment_id": "synthetic.package",
+                "environment_family": "synthetic",
+                "protocol_version": "1.0",
+                "data_dir": ".glr",
+                "bridge_path": "bridge",
+                "runtime": {"argv": [executable, "--version"]},
+                "trainer": {"argv": [trainer, "--version"]},
+                "player": {"argv": [executable, "--version"]}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::create_dir(root.join("bridge")).unwrap();
+        fs::write(root.join("bridge/README.md"), b"bridge\n").unwrap();
+        fs::write(root.join("uv.lock"), b"version = 1\n").unwrap();
+        fs::write(
+            root.join("train.py"),
+            b"raise RuntimeError('must never execute')\n",
+        )
+        .unwrap();
+        let path = root.join("selection.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&Selection {
+                schema_version: SCHEMA.into(),
+                package_version: "1.0.0".into(),
+                required_glr: ">=0.18.0, <1.0.0".into(),
+                environment_id: "synthetic.package".into(),
+                protocol_version: "1.0".into(),
+                contract_sha256: "a".repeat(64),
+                source_revision: "synthetic-conformance".into(),
+                redistribution_license: "MIT".into(),
+                files: vec![
+                    "bridge/README.md".into(),
+                    "glr-project.json".into(),
+                    "train.py".into(),
+                    "uv.lock".into(),
+                ],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        path
+    }
+
+    /// Export, then import into a fresh directory, and return the destination.
+    ///
+    /// The archive is written inside the recipient's temporary directory so it
+    /// outlives the exported source tree.
+    fn round_trip(trainer: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let recipient = tempfile::tempdir().unwrap();
+        let archive = recipient.path().join("source.zip");
+        let source = tempfile::tempdir().unwrap();
+        let selection = conformance_fixture(source.path(), trainer);
+        assert_eq!(
+            execute(
+                source.path(),
+                &PackageCommand::Export {
+                    manifest: selection,
+                    output: archive.clone(),
+                },
+                false,
+            )
+            .unwrap(),
+            0
+        );
+        let destination = recipient.path().join("imported");
+        assert_eq!(
+            execute(
+                recipient.path(),
+                &PackageCommand::Import {
+                    archive: archive.clone(),
+                    destination: destination.clone(),
+                    expected_environment: "synthetic.package".into(),
+                    expected_contract: "a".repeat(64),
+                },
+                false,
+            )
+            .unwrap(),
+            0
+        );
+        (recipient, destination, archive)
+    }
+
+    fn conformance_command(archive: &Path) -> PackageCommand {
+        PackageCommand::Conformance {
+            archive: archive.to_owned(),
+            expected_environment: None,
+            expected_contract: None,
+        }
+    }
+
+    #[test]
+    fn conformance_passes_for_a_cleanly_materialized_package() {
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let (_recipient, destination, archive) = round_trip(&executable);
+        let report = conformance(&destination, &conformance_command(&archive)).unwrap();
+        assert_eq!(report["axes"]["package_validity"], "valid");
+        assert_eq!(report["axes"]["materialization"], "complete");
+        assert_eq!(report["axes"]["dependency_setup"], "declared");
+        assert_eq!(report["axes"]["synthetic_reproduction"], "pass");
+        assert_eq!(report["axes"]["training"], "not-evaluated");
+        assert_eq!(report["artifacts"]["run_store"], false);
+        assert!(
+            report["materialization"]["unexpected"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(report["dependency_setup"]["performed"], false);
+        assert_eq!(report["dependency_setup"]["lock_files"], json!(["uv.lock"]));
+        assert_eq!(report["claims"]["training_performed"], false);
+        assert_eq!(report["claims"]["training_succeeded"], false);
+        assert_eq!(report["claims"]["training_ready"], false);
+        assert_eq!(report["executed"], false);
+    }
+
+    #[test]
+    fn conformance_resolves_a_nested_working_directory() {
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let (_recipient, destination, archive) = round_trip(&executable);
+        let nested = destination.join("bridge");
+        let report = conformance(&nested, &conformance_command(&archive)).unwrap();
+        assert_eq!(
+            report["destination"],
+            json!(fs::canonicalize(&destination).unwrap())
+        );
+        assert_eq!(report["axes"]["synthetic_reproduction"], "pass");
+    }
+
+    #[test]
+    fn conformance_ignores_recipient_local_overrides_and_never_merges_them() {
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let (_recipient, destination, archive) = round_trip(&executable);
+        fs::write(destination.join("glr-project.local.json"), b"{}").unwrap();
+        fs::create_dir(destination.join("bridge.local.d")).unwrap();
+        fs::write(destination.join("bridge.local.d/override.json"), b"{}").unwrap();
+        let report = conformance(&destination, &conformance_command(&archive)).unwrap();
+        assert_eq!(
+            report["local_overrides"]["present_in_destination"],
+            json!(["bridge.local.d/override.json", "glr-project.local.json"])
+        );
+        assert_eq!(report["local_overrides"]["merged"], false);
+        assert!(
+            report["local_overrides"]["packaged"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            report["materialization"]["unexpected"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(report["axes"]["synthetic_reproduction"], "pass");
+        // A local override is never acceptable inside the package itself.
+        for path in ["glr-project.local.json", "secrets.local.toml", "a.local"] {
+            assert!(source_path(path).is_err(), "{path}");
+        }
+    }
+
+    #[test]
+    fn conformance_blocks_a_missing_prerequisite_without_claiming_training() {
+        let (_recipient, destination, archive) = round_trip("glr-missing-synthetic-trainer");
+        let command = conformance_command(&archive);
+        let report = conformance(&destination, &command).unwrap();
+        assert_eq!(report["package"]["valid"], true);
+        assert_eq!(report["axes"]["package_validity"], "valid");
+        assert_eq!(report["axes"]["materialization"], "complete");
+        assert_eq!(report["axes"]["synthetic_reproduction"], "blocked");
+        assert_eq!(report["claims"]["training_performed"], false);
+        assert_eq!(report["claims"]["training_succeeded"], false);
+        let blockers = report["blockers"].as_array().unwrap();
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker["kind"] == "prerequisite")
+        );
+        assert!(blockers.iter().any(|blocker| {
+            blocker["remediation"]
+                .as_str()
+                .unwrap()
+                .contains("never downloads or installs")
+        }));
+        assert_eq!(execute(&destination, &command, false).unwrap(), 4);
+    }
+
+    #[test]
+    fn conformance_flags_a_run_store_undeclared_files_and_tampered_bytes() {
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let (_recipient, destination, archive) = round_trip(&executable);
+        fs::create_dir(destination.join(".glr")).unwrap();
+        fs::write(destination.join(".glr/runs.sqlite3"), b"store").unwrap();
+        fs::write(destination.join("notes.txt"), b"undeclared").unwrap();
+        fs::write(destination.join("train.py"), b"tampered").unwrap();
+        fs::remove_file(destination.join("uv.lock")).unwrap();
+        let report = conformance(&destination, &conformance_command(&archive)).unwrap();
+        assert_eq!(report["artifacts"]["run_store"], true);
+        assert_eq!(
+            report["materialization"]["unexpected"],
+            json!(["notes.txt"])
+        );
+        assert_eq!(report["materialization"]["mismatched"], json!(["train.py"]));
+        assert_eq!(report["materialization"]["missing"], json!(["uv.lock"]));
+        assert_eq!(report["materialization"]["status"], "incomplete");
+        // The archive itself is untouched by a dirty destination.
+        assert_eq!(report["package"]["valid"], true);
+        assert_eq!(report["axes"]["package_validity"], "valid");
+        assert_eq!(report["axes"]["materialization"], "incomplete");
+        assert_eq!(report["axes"]["synthetic_reproduction"], "blocked");
+    }
+
+    #[test]
+    fn conformance_refuses_a_reviewed_expectation_mismatch() {
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let (_recipient, destination, archive) = round_trip(&executable);
+        for (environment, contract) in [
+            (Some("other.environment".into()), None),
+            (None, Some("b".repeat(64))),
+        ] {
+            let report = conformance(
+                &destination,
+                &PackageCommand::Conformance {
+                    archive: archive.clone(),
+                    expected_environment: environment,
+                    expected_contract: contract,
+                },
+            );
+            assert!(report.is_err());
+        }
     }
 
     #[test]
@@ -624,6 +1278,7 @@ mod tests {
                 manifest: selection,
                 output: archive.clone(),
             },
+            false,
         )
         .unwrap();
         let destination = root.path().join("refused");
@@ -635,7 +1290,8 @@ mod tests {
                     destination: destination.clone(),
                     expected_environment: "wrong".into(),
                     expected_contract: "a".repeat(64)
-                }
+                },
+                false
             )
             .is_err()
         );

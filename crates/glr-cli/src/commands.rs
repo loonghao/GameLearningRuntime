@@ -115,9 +115,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
         return run_update(&cli, arguments);
     }
     if let CliCommand::Package { command } = &cli.command {
-        let result = crate::package::execute(&cli.project, command)?;
-        emit("package", &result, cli.json)?;
-        return Ok(0);
+        return crate::package::execute(&cli.project, command, cli.json);
     }
     if let CliCommand::Plugin { command } = &cli.command {
         return crate::plugin::execute(&absolute(&cli.project)?, command, cli.json);

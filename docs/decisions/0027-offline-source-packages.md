@@ -4,6 +4,14 @@ Status: Proposed for review with the source-only implementation
 
 Related: issue #116, ADR-0020, ADR-0021, model-bundle and checkpoint contracts.
 
+Stage 2 of the plan below now ships a reporting gate: `glr package conformance`
+runs an offline synthetic conformance check on an already materialized package.
+It reports package validity, materialization, recipient-local overrides, declared
+dependency locks and prerequisites as separate axes, and it never resolves or
+installs dependencies, runs doctor or training, or accesses the network.
+Recreating a locked environment stays an explicit, authorized recipient step and
+is never an import side effect.
+
 ## Decision
 
 Start with a deterministic, offline source envelope owned by the standalone Rust
@@ -26,7 +34,9 @@ clock or machine path is included. Archives are uncompressed ZIPs with normalize
 permissions and timestamps, enabling reproducible offline inspection without a
 registry or archive expansion amplification. Exactly one project manifest and
 at least one lock file are required. This does not establish lock completeness
-or runnable dependencies; doctor and synthetic reproduction remain later gates.
+or runnable dependencies. `glr package conformance` now reports the state of a
+materialized package on those axes; recreating dependencies, doctor and a live
+synthetic reproduction remain separate, explicitly authorized steps.
 
 Limits: 1,024 source files, 16 MiB per file, 128 MiB archive/expanded payload,
 1 MiB manifest, 240-byte ASCII paths and depth 16. Reject traversal, device names,
