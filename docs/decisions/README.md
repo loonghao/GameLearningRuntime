@@ -40,6 +40,8 @@
 - [ADR-0035: Own repository automation by capability domain and register it](0035-modular-tools-and-registry.md)
 - [ADR-0036: Add a policy-only supervision watchdog with a scheduler exit-code contract](0036-supervision-watchdog-and-scheduler-contract.md)
 - [ADR-0037: Add a read-only anti-fork drift gate](0037-anti-fork-drift-gate.md)
+- [ADR-0041: Ship portable training packages as group-scoped, non-executing envelopes](0041-portable-training-packages.md)
 
-Accepted ADRs describe implemented architecture. Proposed future designs belong
+Accepted ADRs describe implemented architecture. Its staged delivery plan for
+issue #116 is [the phased plan](../planning/training-package-phases.md). Proposed future designs belong
 in `docs/planning` until accepted and built.
