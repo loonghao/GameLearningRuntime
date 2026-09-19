@@ -249,6 +249,10 @@ legacy JSONL, FFmpeg output, cursor readback and backup boundaries.
   deletion, scheduling, live-state restore, or retraining is implied.
 - Use `observe --archive PATH` and `runs trace RUN_ID --archive PATH` for verified
   archive inspection. Source project packaging remains `package export/import`;
-  include exported preset JSON explicitly in the source selection.
+  include exported preset JSON explicitly in the source selection. After a
+  recipient imports into a new directory, `package conformance ARCHIVE` reports
+  package validity, materialization, ignored local overrides and prerequisites as
+  separate axes; it never installs, resolves or trains, and it never reports a
+  package as training success.
 - A crashed Dashboard can leave an unverified job and active child. Inspect and
   reconcile, never resubmit automatically or treat process exit as learning success.
