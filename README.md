@@ -705,6 +705,7 @@ runbook](docs/runbooks/release.md).
 - [Enforce reward budgets and BC provenance](docs/guides/training-safety.md)
 - [Declare and audit adapter metrics](docs/guides/declared-metrics.md)
 - [Record why every episode ended](docs/guides/episode-termination.md)
+- [Size the state-action space against the step budget](docs/guides/learnability-budget.md)
 - [Validate an adapter](docs/guides/adapter-conformance.md)
 - [Adapt an existing Gymnasium environment](docs/guides/adapting-gymnasium.md)
 - [Compose custom Torch objectives](docs/guides/using-torch-objectives.md)
