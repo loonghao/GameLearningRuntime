@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -40,6 +41,10 @@ from game_learning_runtime.hooks import (
     HookEvent,
     HookEventStatus,
     HookRegistry,
+)
+from game_learning_runtime.learnability import (
+    LEARNABILITY_BUDGET_SCHEMA_VERSION,
+    LearnabilityReport,
 )
 from game_learning_runtime.model_bundle import verify_model_bundle
 from game_learning_runtime.plugins import (
@@ -161,6 +166,38 @@ def _termination_summary(terminations: Sequence[EpisodeTermination]) -> dict[str
         "reason_counts": counts,
         "goal_reached": sum(1 for item in terminations if item.reached_goal),
         "indeterminate": sum(1 for item in terminations if item.indeterminate),
+    }
+
+
+def _learnability_value(report: LearnabilityReport) -> dict[str, Any]:
+    return report.to_mapping()
+
+
+def _learnability_summary(reports: Sequence[LearnabilityReport]) -> dict[str, Any]:
+    """Project the newest verdict so a caller can gate without walking events."""
+
+    if not reports:
+        return {
+            "schema_version": LEARNABILITY_BUDGET_SCHEMA_VERSION,
+            "reported": False,
+            "status": None,
+            "state_action_cells": None,
+            "coverage_ratio": None,
+            "projected_steps_to_k_visits": None,
+        }
+    latest = reports[-1]
+    return {
+        "schema_version": LEARNABILITY_BUDGET_SCHEMA_VERSION,
+        "reported": True,
+        "verdict_count": len(reports),
+        "status": latest.status.value,
+        "state_action_cells": latest.state_action_cells,
+        "distinct_cells_visited": latest.distinct_cells_visited,
+        "coverage_ratio": latest.coverage_ratio,
+        "projected_steps_to_k_visits": latest.projected_steps_to_k_visits,
+        "steps_per_second": latest.steps_per_second,
+        "budget_steps": latest.budget_steps,
+        "min_coverage": latest.min_coverage,
     }
 
 
@@ -670,7 +707,23 @@ def _finish_capture(
     return True
 
 
-def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) -> int:
+def _min_coverage(value: float | None) -> float | None:
+    """Validate the optional `--min-coverage` coverage floor."""
+
+    if value is None:
+        return None
+    if not isinstance(value, float) or not math.isfinite(value) or not 0.0 < value <= 1.0:
+        raise ContractViolation("--min-coverage must be a finite fraction in (0, 1]")
+    return value
+
+
+def _run_training(
+    project: GLRProject,
+    *,
+    as_json: bool,
+    capture_enabled: bool,
+    min_coverage: float | None = None,
+) -> int:
     store = _store(project)
     run = store.create_run(
         environment_id=project.environment_id,
@@ -681,6 +734,7 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
             "status_scope": "process_execution",
             "learning_status": "unverified",
             "improvement_status": "unverified",
+            "learnability_min_coverage": "unset" if min_coverage is None else f"{min_coverage:.6f}",
         },
     )
     run_dir = project.data_dir / "runs" / run.run_id
@@ -705,6 +759,11 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
         kind="training",
         stage=stage,
     )
+    if min_coverage is not None:
+        # The trainer owns collection, so the floor travels as configuration
+        # rather than as an assertion the host cannot check on its own.
+        game_extra["min_coverage"] = f"{min_coverage:.6f}"
+
     try:
         if project.game is not None:
             stage = "game-launch"
@@ -835,6 +894,12 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
     succeeded = trainer_exit == 0 and (
         capture_complete or project.capture is None or not project.capture.required
     )
+    verdicts = store.list_learnability(run.run_id)
+    # A trainer that measured its coverage, found it short, and still exits zero
+    # has recorded a failed verdict and then ignored it. That must not read
+    # green, whatever the process said about itself.
+    if succeeded and any(verdict.failed for verdict in verdicts):
+        succeeded = False
     exit_code = 0 if succeeded else trainer_exit if trainer_exit != 0 else 1
     failure: dict[str, Any] | None = None
     if succeeded:
@@ -877,6 +942,7 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
     # Every run verb reports `failure` unconditionally so an agent can parse
     # one shape instead of guessing whether the key is present.
     output["failure"] = failure
+    output["learnability"] = _learnability_summary(verdicts)
     _emit("train", output, as_json=as_json)
     return exit_code
 
@@ -1961,6 +2027,16 @@ def _parser() -> argparse.ArgumentParser:
     research.add_argument("--limit", type=int, default=100)
     train = commands.add_parser("train", help="run the project trainer and persist its evidence")
     train.add_argument("--no-capture", action="store_true")
+    train.add_argument(
+        "--min-coverage",
+        type=float,
+        default=None,
+        metavar="FRACTION",
+        help=(
+            "fail the run when its learnability coverage stays below this "
+            "fraction of the declared state-action space"
+        ),
+    )
     runtime = commands.add_parser("runtime", help="start the configured game/runtime bridge")
     runtime_commands = runtime.add_subparsers(dest="runtime_command", required=True)
     runtime_commands.add_parser(
@@ -2065,7 +2141,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_hooks_command(project, arguments, as_json=arguments.json)
     if arguments.command == "train":
         return _run_training(
-            project, as_json=arguments.json, capture_enabled=not arguments.no_capture
+            project,
+            as_json=arguments.json,
+            capture_enabled=not arguments.no_capture,
+            min_coverage=_min_coverage(arguments.min_coverage),
         )
     if arguments.command == "goal" and arguments.goal_command == "run":
         return _run_goal(
@@ -2131,6 +2210,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run = store.get_run(arguments.run_id)
         audits = store.list_declared_metric_audits(run.run_id)
         terminations = store.list_episode_terminations(run.run_id)
+        learnability = store.list_learnability(run.run_id)
         data = {
             "run": _run_value(run),
             "events": [_event_value(event) for event in store.list_events(run.run_id)],
@@ -2146,6 +2226,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             # walking events or parsing a log.
             "terminations": _terminations_value(terminations),
             "termination_summary": _termination_summary(terminations),
+            # Projected so a scheduler can read both learnability numbers
+            # without walking events, metrics, or a log.
+            "learnability": [_learnability_value(report) for report in learnability],
+            "learnability_summary": _learnability_summary(learnability),
         }
         _emit("runs.show", data, as_json=arguments.json)
         return 0

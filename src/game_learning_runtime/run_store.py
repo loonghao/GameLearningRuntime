@@ -39,6 +39,12 @@ from game_learning_runtime.declared_metrics import (
     declared_metrics_for,
 )
 from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.learnability import (
+    COVERAGE_RATIO_METRIC,
+    LEARNABILITY_BUDGET_EVENT,
+    PROJECTED_STEPS_METRIC,
+    LearnabilityReport,
+)
 from game_learning_runtime.termination import EpisodeTermination
 from game_learning_runtime.training import KnowledgeAuthority
 
@@ -1444,6 +1450,51 @@ class TrainingStore:
             self.record_episode_termination(run_id, termination)
 
         return sink
+
+    def record_learnability(
+        self,
+        run_id: str,
+        report: LearnabilityReport,
+        *,
+        timestamp_ns: int | None = None,
+    ) -> RunEvent:
+        """Persist one learnability verdict as an event plus two metrics.
+
+        ``coverage_ratio`` and ``projected_steps_to_k_visits`` are written as
+        first-class metrics so both numbers are readable from the run store and
+        from `glr runs show` without parsing a log.
+        """
+
+        if not isinstance(report, LearnabilityReport):
+            raise TypeError("report must be a LearnabilityReport")
+        event = self.append_event(
+            run_id,
+            kind=LEARNABILITY_BUDGET_EVENT,
+            payload=report.to_mapping(),
+            timestamp_ns=timestamp_ns,
+        )
+        for name, value in (
+            (COVERAGE_RATIO_METRIC, report.coverage_ratio),
+            (PROJECTED_STEPS_METRIC, float(report.projected_steps_to_k_visits or 0)),
+        ):
+            self.record_metric(
+                run_id,
+                name=name,
+                value=value,
+                timestamp_ns=timestamp_ns,
+            )
+        return event
+
+    def list_learnability(
+        self, run_id: str, *, limit: int = 1000
+    ) -> tuple[LearnabilityReport, ...]:
+        """Return every persisted learnability verdict in sequence order."""
+
+        return tuple(
+            LearnabilityReport.from_mapping(event.payload)
+            for event in self.list_events(run_id, limit=limit)
+            if event.kind == LEARNABILITY_BUDGET_EVENT
+        )
 
     def record_metric(
         self,

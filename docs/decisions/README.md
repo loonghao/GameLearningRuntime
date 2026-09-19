@@ -41,6 +41,7 @@
 - [ADR-0036: Add a policy-only supervision watchdog with a scheduler exit-code contract](0036-supervision-watchdog-and-scheduler-contract.md)
 - [ADR-0037: Add a read-only anti-fork drift gate](0037-anti-fork-drift-gate.md)
 - [ADR-0038: Register lifecycle hooks per environment and dimension](0038-register-lifecycle-hooks-per-environment-and-dimension.md)
+- [ADR-0039: Bound state-action cardinality against the step budget](0039-bound-state-action-cardinality-against-the-step-budget.md)
 - [ADR-0040: Fail closed on a declared metric that is never emitted](0040-fail-closed-on-a-declared-metric-that-is-never-emitted.md)
 - [ADR-0041: Ship portable training packages as group-scoped, non-executing envelopes](0041-portable-training-packages.md)
 - [ADR-0042: Pin one entry point per project](0042-pin-one-entry-point-per-project.md)

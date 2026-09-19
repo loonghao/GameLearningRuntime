@@ -27,6 +27,13 @@ from game_learning_runtime.declared_metrics import (
     build_declared_metrics,
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
+from game_learning_runtime.learnability import (
+    LEARNABILITY_CELL_KEY,
+    LearnabilityPlan,
+    LearnabilityReport,
+    LearnabilityTracker,
+    build_tracker,
+)
 from game_learning_runtime.termination import (
     EpisodeCaps,
     EpisodeTermination,
@@ -558,6 +565,13 @@ class SyncCollector:
     because declared metrics are already bound through the same pair: a
     collector that owns a run but leaves its terminations in memory makes the
     run look as though it ended no episodes at all.
+
+    When a :class:`~game_learning_runtime.learnability.LearnabilityPlan` is
+    supplied the collector also watches the run's learnability budget: every
+    recorded transition contributes a state cell, and a configured coverage
+    floor stops collection as soon as the remaining budget provably cannot
+    reach it. Without a plan nothing is measured and behaviour is unchanged.
+
     """
 
     def __init__(
@@ -572,6 +586,7 @@ class SyncCollector:
         run_id: str | None = None,
         episode_caps: EpisodeCaps | None = None,
         on_termination: Callable[[EpisodeTermination], None] | None = None,
+        learnability: LearnabilityPlan | None = None,
     ) -> None:
         if not actor_id:
             raise ValueError("actor_id cannot be empty")
@@ -583,6 +598,8 @@ class SyncCollector:
             raise TypeError("episode_caps must be an EpisodeCaps or None")
         if on_termination is not None and not callable(on_termination):
             raise TypeError("on_termination must be callable or None")
+        if learnability is not None and not isinstance(learnability, LearnabilityPlan):
+            raise TypeError("learnability must be a LearnabilityPlan or None")
         self._environment = (
             environment
             if isinstance(environment, ContractEnvironment)
@@ -606,6 +623,13 @@ class SyncCollector:
             declared = self._environment.spec.episode_caps
             episode_caps = declared if isinstance(declared, EpisodeCaps) else None
         self._episode_caps = episode_caps
+        self._learnability: LearnabilityTracker | None = None
+        if learnability is not None:
+            self._learnability = build_tracker(
+                learnability,
+                declaration=learnability.declaration or self._environment.spec.learnability,
+                observation_spec=self._environment.spec.observation,
+            )
 
     def _resolve_declared_metrics(
         self, value: MetricDeclaration | DeclaredMetricLedger | None
@@ -761,6 +785,38 @@ class SyncCollector:
 
         return self._terminations[-1] if self._terminations else None
 
+    @property
+    def learnability(self) -> LearnabilityTracker | None:
+        """The learnability tracker, or ``None`` when no plan was supplied."""
+
+        return self._learnability
+
+    def learnability_report(self) -> LearnabilityReport | None:
+        """Current learnability verdict, or ``None`` when nothing is watched."""
+
+        return None if self._learnability is None else self._learnability.report()
+
+    def _observe_learnability(self, timestep: TimeStep) -> None:
+        """Charge one recorded step to the learnability budget.
+
+        A declared binning resolves the cell from the observation; otherwise an
+        adapter may report it through ``info[LEARNABILITY_CELL_KEY]``. A step that resolves
+        to no cell is still charged, because an untracked step is not free.
+        """
+
+        tracker = self._learnability
+        if tracker is None:
+            return
+        declared = tracker.declaration.state
+        cell = timestep.info.get(LEARNABILITY_CELL_KEY)
+        observation = None if declared is None or not declared.bins else timestep.observation
+        tracker.observe(
+            cell=cell if isinstance(cell, (int, str)) else None,
+            observation=observation,
+            now_ns=timestep.timestamp_ns,
+        )
+        tracker.require()
+
     def collect(
         self,
         policy: Policy,
@@ -790,6 +846,11 @@ class SyncCollector:
         before the exception propagates (``on_error="raise"``) or before the
         partial unroll is returned. Either way the episode owes a reason and
         the next collection starts a fresh one.
+
+        A learnability plan is enforced here, so a configuration that cannot
+        reach its coverage floor stops mid-collection instead of after the last
+        budgeted step.
+
         """
 
         if steps <= 0:
@@ -907,6 +968,7 @@ class SyncCollector:
                     timestamp_ns=following.timestamp_ns,
                 )
             )
+            self._observe_learnability(current)
             self._current = following
             if following.done:
                 # Episode close. A metric that was declared and never arrived is
