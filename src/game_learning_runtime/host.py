@@ -40,6 +40,7 @@ from game_learning_runtime.contracts import (
     TensorTree,
     TimeStep,
 )
+from game_learning_runtime.declared_metrics import MetricDeclaration
 from game_learning_runtime.errors import CommandRefusal, HostProtocolError, HostRemoteError
 from game_learning_runtime.realtime import (
     InputLeaseReceipt,
@@ -866,6 +867,17 @@ def _environment_spec_from_wire(value: Mapping[str, object]) -> EnvironmentSpec:
             )
         except (TypeError, ValueError) as error:
             raise HostProtocolError(f"invalid descriptor.realtime_timing: {error}") from error
+    metrics_raw = value.get("metrics")
+    metrics = None
+    if metrics_raw is not None:
+        # The declaration travels on the wire, so a provider written in C#, C++
+        # or any other SDK can promise metrics without a Python-side caller.
+        try:
+            metrics = MetricDeclaration.from_mapping(
+                _mapping(metrics_raw, path="descriptor.metrics")
+            )
+        except (TypeError, ValueError) as error:
+            raise HostProtocolError(f"invalid descriptor.metrics: {error}") from error
     identity_raw = value.get("runtime_identity")
     runtime_identity = None
     if identity_raw is not None:
@@ -893,6 +905,7 @@ def _environment_spec_from_wire(value: Mapping[str, object]) -> EnvironmentSpec:
         metadata=cast(Mapping[str, str], metadata),
         realtime_timing=realtime_timing,
         runtime_identity=runtime_identity,
+        metrics=metrics,
     )
 
 

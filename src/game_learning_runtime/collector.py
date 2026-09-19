@@ -8,7 +8,8 @@ import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+from uuid import UUID
 
 import numpy as np
 
@@ -19,7 +20,16 @@ from game_learning_runtime.contracts import (
     Transition,
     Unroll,
 )
+from game_learning_runtime.declared_metrics import (
+    DeclaredMetricAudit,
+    DeclaredMetricLedger,
+    MetricDeclaration,
+    build_declared_metrics,
+)
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only import; run_store is runtime-bound
+    from game_learning_runtime.run_store import TrainingStore
 
 
 class Policy(Protocol):
@@ -503,7 +513,23 @@ def _wait_interval(
 
 
 class SyncCollector:
-    """Collect fixed-length unrolls without coupling to a learner framework."""
+    """Collect fixed-length unrolls without coupling to a learner framework.
+
+    When a :class:`~game_learning_runtime.declared_metrics.MetricDeclaration` or
+    a ready :class:`~game_learning_runtime.declared_metrics.DeclaredMetricLedger`
+    is supplied the collector also audits the run's metric promises: every
+    episode close counts what was declared against what was emitted, and strict
+    mode refuses to keep collecting on an episode that measured nothing.
+    Without a declaration nothing is audited and behaviour is unchanged.
+
+    A declaration alone is not enough to be counted: emissions are counted in
+    the run store, so the ledger has to be bound to the run that owns them.
+    Pass ``store`` and ``run_id`` together and the collector builds and binds
+    the ledger itself; pass a ledger that was already bound by
+    :func:`~game_learning_runtime.declared_metrics.bind_declared_metrics` to
+    keep the caller's binding. A collector that built the ledger owns the
+    binding and releases it through :meth:`release_declared_metrics`.
+    """
 
     def __init__(
         self,
@@ -512,11 +538,16 @@ class SyncCollector:
         actor_id: str = "actor-0",
         start_mode: Literal["reset", "attach"] = "reset",
         reset_options: Mapping[str, Any] | None = None,
+        declared_metrics: MetricDeclaration | DeclaredMetricLedger | None = None,
+        store: TrainingStore | None = None,
+        run_id: str | None = None,
     ) -> None:
         if not actor_id:
             raise ValueError("actor_id cannot be empty")
         if start_mode not in {"reset", "attach"}:
             raise ValueError("start_mode must be 'reset' or 'attach'")
+        if (store is None) != (run_id is None):
+            raise ValueError("store and run_id must be supplied together")
         self._environment = (
             environment
             if isinstance(environment, ContractEnvironment)
@@ -528,6 +559,85 @@ class SyncCollector:
         self._current: TimeStep | None = None
         self._sequence_id = 0
         self._environment_config_snapshot: EnvironmentConfigSnapshot | None = None
+        self._store = store
+        self._run_id = run_id
+        self._declared_metrics = self._resolve_declared_metrics(declared_metrics)
+
+    def _resolve_declared_metrics(
+        self, value: MetricDeclaration | DeclaredMetricLedger | None
+    ) -> DeclaredMetricLedger | None:
+        """Build a ledger from a declaration, or adopt a caller-owned one.
+
+        A bare declaration is resolved against the adapter's capabilities, so
+        ``strict-metrics-v1`` is what turns a gap into a failure, and it is
+        bound to ``store`` / ``run_id`` so the emissions counted by the run
+        store reach it. A caller that already bound a ledger to a run keeps its
+        own binding, which is why a ledger and ``store`` cannot be combined.
+        """
+
+        if value is None:
+            return None
+        if isinstance(value, DeclaredMetricLedger):
+            if self._store is not None:
+                raise ValueError(
+                    "store and run_id cannot be combined with a DeclaredMetricLedger: "
+                    "the ledger already owns its run binding"
+                )
+            return value
+        if not isinstance(value, MetricDeclaration):
+            raise TypeError(
+                "declared_metrics must be a MetricDeclaration, a DeclaredMetricLedger, or None"
+            )
+        return build_declared_metrics(
+            value,
+            capabilities=self._environment.spec.capabilities,
+            store=self._store,
+            run_id=self._run_id,
+        )
+
+    @property
+    def declared_metrics(self) -> DeclaredMetricLedger | None:
+        """The metric ledger, or ``None`` when nothing was declared."""
+
+        return self._declared_metrics
+
+    def release_declared_metrics(self) -> None:
+        """Unbind the run from a ledger this collector built.
+
+        Ending a run is the caller's job, so unbinding is explicit rather than
+        tied to garbage collection. Releasing a ledger the caller already owned
+        is left to the caller.
+        """
+
+        if self._store is not None and self._declared_metrics is not None:
+            self._declared_metrics.release()
+
+    def declared_metric_audits(self) -> tuple[DeclaredMetricAudit, ...]:
+        """Every closed episode's audit, or an empty tuple when nothing is watched."""
+
+        return () if self._declared_metrics is None else self._declared_metrics.audits
+
+    def _close_declared_metrics(
+        self, episode_id: UUID, *, timestamp_ns: int, require: bool = True
+    ) -> None:
+        """Audit one closed episode before the run can be reported complete.
+
+        Order matters: the audit is recorded first, so a strict failure still
+        leaves the counters on the record. Raising is the half that stops the
+        gap from recurring, not the half that reports it.
+
+        ``require=False`` records the audit without raising, which is what an
+        aborted episode needs: the environment failure that ended it is the
+        error worth propagating, and a missing-metric error raised on the way
+        out would hide it.
+        """
+
+        ledger = self._declared_metrics
+        if ledger is None:
+            return
+        audit = ledger.close_episode(str(episode_id), timestamp_ns=timestamp_ns)
+        if require:
+            audit.require()
 
     def _start(self, *, seed: int | None = None) -> TimeStep:
         if self._start_mode == "attach":
@@ -554,6 +664,9 @@ class SyncCollector:
         By default a terminal transition starts a fresh episode so the result
         remains fixed length. Set ``stop_on_done`` for long-running live games
         where an unroll must never mix progression from multiple episodes.
+
+        A declared-metric ledger is audited at every episode close, so an
+        episode that measured nothing is named before the next one starts.
         """
 
         if steps <= 0:
@@ -573,6 +686,14 @@ class SyncCollector:
             try:
                 following = self._environment.step(action)
             except Exception:
+                # The episode ends here too. Recording its audit keeps an
+                # aborted episode from looking like an adapter that never
+                # declared anything -- the one difference the counters exist
+                # to expose. Strict mode stays quiet: the environment error is
+                # the failure worth raising.
+                self._close_declared_metrics(
+                    current.episode_id, timestamp_ns=time.time_ns(), require=False
+                )
                 if on_error == "raise" or not transitions:
                     self._current = None if on_error == "partial" else self._current
                     raise
@@ -613,6 +734,12 @@ class SyncCollector:
             )
             self._current = following
             if following.done:
+                # Episode close. A metric that was declared and never arrived is
+                # a property of the episode that just ended, so it is checked
+                # here rather than when a report is finally rendered.
+                self._close_declared_metrics(
+                    current.episode_id, timestamp_ns=following.timestamp_ns
+                )
                 if stop_on_done:
                     break
                 if len(transitions) < steps:
