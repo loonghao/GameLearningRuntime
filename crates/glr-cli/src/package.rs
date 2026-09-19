@@ -216,6 +216,13 @@ fn no_links(path: &Path) -> Result<()> {
 
 fn read_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
     no_links(path)?;
+    // Reject non-regular and oversized entries before opening them. Opening a
+    // directory fails with a platform-specific I/O error on Windows, while the
+    // contract promises the same stable refusal on every platform.
+    let entry = fs::symlink_metadata(path)?;
+    if !entry.is_file() || entry.len() > limit {
+        return Err(refusal("file is not regular or exceeds size limit"));
+    }
     let file = File::open(path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.len() > limit {
