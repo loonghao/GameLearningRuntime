@@ -28,6 +28,10 @@ from game_learning_runtime import (
     JsonLineHostChannel,
     RuntimeHealthStatus,
 )
+from game_learning_runtime.declared_metrics import (
+    DECLARED_METRICS_SCHEMA_VERSION,
+    MetricDeclaration,
+)
 from game_learning_runtime.host import HOST_SCHEMA, HostChannel
 
 
@@ -201,6 +205,74 @@ def test_host_driver_maps_the_wire_contract_to_the_standard_environment() -> Non
         "expected_step_id": 1,
         "action": {"choice": _tensor(np.array([1], dtype=np.int64))},
     }
+    assert channel.closed
+
+
+def test_host_driver_parses_a_declared_metric_declaration() -> None:
+    """A provider reached over the wire can declare its own metrics.
+
+    C#, C++ and every other SDK adapter speak the descriptor, not Python, so
+    the declaration has to arrive on the wire or those adapters have no way to
+    promise anything.
+    """
+
+    class _DeclaringChannel(_ScriptedChannel):
+        def exchange(self, request: Mapping[str, object]) -> Mapping[str, object]:
+            response = copy.deepcopy(dict(super().exchange(request)))
+            if request["operation"] == "describe":
+                result = response["result"]
+                assert isinstance(result, dict)
+                result["metrics"] = {
+                    "schema_version": DECLARED_METRICS_SCHEMA_VERSION,
+                    "expected": ["episode_reward", "steps_per_second"],
+                    "optional": ["preview_only"],
+                    "strict": True,
+                }
+            return response
+
+    driver = HostBridgeDriver(_DeclaringChannel())
+    declaration = driver.describe().metrics
+
+    assert declaration == MetricDeclaration(
+        expected=("episode_reward", "steps_per_second"),
+        optional=("preview_only",),
+        strict=True,
+    )
+
+
+def test_host_driver_parses_an_absent_declaration_as_none() -> None:
+    driver = HostBridgeDriver(_ScriptedChannel())
+    assert driver.describe().metrics is None
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ({"schema_version": "glr.other.v1"}, "invalid descriptor.metrics"),
+        ({"schema_version": DECLARED_METRICS_SCHEMA_VERSION, "expected": "nope"}, "metrics"),
+        (
+            {
+                "schema_version": DECLARED_METRICS_SCHEMA_VERSION,
+                "expected": ["Inherited-Rows"],
+            },
+            "invalid descriptor.metrics",
+        ),
+        ("not-a-mapping", "must be an object"),
+    ],
+)
+def test_host_driver_rejects_invalid_metric_declarations(value: object, message: str) -> None:
+    class _InvalidMetricsChannel(_ScriptedChannel):
+        def exchange(self, request: Mapping[str, object]) -> Mapping[str, object]:
+            response = copy.deepcopy(dict(super().exchange(request)))
+            if request["operation"] == "describe":
+                result = response["result"]
+                assert isinstance(result, dict)
+                result["metrics"] = value
+            return response
+
+    channel = _InvalidMetricsChannel()
+    with pytest.raises(HostProtocolError, match=message):
+        HostBridgeDriver(channel)
     assert channel.closed
 
 
