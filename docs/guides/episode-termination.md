@@ -74,6 +74,29 @@ Three surfaces carry it:
 `EpisodeTermination.to_mapping()` is the `glr.episode-termination.v1` payload
 all three share, so an agent can read one shape everywhere.
 
+## Reaching the run store
+
+The store surface is the only one that outlives the process, and it is the one
+`glr runs show` reads, so a collector has to be told where to put its terminal
+states. There are two ways, and the second is the default:
+
+```python
+# Explicit: publish wherever the caller chooses.
+collector = SyncCollector(env, on_termination=store.termination_sink(run.run_id))
+
+# Implicit: binding a run brings the sink with it. `store` and `run_id` are
+# already what binds the declared-metric ledger, so terminations follow the
+# same pair rather than needing a second opt-in.
+collector = SyncCollector(env, store=store, run_id=run.run_id)
+```
+
+**A collector with no sink writes nothing to the store.** Its terminations stay
+on `collector.terminations` and the run reports `terminations: []` with
+`episode_count: 0`, which is indistinguishable from a run that never collected
+an episode. Pass one of the two forms above whenever the run store is meant to
+be the record. The run must still be open while the collector runs: appending
+to a finished run is a contract violation.
+
 `reached_goal()` is the predicate a scheduler asks for; it is `False` for an
 open episode and for every non-goal reason.
 

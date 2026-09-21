@@ -694,6 +694,40 @@ def test_a_collector_lands_an_indeterminate_termination_in_the_run_store(tmp_pat
     assert persisted[0].indeterminate is True
 
 
+def test_a_collector_bound_to_a_run_publishes_terminations_by_default(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Bind a run and the sink comes with it, with no ``on_termination``.
+
+    This is the shape the guides document and the one a trainer actually
+    writes: ``store`` and ``run_id`` are already what binds the metric
+    ledger. Making terminations opt-in on top of that leaves
+    ``glr runs show`` reporting zero episodes for a real run, which is
+    indistinguishable from a run that never collected one.
+    """
+
+    store = TrainingStore(tmp_path / "runs.sqlite3")
+    run = store.create_run(
+        environment_id="termination.contract-v1", protocol_version="1.0", kind="training"
+    )
+    environment = ScriptedTerminationEnvironment(
+        episode_length=2, info={TERMINATION_REASON_KEY: "goal_reached"}
+    )
+    collector = SyncCollector(environment, store=store, run_id=run.run_id)
+    collector.collect(_always_increment, steps=6)
+
+    persisted = store.list_episode_terminations(run.run_id)
+    assert persisted == collector.terminations
+    assert [item.reason for item in persisted] == [TerminationReason.GOAL_REACHED] * 3
+
+    # An explicit sink still wins over the bound run.
+    seen: list[EpisodeTermination] = []
+    explicit = SyncCollector(
+        environment, store=store, run_id=run.run_id, on_termination=seen.append
+    )
+    explicit.collect(_always_increment, steps=2)
+    assert seen == list(explicit.terminations)
+    assert len(store.list_episode_terminations(run.run_id)) == 3
+
+
 def test_a_plain_run_lands_one_terminal_state_per_episode_in_the_store(tmp_path) -> None:  # type: ignore[no-untyped-def]
     store = TrainingStore(tmp_path / "runs.sqlite3")
     run = store.create_run(

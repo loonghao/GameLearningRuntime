@@ -536,6 +536,7 @@ class SyncCollector:
     :func:`~game_learning_runtime.declared_metrics.bind_declared_metrics` to
     keep the caller's binding. A collector that built the ledger owns the
     binding and releases it through :meth:`release_declared_metrics`.
+
     The collector owns the episode termination seam. It opens one
     :class:`~game_learning_runtime.termination.EpisodeTerminationGuard` per
     episode, admits only steps the guard accepts, and closes every episode it
@@ -545,13 +546,18 @@ class SyncCollector:
     silent data.
 
     Terminal states stay in memory unless the caller supplies
-    ``on_termination``. Pass
+    ``on_termination`` or binds a run. Pass
     :meth:`~game_learning_runtime.run_store.TrainingStore.termination_sink`
-    to make every episode this collector ends readable from the run store:
+    to publish them where the caller chooses:
 
     ```python
     collector = SyncCollector(env, on_termination=store.termination_sink(run.run_id))
     ```
+
+    Passing ``store`` and ``run_id`` together binds that sink by default,
+    because declared metrics are already bound through the same pair: a
+    collector that owns a run but leaves its terminations in memory makes the
+    run look as though it ended no episodes at all.
     """
 
     def __init__(
@@ -593,6 +599,8 @@ class SyncCollector:
         self._declared_metrics = self._resolve_declared_metrics(declared_metrics)
         self._guard: EpisodeTerminationGuard | None = None
         self._terminations: list[EpisodeTermination] = []
+        if on_termination is None and store is not None and run_id is not None:
+            on_termination = store.termination_sink(run_id)
         self._on_termination = on_termination
         if episode_caps is None:
             declared = self._environment.spec.episode_caps

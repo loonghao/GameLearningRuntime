@@ -99,6 +99,12 @@ for audit in collector.declared_metric_audits():
     print(audit.episode_id, audit.declared_metrics, audit.emitted_metrics, audit.missing_metrics)
 ```
 
+The same `store` / `run_id` pair also binds the episode-termination sink, so
+this run records why each of its episodes ended as well as what it measured —
+see [Record why every episode ended](episode-termination.md). A collector built
+without `store` and `run_id` writes neither, and its run reports
+`terminations: []`.
+
 Pass a `MetricDeclaration` and the collector resolves strict mode from the
 adapter's own capabilities. Pass a ready `DeclaredMetricLedger` when the caller
 already bound one to a run — it keeps its store binding and its audits, so

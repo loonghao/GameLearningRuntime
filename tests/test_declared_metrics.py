@@ -39,7 +39,7 @@ from game_learning_runtime.environment import GameEnvironment
 from game_learning_runtime.run_store import RunStatus, TrainingStore
 from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKind, TensorSpec
 from game_learning_runtime.telemetry import Telemetry
-from game_learning_runtime.termination import EpisodeCaps
+from game_learning_runtime.termination import EpisodeCaps, TerminationReason
 
 EXPECTED = ("inherited_rows", "episode_reward", "steps_per_second")
 
@@ -79,9 +79,8 @@ class _DeclaringCounter(GameEnvironment):
             ),
             capabilities=capabilities,
             metrics=declaration,
-            # The episode boundary is reachable in exactly ``target`` steps, so
-            # declaring the step budget lets the runtime attribute the close
-            # instead of this fixture having to report a reason of its own.
+            # The step budget is the safety net; the goal is the real reason.
+            # Report it in ``info`` rather than letting the cap stand in for it.
             episode_caps=EpisodeCaps(max_steps=target),
         )
 
@@ -112,6 +111,9 @@ class _DeclaringCounter(GameEnvironment):
             truncated=np.array([False], dtype=np.bool_),
             episode_id=self._episode_id,
             step_id=self._step_id,
+            # Reaching the target is the goal, so say so rather than letting a
+            # cap that happens to equal the distance stand in for it.
+            info=({"termination_reason": TerminationReason.GOAL_REACHED.value} if reached else {}),
         )
 
 
