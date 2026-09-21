@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from game_learning_runtime.capture_liveness import ContentLivenessConfig
 from game_learning_runtime.game_launcher import GameLaunchConfig
+from game_learning_runtime.hooks import HookConfig
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -373,6 +374,7 @@ class GLRProject:
     schema_version: str = PROJECT_SCHEMA_VERSION
     manifest_path: Path | None = None
     extensions: Mapping[str, Path] = field(default_factory=lambda: MappingProxyType({}))
+    hooks: HookConfig = field(default_factory=HookConfig)
 
 
 def find_project(start: str | Path = ".") -> Path:
@@ -478,6 +480,7 @@ def load_project(path: str | Path = ".") -> GLRProject:
                 "capture",
                 "game",
                 "extensions",
+                "hooks",
             }
         ),
         path="project",
@@ -571,6 +574,13 @@ def load_project(path: str | Path = ".") -> GLRProject:
             if value.get("game") is None
             else GameLaunchConfig.from_mapping(_mapping(value["game"], path="project.game"))
         ),
+        hooks=(
+            HookConfig()
+            if value.get("hooks") is None
+            else HookConfig.from_mapping(
+                _mapping(value["hooks"], path="project.hooks"), path="project.hooks"
+            )
+        ),
     )
 
 
@@ -581,6 +591,7 @@ __all__ = [
     "CaptureConfig",
     "CaptureSessionConfig",
     "GLRProject",
+    "HookConfig",
     "ProjectCommand",
     "RuntimeReadinessConfig",
     "find_project",
