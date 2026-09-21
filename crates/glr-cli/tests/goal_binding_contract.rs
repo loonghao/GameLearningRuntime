@@ -112,6 +112,26 @@ fn run(project: &Path, arguments: &[&str]) -> Output {
         .unwrap()
 }
 
+/// Rewrite the objective of a bound goal, keeping the goal id and budgets: the
+/// stored SHA-256 then describes an older file.
+fn rewrite_goal_objective(root: &Path, name: &str, objective: &str) {
+    let path = root.join("goals").join(format!("{name}.json"));
+    let mut goal: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    goal["objective"] = Value::String(objective.to_owned());
+    fs::write(&path, serde_json::to_vec_pretty(&goal).unwrap()).unwrap();
+}
+
+/// The `goal_binding` receipt of the newest run.
+///
+/// The project researcher is `glr --version`, so a goal run fails after the run
+/// row and its receipt already exist; the receipt is what these tests read.
+fn goal_binding_receipt(project: &Path) -> Value {
+    let listed = success(&run(project, &["runs", "list", "--limit", "1"]));
+    let runs = listed["data"].as_array().unwrap();
+    assert!(!runs.is_empty(), "goal run must record a run");
+    runs[0]["metadata"]["goal_binding"].clone()
+}
+
 fn success(output: &Output) -> Value {
     assert!(
         output.status.success(),
@@ -355,6 +375,101 @@ fn a_saved_goal_can_be_switched_and_listed() {
     assert_eq!(shown["data"]["goal"]["goal_id"], "goal.second");
     assert_eq!(shown["data"]["goal"]["source_status"], "unchanged");
     assert_eq!(shown["data"]["goal"]["context_status"], "unbound");
+}
+
+#[test]
+fn an_explicit_goal_receipt_records_the_inherited_context() {
+    let project = create_project();
+    write_goal(
+        project.path(),
+        "reach-destination",
+        "goal.reach-destination",
+    );
+    success(&run(
+        project.path(),
+        &[
+            "--context",
+            "config/contexts/native.toml",
+            "goal",
+            "set",
+            "--goal",
+            "goals/reach-destination.json",
+        ],
+    ));
+    let explicit = project.path().join("goals/reach-destination.json");
+    let _ = run(
+        project.path(),
+        &["goal", "run", "--goal", explicit.to_string_lossy().as_ref()],
+    );
+    // The run named its own goal but no `--context`, so the context came from
+    // the binding of the active goal.
+    let receipt = goal_binding_receipt(project.path());
+    assert_eq!(receipt["source"], "explicit");
+    assert_eq!(receipt["context_source"], "default");
+    assert_eq!(receipt["context_path"], "config/contexts/native.toml");
+}
+
+#[test]
+fn a_default_goal_receipt_records_the_goal_drift_status() {
+    let project = create_project();
+    write_goal(
+        project.path(),
+        "reach-destination",
+        "goal.reach-destination",
+    );
+    success(&run(
+        project.path(),
+        &["goal", "set", "--goal", "goals/reach-destination.json"],
+    ));
+    let _ = run(project.path(), &["goal", "run"]);
+    let receipt = goal_binding_receipt(project.path());
+    assert_eq!(receipt["source"], "default");
+    assert_eq!(receipt["source_status"], "unchanged");
+    assert_eq!(receipt["context_source"], "none");
+
+    rewrite_goal_objective(
+        project.path(),
+        "reach-destination",
+        "reach the other destination",
+    );
+    let _ = run(project.path(), &["goal", "run"]);
+    assert_eq!(
+        goal_binding_receipt(project.path())["source_status"],
+        "changed"
+    );
+}
+
+#[test]
+fn a_hand_edited_store_cannot_point_goal_run_outside_the_project() {
+    let project = create_project();
+    write_goal(
+        project.path(),
+        "reach-destination",
+        "goal.reach-destination",
+    );
+    success(&run(
+        project.path(),
+        &["goal", "set", "--goal", "goals/reach-destination.json"],
+    ));
+    let store = project.path().join(".glr/goal-binding.json");
+    let mut file: Value = serde_json::from_slice(&fs::read(&store).unwrap()).unwrap();
+    file["goals"]["goal.reach-destination"]["goal_path"] = json!("../outside.json");
+    fs::write(&store, serde_json::to_vec_pretty(&file).unwrap()).unwrap();
+
+    let error = failure(&run(project.path(), &["goal", "run"]));
+    assert!(error.contains("project-relative"), "{error}");
+    let error = failure(&run(project.path(), &["goal", "show"]));
+    assert!(error.contains("project-relative"), "{error}");
+    // `doctor` stays usable and reports the gap instead of a bound goal.
+    let report = success(&run(project.path(), &["doctor"]));
+    assert!(
+        report["data"]["goal_binding"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("project-relative"),
+        "{}",
+        report["data"]["goal_binding"]
+    );
 }
 
 #[test]

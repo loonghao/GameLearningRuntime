@@ -186,6 +186,11 @@ impl RunContext {
         &self.context_sha256
     }
 
+    /// Project-relative POSIX path of the context file that was loaded.
+    pub fn source_path(&self) -> &str {
+        &self.unsigned.source.path
+    }
+
     pub fn verify(&self, root: &Path) -> Result<()> {
         verify_identity(
             root,
