@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -30,6 +31,16 @@ from game_learning_runtime.fork_gate import (
     evaluate_fork_gate,
 )
 from game_learning_runtime.game_launcher import GameLauncher, GameLaunchError, LaunchCommand
+from game_learning_runtime.hook_actions import register_builtin_actions
+from game_learning_runtime.hooks import (
+    HOOK_SCHEMA_VERSION,
+    PREDEFINED_HOOK_EVENTS,
+    HookConfigurationError,
+    HookDispatchReport,
+    HookEvent,
+    HookEventStatus,
+    HookRegistry,
+)
 from game_learning_runtime.model_bundle import verify_model_bundle
 from game_learning_runtime.plugins import (
     PluginError,
@@ -76,6 +87,11 @@ from game_learning_runtime.watchdog import (
 )
 
 CLI_OUTPUT_SCHEMA_VERSION = "glr.cli-output.v1"
+
+_LOGGER = logging.getLogger("game_learning_runtime.cli")
+
+#: Run kinds mapped to the event namespace their lifecycle hooks publish.
+ROLE_EVENT_PREFIX: Mapping[str, str] = {"runtime": "runtime", "playback": "play"}
 
 #: Canonical upstream identity enforced by `glr fork-gate`.
 CANONICAL_ORIGIN_URL = "https://github.com/loonghao/GameLearningRuntime.git"
@@ -309,6 +325,79 @@ def _emit(command: str, data: Any, *, as_json: bool) -> None:
 
 def _store(project: GLRProject) -> TrainingStore:
     return TrainingStore(project.data_dir / "runs.sqlite3")
+
+
+def _hooks(project: GLRProject, *, strict: bool) -> HookRegistry:
+    """Build the project hook registry on top of the built-in actions.
+
+    ``strict`` is used by inspection verbs, which must surface a broken hook
+    configuration. Run verbs use the non-strict path: a broken hook must never
+    break a training run, so the configuration is reported and ignored.
+    """
+
+    registry = HookRegistry()
+    register_builtin_actions(registry, base_dir=project.root)
+    try:
+        registry.load(project.hooks)
+    except (HookConfigurationError, TypeError, ValueError) as error:
+        if strict:
+            raise
+        _LOGGER.warning("ignoring invalid hook configuration: %s", error)
+        return HookRegistry()
+    return registry
+
+
+def _emit_hook_event(
+    project: GLRProject,
+    registry: HookRegistry,
+    *,
+    store: TrainingStore | None = None,
+    run_id: str | None = None,
+    name: str,
+    status: HookEventStatus | str,
+    kind: str,
+    stage: str,
+    exit_code: int | None = None,
+    reason: str | None = None,
+    payload: Mapping[str, Any] | None = None,
+    dry_run: bool = False,
+    strict: bool = False,
+) -> HookDispatchReport:
+    """Publish one lifecycle event and persist the dispatch outcome.
+
+    Hook bookkeeping is best effort: every failure is logged and reported
+    through :class:`HookDispatchReport`, never propagated to the run that
+    published the event. ``strict`` re-raises a malformed event instead, which
+    is what the inspection verbs owe their caller: a synthetic event with an
+    illegal name must fail the verb rather than report a quiet no-op.
+    """
+
+    try:
+        event = HookEvent(
+            name=name,
+            status=status,
+            environment_id=project.environment_id,
+            environment_family=project.environment_family,
+            kind=kind,
+            stage=stage,
+            run_id=run_id,
+            exit_code=exit_code,
+            reason=reason,
+            payload=payload or {},
+        )
+    except (HookConfigurationError, TypeError, ValueError):
+        if strict:
+            raise
+        _LOGGER.warning("hook event %s was not publishable", name)
+        return HookDispatchReport(event=name, dry_run=dry_run)
+    try:
+        report = registry.dispatch(event, dry_run=dry_run)
+        if store is not None and run_id is not None and report.results:
+            store.append_event(run_id, kind="hook.dispatched", payload=report.to_mapping())
+        return report
+    except Exception as error:
+        _LOGGER.warning("hook dispatch failed for %s: %s: %s", name, type(error).__name__, error)
+        return HookDispatchReport(event=name, dry_run=dry_run)
 
 
 def _command_available(project: GLRProject, command: ProjectCommand | LaunchCommand) -> bool:
@@ -602,8 +691,23 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
     trainer_exit = 1
     game_set = None
     game_extra: dict[str, str | Path] = {}
+    hooks = _hooks(project, strict=False)
+    stage = "train"
+    interrupted: BaseException | None = None
+    failure_error: BaseException | None = None
+    _emit_hook_event(
+        project,
+        hooks,
+        store=store,
+        run_id=run.run_id,
+        name="train.start",
+        status=HookEventStatus.STARTED,
+        kind="training",
+        stage=stage,
+    )
     try:
         if project.game is not None:
+            stage = "game-launch"
             game_set = GameLauncher(project.game, project_root=project.root).start(run_dir)
             manifest_path = game_set.manifest_path
             game_extra = {
@@ -613,9 +717,22 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
                 "game_instances_manifest": manifest_path,
             }
         if capture_enabled and project.capture is not None:
+            stage = "capture"
             capture_session = _start_capture(
                 project, run_id=run.run_id, run_dir=run_dir, extra=game_extra
             )
+            _emit_hook_event(
+                project,
+                hooks,
+                store=store,
+                run_id=run.run_id,
+                name="record.start",
+                status=HookEventStatus.STARTED,
+                kind="record",
+                stage="capture",
+                payload={"video": project.capture.video_file},
+            )
+        stage = "trainer"
         trainer_exit = _run_command(
             project.trainer,
             project=project,
@@ -624,12 +741,10 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
             log_path=trainer_log,
             extra=game_extra,
         )
-    except KeyboardInterrupt:
-        store.finish_run(run.run_id, status=RunStatus.INTERRUPTED, exit_code=None)
-        raise
-    except BaseException:
-        store.finish_run(run.run_id, status=RunStatus.FAILED, exit_code=1)
-        raise
+    except KeyboardInterrupt as error:
+        interrupted = error
+    except BaseException as error:
+        failure_error = error
     finally:
         try:
             if capture_session is not None:
@@ -642,13 +757,65 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
                         artifact_root=run_dir,
                         session=capture_session,
                     )
-                except BaseException:
-                    if store.get_run(run.run_id).status is RunStatus.RUNNING:
-                        store.finish_run(run.run_id, status=RunStatus.FAILED, exit_code=1)
-                    raise
+                    _emit_hook_event(
+                        project,
+                        hooks,
+                        store=store,
+                        run_id=run.run_id,
+                        name="record.stop",
+                        status=(
+                            HookEventStatus.SUCCEEDED
+                            if capture_complete
+                            else HookEventStatus.FAILED
+                        ),
+                        kind="record",
+                        stage="capture",
+                        reason=(
+                            None
+                            if capture_complete
+                            else "recorder did not produce the declared video and index artifacts"
+                        ),
+                        payload={"complete": capture_complete},
+                    )
+                except BaseException as error:
+                    if failure_error is None and interrupted is None:
+                        failure_error = error
         finally:
             if game_set is not None:
                 game_set.close()
+
+    # A run only becomes terminal after every lifecycle event has been
+    # published: `append_event` refuses a terminal run, so finishing earlier
+    # would silently drop the hook results for the failure that ended the run.
+    if interrupted is not None:
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name="train.failed",
+            status=HookEventStatus.INTERRUPTED,
+            kind="training",
+            stage=stage,
+            reason="training was interrupted",
+        )
+        store.finish_run(run.run_id, status=RunStatus.INTERRUPTED, exit_code=None)
+        raise interrupted
+    if failure_error is not None:
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name="train.failed",
+            status=HookEventStatus.FAILED,
+            kind="training",
+            stage=stage,
+            exit_code=1,
+            reason=f"{type(failure_error).__name__}: {failure_error}",
+        )
+        store.finish_run(run.run_id, status=RunStatus.FAILED, exit_code=1)
+        raise failure_error
 
     store.register_artifact(
         run.run_id,
@@ -669,12 +836,48 @@ def _run_training(project: GLRProject, *, as_json: bool, capture_enabled: bool) 
         capture_complete or project.capture is None or not project.capture.required
     )
     exit_code = 0 if succeeded else trainer_exit if trainer_exit != 0 else 1
+    failure: dict[str, Any] | None = None
+    if succeeded:
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name="train.complete",
+            status=HookEventStatus.SUCCEEDED,
+            kind="training",
+            stage="trainer",
+            exit_code=exit_code,
+        )
+    else:
+        failure_stage, failure_reason = (
+            ("trainer", f"trainer command exited with code {trainer_exit}")
+            if trainer_exit != 0 or project.capture is None
+            else ("capture", "required capture did not produce complete review artifacts")
+        )
+        failure = {"stage": failure_stage, "reason": failure_reason, "exit_code": exit_code}
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name="train.failed",
+            status=HookEventStatus.FAILED,
+            kind="training",
+            stage=failure_stage,
+            exit_code=exit_code,
+            reason=failure_reason,
+        )
     finished = store.finish_run(
         run.run_id,
         status=RunStatus.SUCCEEDED if succeeded else RunStatus.FAILED,
         exit_code=exit_code,
     )
-    _emit("train", _run_value(finished), as_json=as_json)
+    output = _run_value(finished)
+    # Every run verb reports `failure` unconditionally so an agent can parse
+    # one shape instead of guessing whether the key is present.
+    output["failure"] = failure
+    _emit("train", output, as_json=as_json)
     return exit_code
 
 
@@ -731,6 +934,18 @@ def _run_project_role(
     run_dir.mkdir(parents=True, exist_ok=False)
     logs: list[Path] = []
     readiness_outcome: ReadinessWindowOutcome | None = None
+    prefix = ROLE_EVENT_PREFIX.get(kind, kind)
+    hooks = _hooks(project, strict=False)
+    _emit_hook_event(
+        project,
+        hooks,
+        store=store,
+        run_id=run.run_id,
+        name=f"{prefix}.start",
+        status=HookEventStatus.STARTED,
+        kind=kind,
+        stage=kind,
+    )
 
     def invoke(attempt: int) -> int:
         log_path = run_dir / (f"{kind}.log" if attempt == 1 else f"{kind}-attempt{attempt}.log")
@@ -776,9 +991,32 @@ def _run_project_role(
             )
             exit_code = _readiness_exit_code(readiness_outcome)
     except KeyboardInterrupt:
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name=f"{prefix}.failed",
+            status=HookEventStatus.INTERRUPTED,
+            kind=kind,
+            stage=kind,
+            reason=f"{kind} was interrupted",
+        )
         store.finish_run(run.run_id, status=RunStatus.INTERRUPTED, exit_code=None)
         raise
-    except BaseException:
+    except BaseException as error:
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name=f"{prefix}.failed",
+            status=HookEventStatus.FAILED,
+            kind=kind,
+            stage=kind,
+            exit_code=1,
+            reason=f"{type(error).__name__}: {error}",
+        )
         store.finish_run(run.run_id, status=RunStatus.FAILED, exit_code=1)
         raise
     for log_path in logs:
@@ -789,12 +1027,44 @@ def _run_project_role(
             role="run-log",
             media_type="text/plain",
         )
+    failure: dict[str, Any] | None = None
+    if exit_code == 0:
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name=f"{prefix}.complete",
+            status=HookEventStatus.SUCCEEDED,
+            kind=kind,
+            stage=kind,
+            exit_code=exit_code,
+        )
+    else:
+        failure = {
+            "stage": kind,
+            "reason": f"{kind} command exited with code {exit_code}",
+            "exit_code": exit_code,
+        }
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name=f"{prefix}.failed",
+            status=HookEventStatus.FAILED,
+            kind=kind,
+            stage=kind,
+            exit_code=exit_code,
+            reason=failure["reason"],
+        )
     finished = store.finish_run(
         run.run_id,
         status=RunStatus.SUCCEEDED if exit_code == 0 else RunStatus.FAILED,
         exit_code=exit_code,
     )
     output = _run_value(finished)
+    output["failure"] = failure
     if readiness_outcome is not None:
         output["readiness"] = readiness_outcome.to_mapping()
     _emit(output_command, output, as_json=as_json)
@@ -951,6 +1221,18 @@ def _run_goal(project: GLRProject, *, goal_path: Path, as_json: bool, capture_en
     seen_source_ids: set[str] = set()
     known_finding_ids: set[str] = set()
     previous_evaluation_path: Path | None = None
+    hooks = _hooks(project, strict=False)
+    _emit_hook_event(
+        project,
+        hooks,
+        store=store,
+        run_id=run.run_id,
+        name="goal.start",
+        status=HookEventStatus.STARTED,
+        kind="goal",
+        stage="goal",
+        payload={"goal_id": goal.goal_id},
+    )
     try:
         research_log = _run_goal_role(
             project,
@@ -1166,14 +1448,72 @@ def _run_goal(project: GLRProject, *, goal_path: Path, as_json: bool, capture_en
             if last_evaluation.satisfied:
                 break
     except KeyboardInterrupt:
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name="goal.failed",
+            status=HookEventStatus.INTERRUPTED,
+            kind="goal",
+            stage="goal",
+            reason="goal run was interrupted",
+            payload={"goal_id": goal.goal_id, "trials_completed": trials_completed},
+        )
         store.finish_run(run.run_id, status=RunStatus.INTERRUPTED, exit_code=None)
         raise
-    except BaseException:
+    except BaseException as error:
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name="goal.failed",
+            status=HookEventStatus.FAILED,
+            kind="goal",
+            stage="goal",
+            exit_code=1,
+            reason=f"{type(error).__name__}: {error}",
+            payload={"goal_id": goal.goal_id, "trials_completed": trials_completed},
+        )
         store.finish_run(run.run_id, status=RunStatus.FAILED, exit_code=1)
         raise
 
     satisfied = last_evaluation is not None and last_evaluation.satisfied
     exit_code = 0 if satisfied else 3
+    failure: dict[str, Any] | None = None
+    if satisfied:
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name="goal.complete",
+            status=HookEventStatus.SUCCEEDED,
+            kind="goal",
+            stage="goal",
+            exit_code=exit_code,
+            payload={"goal_id": goal.goal_id, "trials_completed": trials_completed},
+        )
+    else:
+        failure = {
+            "stage": "goal",
+            "reason": "goal success criteria were not satisfied within the declared budget",
+            "exit_code": exit_code,
+        }
+        _emit_hook_event(
+            project,
+            hooks,
+            store=store,
+            run_id=run.run_id,
+            name="goal.failed",
+            status=HookEventStatus.FAILED,
+            kind="goal",
+            stage="goal",
+            exit_code=exit_code,
+            reason=failure["reason"],
+            payload={"goal_id": goal.goal_id, "trials_completed": trials_completed},
+        )
     finished = store.finish_run(
         run.run_id,
         status=RunStatus.SUCCEEDED if satisfied else RunStatus.FAILED,
@@ -1188,6 +1528,7 @@ def _run_goal(project: GLRProject, *, goal_path: Path, as_json: bool, capture_en
             "trials_completed": trials_completed,
             "training_steps_planned": total_steps,
             "evaluation": (None if last_evaluation is None else _evaluation_value(last_evaluation)),
+            "failure": failure,
         },
         as_json=as_json,
     )
@@ -1415,6 +1756,42 @@ def _run_plugin_command(arguments: argparse.Namespace) -> int:
     raise AssertionError("unreachable plugin command")
 
 
+def _run_hooks_command(project: GLRProject, arguments: argparse.Namespace, *, as_json: bool) -> int:
+    """Inspect or exercise the configured lifecycle hooks."""
+
+    registry = _hooks(project, strict=True)
+    if arguments.hooks_command == "list":
+        _emit(
+            "hooks.list",
+            {
+                "schema_version": HOOK_SCHEMA_VERSION,
+                "enabled": project.hooks.enabled,
+                "default_timeout_seconds": project.hooks.default_timeout_seconds,
+                "actions": list(registry.action_names),
+                "subscriptions": [item.to_mapping() for item in registry.subscriptions],
+                "predefined_events": list(PREDEFINED_HOOK_EVENTS),
+            },
+            as_json=as_json,
+        )
+        return 0
+    if arguments.hooks_command == "emit":
+        report = _emit_hook_event(
+            project,
+            registry,
+            name=arguments.event,
+            status=arguments.status,
+            kind=arguments.kind,
+            stage=arguments.stage,
+            exit_code=arguments.exit_code,
+            reason=arguments.reason,
+            dry_run=arguments.dry_run,
+            strict=True,
+        )
+        _emit("hooks.emit", report.to_mapping(), as_json=as_json)
+        return 0 if report.ok else 1
+    raise AssertionError("unreachable hooks command")
+
+
 def _fork_gate(arguments: argparse.Namespace, *, as_json: bool) -> int:
     """Evaluate the anti-fork drift gate for one checkout."""
 
@@ -1607,6 +1984,26 @@ def _parser() -> argparse.ArgumentParser:
     knowledge_import = knowledge_commands.add_parser("import")
     knowledge_import.add_argument("--input", required=True)
 
+    hooks = commands.add_parser(
+        "hooks", help="inspect and exercise lifecycle hooks without running a job"
+    )
+    hooks_commands = hooks.add_subparsers(dest="hooks_command", required=True)
+    hooks_commands.add_parser("list", help="list registered hook actions and subscriptions")
+    hooks_emit = hooks_commands.add_parser(
+        "emit", help="publish one lifecycle event to every matching hook"
+    )
+    hooks_emit.add_argument("--event", required=True, help="event name, e.g. train.failed")
+    hooks_emit.add_argument(
+        "--status", choices=[item.value for item in HookEventStatus], default="started"
+    )
+    hooks_emit.add_argument("--kind", default="manual", help="run dimension, e.g. training")
+    hooks_emit.add_argument("--stage", default="manual", help="stage, e.g. trainer")
+    hooks_emit.add_argument("--exit-code", type=int)
+    hooks_emit.add_argument("--reason")
+    hooks_emit.add_argument(
+        "--dry-run", action="store_true", help="report matches without running actions"
+    )
+
     plugin = commands.add_parser(
         "plugin", help="inspect, install, and compose declarative project plugins"
     )
@@ -1664,6 +2061,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _doctor(project, as_json=arguments.json)
     store = _store(project)
     data: Any
+    if arguments.command == "hooks":
+        return _run_hooks_command(project, arguments, as_json=arguments.json)
     if arguments.command == "train":
         return _run_training(
             project, as_json=arguments.json, capture_enabled=not arguments.no_capture

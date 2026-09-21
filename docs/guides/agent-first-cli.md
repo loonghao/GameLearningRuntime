@@ -84,6 +84,16 @@ GLR never invokes a shell.
     "frame_rate": 30,
     "width": 1920,
     "height": 1080
+  },
+  "hooks": {
+    "default_timeout_seconds": 5,
+    "subscriptions": [
+      {
+        "event": "train.failed",
+        "action": "notify.message",
+        "config": {"outbox": "hooks/messages.jsonl"}
+      }
+    ]
   }
 }
 ```
@@ -160,6 +170,29 @@ The window is durable evidence. Each invocation appends a `readiness.attempt` ev
 appends one `readiness.outcome` event, both carrying the receipt verbatim; `runtime.start` also
 returns the same summary under `readiness`. An exhausted window returns exit code `78` — the host was
 still parking and the caller should retry — while every other verdict keeps the role exit code.
+
+## Notify on lifecycle events
+
+Hooks attach a named action to a named lifecycle event. The control plane publishes
+`train.start`, `train.complete`, `train.failed`, `record.start`, `record.stop`, `goal.*`,
+`runtime.*`, and `play.*`; any other lowercase dotted identifier is also a legal event name, so an
+adapter can publish its own. A subscription selects an event or a whole namespace (`train.*`) and
+narrows it by environment, run kind, stage, status, and exit-code range.
+
+```bash
+glr hooks list --format json
+glr hooks emit --event train.failed --status failed --exit-code 7 --reason oom --dry-run
+```
+
+`hooks list` fails on an unknown action or a malformed configuration, so a mistake surfaces when the
+manifest is edited. `hooks emit` publishes a synthetic event and exits `1` when an action failed or
+timed out.
+
+A hook is observability, never a dependency: an action that raises or exceeds its budget is reported
+as a `failed` or `timeout` result, and a run whose hook configuration is unusable proceeds with no
+subscriptions. A hook never changes the exit code of the run that published its event, and every
+dispatch is recorded on the run as a `hook.dispatched` event with status, duration, and error per
+action. See [the lifecycle hooks guide](lifecycle-hooks.md) for the full contract.
 
 ## Start the runtime and train
 
@@ -390,3 +423,20 @@ differs, or evaluator evidence lacks a matching persisted metric.
 
 Use the returned run ID with `runs show`. Do not relax identity, authority, provenance, or budget
 checks to make a run green.
+
+A failed `train`, `goal run`, `runtime start`, or `play` also reports a machine-readable `failure`
+object in its `--format json` envelope, so an agent can decide what to do next without parsing a
+log:
+
+```json
+{
+  "failure": {
+    "stage": "trainer",
+    "reason": "trainer command exited with code 7",
+    "exit_code": 7
+  }
+}
+```
+
+`stage` names where the run broke (`train`, `game-launch`, `capture`, `trainer`, `goal`, ...). The
+process exit code still carries the verdict.
