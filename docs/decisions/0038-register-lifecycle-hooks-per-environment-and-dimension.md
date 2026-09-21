@@ -60,7 +60,11 @@ Add `game_learning_runtime.hooks` (contract, registry, dispatcher) and
 - **Dispatch never propagates.** `HookRegistry.dispatch` evaluates matching
   inside a guard, runs each action on a daemon thread bounded by its
   `timeout_seconds`, and converts a raise into a `failed` result and an overrun
-  into a `timeout` result. It returns a `HookDispatchReport`; it raises nothing.
+  into a `timeout` result. It returns a `HookDispatchReport`; it raises
+  nothing. An action's return value is untrusted third-party data, so a detail
+  that is not JSON serializable is dropped with a recorded note instead of
+  raising: the notification was already delivered, and losing its detail must
+  not lose the result or the results of the actions after it.
 - **Configuration lives in the project manifest** under `[hooks]`, parsed by
   `project.load_project` into `HookConfig`. It is bounded: at most 64
   subscriptions, budgets between 0.1 s and 300 s, and no arbitrary keys.
@@ -71,7 +75,11 @@ Add `game_learning_runtime.hooks` (contract, registry, dispatcher) and
   the manifest is edited rather than during a run.
 - **Results are recorded, not just logged.** Every dispatch that produced a
   result is appended to the run as a `hook.dispatched` event carrying status,
-  duration, error, and detail per action.
+  duration, error, and detail per action. A run therefore only becomes
+  terminal after its lifecycle events have been published: `append_event`
+  refuses a terminal run, so finishing a run before publishing the failure
+  that ended it would drop exactly the record an agent needs. The failure
+  paths in every run verb emit first and finish the run afterwards.
 - **Failures are machine-readable.** A failed `train`, `goal run`, `runtime
   start`, or `play` adds a `failure` object — `stage`, `reason`, `exit_code` —
   to its `--format json` envelope, so an agent can decide what to do next

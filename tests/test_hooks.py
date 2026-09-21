@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import email.message
 import json
 import logging
 import sys
@@ -15,6 +16,7 @@ from game_learning_runtime.cli import main
 from game_learning_runtime.hook_actions import (
     LogHookAction,
     MessageOutboxAction,
+    NoRedirectHandler,
     RecordingWebhookTransport,
     WebhookHookAction,
     register_builtin_actions,
@@ -37,7 +39,7 @@ from game_learning_runtime.hooks import (
     validate_message_template,
 )
 from game_learning_runtime.project import load_project
-from game_learning_runtime.run_store import TrainingStore
+from game_learning_runtime.run_store import RunStatus, TrainingStore
 
 
 def _project(
@@ -459,12 +461,16 @@ def test_urllib_webhook_transport_posts_json_and_reads_the_status(
         def __exit__(self, *args: object) -> None:
             return None
 
-    def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
-        captured["request"] = request
-        captured["timeout"] = timeout
-        return _FakeResponse()
+    class _FakeOpener:
+        def __init__(self, *handlers: object) -> None:
+            captured["handlers"] = handlers
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        def open(self, request: object, timeout: float) -> _FakeResponse:
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return _FakeResponse()
+
+    monkeypatch.setattr("urllib.request.build_opener", _FakeOpener)
     status = urllib_webhook_transport(
         url="https://hooks.example.test/glr", body={"event": "train.failed"}, timeout_seconds=2.5
     )
@@ -474,21 +480,39 @@ def test_urllib_webhook_transport_posts_json_and_reads_the_status(
     assert request.data == b'{"event": "train.failed"}'  # type: ignore[attr-defined]
     assert request.get_method() == "POST"  # type: ignore[attr-defined]
     assert request.headers == {"Content-type": "application/json"}  # type: ignore[attr-defined]
+    assert captured["handlers"] == (NoRedirectHandler,)
+
+
+def test_urllib_webhook_transport_refuses_redirects() -> None:
+    handler = NoRedirectHandler()
+    with pytest.raises(urllib.error.HTTPError, match="redirects are not followed"):
+        handler.redirect_request(
+            urllib.request.Request("https://hooks.example.test/glr"),
+            None,
+            302,
+            "Found",
+            email.message.Message(),
+            "https://internal.example.test/admin",
+        )
 
 
 def test_urllib_webhook_transport_reports_http_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_urlopen(request: object, timeout: float) -> object:
-        raise urllib.error.HTTPError(
-            "https://hooks.example.test/glr",
-            500,
-            "boom",
-            {},
-            None,  # type: ignore[arg-type]
-        )
+    class _FakeOpener:
+        def __init__(self, *handlers: object) -> None:
+            self.handlers = handlers
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        def open(self, request: object, timeout: float) -> object:
+            raise urllib.error.HTTPError(
+                "https://hooks.example.test/glr",
+                500,
+                "boom",
+                {},
+                None,  # type: ignore[arg-type]
+            )
+
+    monkeypatch.setattr("urllib.request.build_opener", _FakeOpener)
     assert (
         urllib_webhook_transport(url="https://hooks.example.test/glr", body={}, timeout_seconds=1.0)
         == 500
@@ -865,3 +889,207 @@ def test_cli_train_without_hooks_still_succeeds(tmp_path: Path, capsys: object) 
     run_id = json.loads(capsys.readouterr().out)["data"]["run_id"]  # type: ignore[attr-defined]
     events = TrainingStore(tmp_path / ".glr/runs.sqlite3").list_events(run_id)
     assert [event.kind for event in events] == []
+
+
+# --------------------------------------------------------------------------- #
+# Review regressions: the failure path must still record its hook results
+# --------------------------------------------------------------------------- #
+
+
+def _exception_path_project(root: Path) -> None:
+    """A project whose trainer cannot even be started.
+
+    `_run_command` raises before any exit code exists, which is the path where
+    `finish_run` used to run before the failure hook was published.
+    """
+
+    _project(
+        root,
+        trainer_argv=[str(root / "does-not-exist")],
+        hooks={
+            "subscriptions": [
+                {
+                    "event": "train.*",
+                    "action": "notify.message",
+                    "config": {"outbox": "hooks/messages.jsonl"},
+                }
+            ]
+        },
+    )
+
+
+def test_exception_path_still_records_the_failure_hook_result(tmp_path: Path) -> None:
+    _exception_path_project(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        main(["--project", str(tmp_path), "--format", "json", "train"])
+
+    store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
+    runs = store.list_runs(environment_id="example.adventure-v1")
+    assert len(runs) == 1
+    assert runs[0].status is RunStatus.FAILED
+
+    events = [
+        event.payload
+        for event in store.list_events(runs[0].run_id)
+        if event.kind == "hook.dispatched"
+    ]
+    assert [item["event"] for item in events] == ["train.start", "train.failed"]
+    failure_report = events[-1]
+    assert failure_report["dispatched"] == 1
+    assert failure_report["results"][0]["action"] == "notify.message"
+
+    messages = [
+        json.loads(line)
+        for line in (tmp_path / "hooks/messages.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [item["event"] for item in messages] == ["train.start", "train.failed"]
+
+
+def test_exception_path_records_the_record_stop_hook_result(tmp_path: Path) -> None:
+    """`record.stop` is published from a `finally`, so it needs a live run too."""
+
+    recorder = tmp_path / "recorder.py"
+    recorder.write_text(
+        """
+import json
+import os
+import sys
+from pathlib import Path
+
+Path(os.environ["GLR_CAPTURE_VIDEO"]).write_bytes(b"synthetic-h264")
+Path(os.environ["GLR_CAPTURE_INDEX"]).write_text(json.dumps({
+    "schema_version": "glr.capture-frame.v1",
+    "run_id": os.environ["GLR_RUN_ID"],
+    "episode_id": "12345678-1234-5678-1234-567812345678",
+    "step_id": 0,
+    "frame_index": 0,
+    "pts_ns": 0,
+    "observation_timestamp_ns": 1
+}) + "\\n", encoding="utf-8")
+for line in sys.stdin:
+    if line.strip() == "q":
+        break
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    _project(
+        tmp_path,
+        trainer_argv=[str(tmp_path / "does-not-exist")],
+        capture_argv=[sys.executable, str(recorder)],
+        hooks={"subscriptions": [{"event": "record.*", "action": "notify.message"}]},
+    )
+
+    with pytest.raises(FileNotFoundError):
+        main(["--project", str(tmp_path), "--format", "json", "train"])
+
+    store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
+    run = store.list_runs(environment_id="example.adventure-v1")[0]
+    events = [
+        event.payload for event in store.list_events(run.run_id) if event.kind == "hook.dispatched"
+    ]
+    assert [item["event"] for item in events] == ["record.start", "record.stop"]
+    assert run.status is RunStatus.FAILED
+
+
+def test_runtime_failure_still_records_its_hook_result(tmp_path: Path) -> None:
+    (tmp_path / "bridge").mkdir()
+    (tmp_path / "glr-project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "glr.project.v1",
+                "environment_id": "example.adventure-v1",
+                "environment_family": "action-rpg",
+                "protocol_version": "1.0",
+                "data_dir": ".glr",
+                "bridge_path": "bridge",
+                "runtime": {"argv": [str(tmp_path / "does-not-exist")]},
+                "trainer": {"argv": [sys.executable, "-c", "print('train')"]},
+                "player": {"argv": [sys.executable, "-c", "print('play')", "{bundle}"]},
+                "hooks": {"subscriptions": [{"event": "runtime.*", "action": "notify.message"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(FileNotFoundError):
+        main(["--project", str(tmp_path), "--format", "json", "runtime", "start"])
+
+    store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
+    run = store.list_runs(environment_id="example.adventure-v1")[0]
+    assert run.status is RunStatus.FAILED
+    events = [
+        event.payload for event in store.list_events(run.run_id) if event.kind == "hook.dispatched"
+    ]
+    assert [item["event"] for item in events] == ["runtime.start", "runtime.failed"]
+
+
+def test_dispatch_survives_an_unrecordable_action_detail() -> None:
+    def handler(event: HookEvent, config: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {"delivered": True, "unrecordable": object()}
+
+    registry = HookRegistry()
+    registry.register_action(CallableHookAction(name="custom.detail", handler=handler))
+    registry.subscribe(HookSubscription(event="train.failed", action="custom.detail"))
+
+    report = registry.dispatch(_event())
+
+    assert report.dispatched == 1
+    assert report.ok is True
+    assert report.results[0].detail == {"detail_dropped": "detail was not JSON serializable"}
+    assert report.to_mapping()["results"][0]["detail"] == {
+        "detail_dropped": "detail was not JSON serializable"
+    }
+
+
+def test_dispatch_survives_a_nan_action_detail() -> None:
+    registry = HookRegistry()
+    registry.register_action(
+        CallableHookAction(name="custom.nan", handler=lambda event, config: {"value": float("nan")})
+    )
+    registry.subscribe(HookSubscription(event="train.failed", action="custom.nan"))
+
+    report = registry.dispatch(_event())
+
+    assert report.dispatched == 1
+    assert report.results[0].detail == {"detail_dropped": "detail was not JSON serializable"}
+
+
+def test_dispatch_keeps_other_results_when_one_detail_is_unrecordable() -> None:
+    registry = _registry()
+    registry.register_action(
+        CallableHookAction(name="custom.detail", handler=lambda event, config: {"bad": set()})
+    )
+    registry.subscribe(HookSubscription(event="train.failed", action="custom.detail"))
+    registry.subscribe(HookSubscription(event="train.failed", action="notify.log"))
+
+    report = registry.dispatch(_event())
+
+    assert len(report.results) == 2
+    assert report.failed == 0
+    assert [item.action for item in report.results] == ["custom.detail", "notify.log"]
+
+
+def test_cli_hooks_emit_rejects_an_illegal_event_name(tmp_path: Path) -> None:
+    _project(tmp_path, hooks={"subscriptions": [{"event": "train.*", "action": "notify.log"}]})
+    with pytest.raises(HookConfigurationError, match="lowercase dotted identifier"):
+        main(
+            [
+                "--project",
+                str(tmp_path),
+                "--format",
+                "json",
+                "hooks",
+                "emit",
+                "--event",
+                "Train Failed",
+            ]
+        )
+
+
+def test_cli_reports_a_null_failure_key_on_success(tmp_path: Path, capsys: object) -> None:
+    _project(tmp_path)
+    assert main(["--project", str(tmp_path), "--format", "json", "train"]) == 0
+    payload = json.loads(capsys.readouterr().out)  # type: ignore[attr-defined]
+    assert payload["data"]["failure"] is None

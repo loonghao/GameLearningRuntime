@@ -17,6 +17,7 @@ deliberately carries no business logic beyond delivering one message.
 
 from __future__ import annotations
 
+import email.message
 import json
 import logging
 import math
@@ -25,7 +26,7 @@ import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol
+from typing import IO, Any, Protocol
 from urllib.parse import urlparse
 
 from game_learning_runtime.hooks import (
@@ -37,6 +38,9 @@ from game_learning_runtime.hooks import (
     HookRegistry,
     render_message,
     validate_message_template,
+)
+from game_learning_runtime.hooks import (
+    hook_config_guard as _reject_unknown,
 )
 
 _LOGGER = logging.getLogger("game_learning_runtime.hooks")
@@ -56,20 +60,6 @@ _LOG_LEVELS: Mapping[str, int] = {
     "warning": logging.WARNING,
     "error": logging.ERROR,
 }
-
-
-def _mapping(value: object, *, path: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise HookConfigurationError(f"{path} must be an object")
-    if any(not isinstance(key, str) for key in value):
-        raise HookConfigurationError(f"{path} requires string keys")
-    return value
-
-
-def _reject_unknown(value: Mapping[str, Any], *, allowed: frozenset[str], path: str) -> None:
-    unexpected = sorted(set(value) - allowed)
-    if unexpected:
-        raise HookConfigurationError(f"{path} contains unexpected fields: {unexpected}")
 
 
 def _resolve_inside(base_dir: Path, relative: object, *, path: str) -> Path:
@@ -188,6 +178,32 @@ class WebhookTransport(Protocol):
     def __call__(self, *, url: str, body: Mapping[str, Any], timeout_seconds: float) -> int: ...
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so a configured endpoint cannot be bounced elsewhere.
+
+    The URL was validated when the subscription was loaded; a 3xx response
+    would silently deliver the run payload to whatever host the server names
+    next, including a private network address.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes] | None,
+        code: int,
+        msg: str,
+        headers: email.message.Message,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            "redirects are not followed",
+            headers,
+            fp,
+        )
+
+
 def urllib_webhook_transport(*, url: str, body: Mapping[str, Any], timeout_seconds: float) -> int:
     """POST one JSON body with the standard library and return the HTTP status."""
 
@@ -198,8 +214,9 @@ def urllib_webhook_transport(*, url: str, body: Mapping[str, Any], timeout_secon
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    opener = urllib.request.build_opener(NoRedirectHandler)
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        with opener.open(request, timeout=timeout_seconds) as response:
             return int(getattr(response, "status", 0) or 0)
     except urllib.error.HTTPError as error:
         return int(error.code)
@@ -310,6 +327,7 @@ __all__ = [
     "WEBHOOK_ACTION",
     "LogHookAction",
     "MessageOutboxAction",
+    "NoRedirectHandler",
     "RecordingWebhookTransport",
     "WebhookHookAction",
     "WebhookRecordedCall",

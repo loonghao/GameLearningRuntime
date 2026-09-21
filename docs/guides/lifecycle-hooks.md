@@ -160,9 +160,10 @@ glr hooks emit --event train.failed --status failed --exit-code 7 --reason "oom"
 
 `hooks list` is strict: an unknown action or a malformed configuration is an
 error, so a mistake surfaces when you edit the manifest instead of during a
-training run. `hooks emit` publishes a synthetic event through the same
-dispatcher and exits `1` when any action failed or timed out, which makes it
-usable as a configuration smoke test.
+training run. `hooks emit` is strict about the event itself — an illegal event,
+kind, or stage fails the verb instead of reporting a quiet no-op — and publishes
+a synthetic event through the same dispatcher, exiting `1` when any action failed
+or timed out, which makes it usable as a configuration smoke test.
 
 ## Failure isolation
 
@@ -170,6 +171,9 @@ A hook is observability, never a dependency:
 
 - An action that raises is reported as a `failed` result with
   `TypeName: message` in `error`; the exception never reaches the run.
+- An action's return value is untrusted: a detail that is not JSON serializable
+  is dropped with a recorded `detail_dropped` note while the result keeps its
+  real status, so one bad return value cannot discard the report.
 - An action that exceeds its budget is reported as `timeout`. The dispatcher
   stops waiting and the thread is left to finish as a daemon, so one slow
   notification cannot stall or crash a training run.
@@ -182,7 +186,9 @@ A hook is observability, never a dependency:
 ## Observability
 
 Every dispatch that produced at least one result is appended to the run as a
-`hook.dispatched` event:
+`hook.dispatched` event. A run stays non-terminal until its lifecycle events have
+been published — including the failure that ends it — because the store refuses to
+append to a finished run, and the failure record is the one an agent needs most:
 
 ```json
 {

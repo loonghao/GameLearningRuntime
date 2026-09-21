@@ -126,6 +126,12 @@ def _reject_unknown(value: Mapping[str, Any], *, allowed: frozenset[str], path: 
         raise HookConfigurationError(f"{path} contains unexpected fields: {unexpected}")
 
 
+#: Shared unknown-field guard for hook configuration blocks. Built-in and
+#: third-party actions reuse it so every action rejects incidental keys the
+#: same way instead of duplicating the check.
+hook_config_guard = _reject_unknown
+
+
 def _event_selector(value: object, *, path: str) -> str:
     if not isinstance(value, str) or _EVENT_SELECTOR.fullmatch(value) is None:
         raise HookConfigurationError(
@@ -185,6 +191,27 @@ def _frozen_payload(value: object, *, path: str) -> Mapping[str, Any]:
     except (TypeError, ValueError) as error:
         raise HookConfigurationError(f"{path} must be JSON serializable") from error
     return MappingProxyType(mapping)
+
+
+def _recordable_detail(value: object) -> Mapping[str, Any]:
+    """Coerce one action result detail into a recordable mapping.
+
+    An action is third-party code, so its return value is not trusted to be
+    JSON serializable. Losing the detail must never lose the result: the
+    delivery already happened, and this module promises that dispatch returns
+    a report instead of raising.
+    """
+
+    if value is None:
+        return MappingProxyType({})
+    try:
+        return _frozen_payload(value, path="hook result detail")
+    except (HookConfigurationError, TypeError, ValueError):
+        _LOGGER.warning(
+            "hook action detail was dropped because it is not recordable: %r",
+            type(value).__name__,
+        )
+        return MappingProxyType({"detail_dropped": "detail was not JSON serializable"})
 
 
 def validate_message_template(value: object, *, path: str) -> str:
@@ -827,7 +854,7 @@ class HookRegistry:
             status=status,
             duration_ms=duration_ms,
             error=failure,
-            detail=detail if isinstance(detail, Mapping) else {},
+            detail=_recordable_detail(detail),
         )
 
 
