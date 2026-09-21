@@ -39,6 +39,7 @@ from game_learning_runtime.environment import GameEnvironment
 from game_learning_runtime.run_store import RunStatus, TrainingStore
 from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKind, TensorSpec
 from game_learning_runtime.telemetry import Telemetry
+from game_learning_runtime.termination import EpisodeCaps
 
 EXPECTED = ("inherited_rows", "episode_reward", "steps_per_second")
 
@@ -78,6 +79,10 @@ class _DeclaringCounter(GameEnvironment):
             ),
             capabilities=capabilities,
             metrics=declaration,
+            # The episode boundary is reachable in exactly ``target`` steps, so
+            # declaring the step budget lets the runtime attribute the close
+            # instead of this fixture having to report a reason of its own.
+            episode_caps=EpisodeCaps(max_steps=target),
         )
 
     @property
