@@ -7,7 +7,7 @@ import json
 import math
 import re
 import sqlite3
-from collections.abc import Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -56,6 +56,8 @@ def _episode_identifier(episode_id: UUID) -> str:
     """
 
     return f"episode-{episode_id}"
+
+
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _MAX_JSON_BYTES = 1024 * 1024
 _MAX_RUN_STATE_BYTES = 64 * 1024
@@ -188,6 +190,20 @@ class RunEvent:
     episode_id: str | None
     step_id: int | None
     payload: Mapping[str, Any]
+
+
+def _event_from_row(row: sqlite3.Row) -> RunEvent:
+    """Project one stored event row into its immutable public shape."""
+
+    return RunEvent(
+        run_id=row["run_id"],
+        sequence_id=row["sequence_id"],
+        timestamp_ns=row["timestamp_ns"],
+        kind=row["kind"],
+        episode_id=row["episode_id"],
+        step_id=row["step_id"],
+        payload=MappingProxyType(json.loads(row["payload_json"])),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1279,27 +1295,30 @@ class TrainingStore:
         )
 
     def list_events(self, run_id: str, *, limit: int = 1000) -> tuple[RunEvent, ...]:
+        return self._select_events(run_id, limit=limit)
+
+    def _select_events(
+        self, run_id: str, *, kind: str | None = None, limit: int = 1000
+    ) -> tuple[RunEvent, ...]:
+        """Return run events in sequence order, optionally of one kind only.
+
+        ``limit`` bounds the rows returned after the kind filter, so a query
+        for one kind can never be crowded out by events of another kind.
+        """
+
         _limit(limit)
+        where = "WHERE run_id = ?"
+        parameters: list[object] = [run_id]
+        if kind is not None:
+            where += " AND kind = ?"
+            parameters.append(kind)
+        parameters.append(limit)
         with self._connect() as connection:
             rows = connection.execute(
-                """
-                SELECT * FROM events WHERE run_id = ?
-                ORDER BY sequence_id ASC LIMIT ?
-                """,
-                (run_id, limit),
+                f"SELECT * FROM events {where} ORDER BY sequence_id ASC LIMIT ?",
+                parameters,
             ).fetchall()
-        return tuple(
-            RunEvent(
-                run_id=row["run_id"],
-                sequence_id=row["sequence_id"],
-                timestamp_ns=row["timestamp_ns"],
-                kind=row["kind"],
-                episode_id=row["episode_id"],
-                step_id=row["step_id"],
-                payload=MappingProxyType(json.loads(row["payload_json"])),
-            )
-            for row in rows
-        )
+        return tuple(_event_from_row(row) for row in rows)
 
     def record_declared_metric_audit(
         self,
@@ -1393,13 +1412,38 @@ class TrainingStore:
     def list_episode_terminations(
         self, run_id: str, *, limit: int = 1000
     ) -> tuple[EpisodeTermination, ...]:
-        """Return every persisted episode termination in sequence order."""
+        """Return persisted episode terminations in sequence order.
+
+        ``limit`` bounds terminations, not the events around them, so a long
+        run is never reported as having ended zero episodes.
+        """
 
         return tuple(
             EpisodeTermination.from_mapping(event.payload)
-            for event in self.list_events(run_id, limit=limit)
-            if event.kind == EPISODE_TERMINATION_EVENT
+            for event in self._select_events(run_id, kind=EPISODE_TERMINATION_EVENT, limit=limit)
         )
+
+    def termination_sink(self, run_id: str) -> Callable[[EpisodeTermination], None]:
+        """Return the callback that persists a collector's terminal states.
+
+        Wire it into :class:`~game_learning_runtime.collector.SyncCollector`
+        so every episode it ends is written to this run as an
+        ``episode.termination`` event instead of staying in memory:
+
+        ```python
+        collector = SyncCollector(env, on_termination=store.termination_sink(run.run_id))
+        ```
+
+        The run must still be open while the collector runs; appending to a
+        finished run is a contract violation, by design.
+        """
+
+        _identifier(run_id, path="run_id")
+
+        def sink(termination: EpisodeTermination) -> None:
+            self.record_episode_termination(run_id, termination)
+
+        return sink
 
     def record_metric(
         self,

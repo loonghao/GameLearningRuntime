@@ -614,3 +614,141 @@ def test_an_adapter_that_never_reports_indeterminate_is_unchanged() -> None:
     assert termination.latched_at_ns is None
     assert termination.indeterminate is False
     assert collector.terminations == (termination,)
+
+
+class _RaisingStepEnvironment(GameEnvironment):
+    """Fail a step so the collector has to abandon the episode."""
+
+    def __init__(self, *, fail_at: int = 1) -> None:
+        self._fail_at = fail_at
+        self._episode_id = uuid4()
+        self._step_id = 0
+
+    @property
+    def spec(self) -> EnvironmentSpec:
+        return _spec(EpisodeCaps(max_steps=8))
+
+    def reset(
+        self, *, seed: int | None = None, options: Mapping[str, Any] | None = None
+    ) -> TimeStep:
+        del seed, options
+        self._episode_id = uuid4()
+        self._step_id = 0
+        return self._timestep()
+
+    def step(self, action: TensorTree) -> TimeStep:
+        del action
+        self._step_id += 1
+        if self._step_id >= self._fail_at:
+            raise RuntimeError("transient bridge failure")
+        return self._timestep()
+
+    def close(self) -> None:
+        return None
+
+    def _timestep(self) -> TimeStep:
+        return TimeStep(
+            observation={"position": np.array([self._step_id], dtype=np.int64)},
+            reward=np.array([0.0], dtype=np.float32),
+            terminated=np.array([False], dtype=np.bool_),
+            truncated=np.array([False], dtype=np.bool_),
+            episode_id=self._episode_id,
+            step_id=self._step_id,
+            timestamp_ns=self._step_id * 1_000_000,
+        )
+
+
+# --- the collector publishes every terminal state it produces ----------------
+
+
+def test_a_collector_lands_an_indeterminate_termination_in_the_run_store(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """End-to-end: one real ``collect()`` is readable back from the store.
+
+    Coverage that calls ``record_episode_termination`` by hand proves the
+    store API but not the wiring between collector and store, which is what
+    let a permanently empty ``glr runs show`` pass. This test only ever calls
+    ``collect()``; the store is read cold afterwards.
+    """
+
+    store = TrainingStore(tmp_path / "runs.sqlite3")
+    run = store.create_run(
+        environment_id="termination.contract-v1", protocol_version="1.0", kind="training"
+    )
+    environment = ScriptedTerminationEnvironment(
+        episode_length=8,
+        outcome=ActionOutcome.INDETERMINATE,
+        outcome_at_step=2,
+        caps=EpisodeCaps(max_steps=8),
+    )
+    collector = SyncCollector(environment, on_termination=store.termination_sink(run.run_id))
+    collector.collect(_always_increment, steps=8)
+
+    persisted = store.list_episode_terminations(run.run_id)
+    assert [item.reason for item in persisted] == [TerminationReason.ENV_INDETERMINATE]
+    live = collector.last_termination()
+    assert live is not None
+    assert persisted[0] == live
+    assert persisted[0].episode_id == live.episode_id
+    assert persisted[0].step_id == 2
+    assert persisted[0].latched_at_ns == 2_000_000
+    assert persisted[0].indeterminate is True
+
+
+def test_a_plain_run_lands_one_terminal_state_per_episode_in_the_store(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    store = TrainingStore(tmp_path / "runs.sqlite3")
+    run = store.create_run(
+        environment_id="termination.contract-v1", protocol_version="1.0", kind="training"
+    )
+    environment = ScriptedTerminationEnvironment(
+        episode_length=2, info={TERMINATION_REASON_KEY: "goal_reached"}
+    )
+    collector = SyncCollector(environment, on_termination=store.termination_sink(run.run_id))
+    collector.collect(_always_increment, steps=6)
+
+    persisted = store.list_episode_terminations(run.run_id)
+    assert len(persisted) == 3
+    assert {item.reason for item in persisted} == {TerminationReason.GOAL_REACHED}
+    assert len({item.episode_id for item in persisted}) == 3
+    assert persisted == collector.terminations
+
+
+def test_a_failed_step_closes_the_episode_in_the_default_mode() -> None:
+    """``on_error="raise"`` is the default, so it is the mode that matters.
+
+    Raising out of the collector used to skip the close, leaving an episode
+    that neither recorded a reason nor raised a violation.
+    """
+
+    collector = SyncCollector(_RaisingStepEnvironment(fail_at=1))
+    with pytest.raises(RuntimeError, match="transient bridge failure"):
+        collector.collect(_always_increment, steps=2)
+
+    termination = collector.last_termination()
+    assert termination is not None
+    assert termination.reason is TerminationReason.FAILED
+    assert termination.attributed_by == "caller"
+    assert "RuntimeError" in (termination.detail or "")
+
+
+def test_a_termination_limit_bounds_terminations_not_the_events_around_them(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    store = TrainingStore(tmp_path / "runs.sqlite3")
+    run = store.create_run(
+        environment_id="termination.contract-v1", protocol_version="1.0", kind="training"
+    )
+    for index in range(10):
+        store.append_event(run.run_id, kind="metric.sample", payload={"index": index})
+        store.record_episode_termination(
+            run.run_id,
+            EpisodeTermination(
+                episode_id=UUID(int=index + 1),
+                reason=TerminationReason.STEP_BUDGET,
+                step_id=index,
+                timestamp_ns=index,
+            ),
+        )
+    assert len(store.list_events(run.run_id)) == 20
+    assert len(store.list_episode_terminations(run.run_id)) == 10
+    # A limit of 5 used to be spent on the unrelated metric events, so a long
+    # run was reported as having ended zero episodes.
+    limited = store.list_episode_terminations(run.run_id, limit=5)
+    assert [item.step_id for item in limited] == [0, 1, 2, 3, 4]
