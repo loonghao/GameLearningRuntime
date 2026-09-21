@@ -518,9 +518,7 @@ class EpisodeTerminationGuard:
         self._steps += 1
         self._last_step_id = step_id
         if observation_sequence is not None:
-            self._last_known_sequence = _sequence(
-                observation_sequence, path="observation_sequence"
-            )
+            self._last_known_sequence = _sequence(observation_sequence, path="observation_sequence")
 
     def observe_outcome(
         self,
