@@ -223,6 +223,15 @@ pub fn execute(cli: Cli) -> Result<i32> {
     } else {
         None
     };
+    // Recorded with the run receipt: an explicit `--goal` can still inherit the
+    // bound context, so the goal source alone does not describe the context.
+    let context_source = if cli.context.is_some() {
+        crate::goal_binding::ContextSource::Explicit
+    } else if inherited_context.is_some() {
+        crate::goal_binding::ContextSource::Default
+    } else {
+        crate::goal_binding::ContextSource::None
+    };
     project.run_context = cli
         .context
         .as_ref()
@@ -323,7 +332,15 @@ pub fn execute(cli: Cli) -> Result<i32> {
             } => {
                 let _observer = crate::observe::start_default(&project, !no_observe);
                 let (goal_path, source) = crate::goal_binding::resolve(&project, goal.as_deref())?;
-                run_goal(&project, &store, &goal_path, source, cli.json, !no_capture)
+                run_goal(
+                    &project,
+                    &store,
+                    &goal_path,
+                    source,
+                    context_source,
+                    cli.json,
+                    !no_capture,
+                )
             }
         },
         CliCommand::Play { bundle } => {
@@ -1106,6 +1123,7 @@ fn run_goal(
     store: &Store,
     goal_path: &Path,
     source: crate::goal_binding::GoalSource,
+    context_source: crate::goal_binding::ContextSource,
     as_json: bool,
     capture_enabled: bool,
 ) -> Result<i32> {
@@ -1151,7 +1169,13 @@ fn run_goal(
             "objective": goal.objective,
             "lifecycle": lifecycle,
             "run_context": crate::run_context::metadata(project)?,
-            "goal_binding": crate::goal_binding::run_metadata(binding.as_ref(), source),
+            "goal_binding": crate::goal_binding::run_metadata(
+                project,
+                binding.as_ref(),
+                source,
+                project.run_context.as_ref(),
+                context_source,
+            ),
         }),
     )?;
     let run_dir = project.data_dir.join("runs").join(&run.run_id);

@@ -207,7 +207,11 @@ reports `source_status` (`unchanged` / `changed` / `missing`) and
 `context_status` (`unbound` / `bound` / `unresolved`). An explicit `--goal` or
 `--context` always wins over the saved default, so existing scripts keep their
 behaviour. `doctor` reports the active goal under `goal_binding`, and every
-run receipt records `goal_binding.source` as `default` or `explicit`.
+run receipt records `goal_binding.source` (`default` or `explicit`),
+`goal_binding.context_source` (`explicit` / `default` / `none`), and the
+`source_status` of a default goal. Bind with `goal set` plus the global
+`--context` flag; the stored paths are re-checked when the store is loaded, so
+a hand-edited path outside the project is refused instead of opened.
 
 ### DSH-like plugin bundles
 

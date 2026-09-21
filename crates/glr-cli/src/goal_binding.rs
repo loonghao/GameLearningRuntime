@@ -76,6 +76,31 @@ impl GoalSource {
     }
 }
 
+/// Where the run context of one invocation came from.
+///
+/// `source` alone cannot express this: an explicit `--goal` may still inherit
+/// the context bound to the active default goal, so the receipt records the
+/// context origin next to the goal origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextSource {
+    /// `--context` was passed on the command line.
+    Explicit,
+    /// No `--context` was passed, so the context bound to the active goal was used.
+    Default,
+    /// No run context applies to this invocation.
+    None,
+}
+
+impl ContextSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::Default => "default",
+            Self::None => "none",
+        }
+    }
+}
+
 pub fn path(project: &Project) -> PathBuf {
     project.data_dir.join(GOAL_BINDING_FILE_NAME)
 }
@@ -97,6 +122,10 @@ pub fn load(project: &Project) -> Result<GoalBindingFile> {
                 "goal binding key {key:?} does not match goal_id {:?}",
                 binding.goal_id
             )));
+        }
+        stored_project_path("goal binding goal_path", &binding.goal_path)?;
+        if let Some(context_path) = &binding.context_path {
+            stored_project_path("goal binding context_path", context_path)?;
         }
     }
     if let Some(active) = &file.active_goal_id
@@ -188,13 +217,12 @@ pub fn resolve(project: &Project, requested: Option<&Path>) -> Result<(PathBuf, 
                 .into(),
         )
     })?;
-    let resolved = join_relative(&project.root, &binding.goal_path);
-    if !resolved.is_file() {
-        return Err(Error::Invalid(format!(
+    let resolved = stored_goal_path(project, &binding.goal_path).map_err(|_| {
+        Error::Invalid(format!(
             "default goal {:?} points at {:?}, which no longer exists; run `glr goal set --goal <path>` to rebind",
             binding.goal_id, binding.goal_path
-        )));
-    }
+        ))
+    })?;
     Ok((resolved, GoalSource::Default))
 }
 
@@ -230,6 +258,45 @@ fn absolute(requested: &Path) -> Result<PathBuf> {
     } else {
         Ok(std::env::current_dir()?.join(requested))
     }
+}
+
+/// Reject a stored path that a hand-edited store turned into an escape.
+///
+/// `bind` only stores `strip_prefix` results, so a store written by the CLI
+/// holds bare project-relative POSIX paths. A hand-edited `goal-binding.json`
+/// can still name `..`, a root, or a Windows prefix, and the plain join used to
+/// read stored paths pops parent directories. Checking the stored value when
+/// the store is loaded keeps such an entry out of every command instead of
+/// only out of `goal run`.
+fn stored_project_path(field: &str, stored: &str) -> Result<()> {
+    let path = Path::new(stored);
+    let escapes = stored.is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::CurDir
+                    | Component::ParentDir
+                    | Component::Prefix(_)
+                    | Component::RootDir
+            )
+        });
+    if escapes {
+        return Err(Error::Invalid(format!(
+            "{field} must be a project-relative path, found {stored:?}; correct or remove {GOAL_BINDING_FILE_NAME}"
+        )));
+    }
+    Ok(())
+}
+
+/// Resolve a stored goal path through the guard `bind` used when saving it.
+///
+/// Stored paths are re-checked with `regular_project_file` rather than joined,
+/// so a goal that became a directory, a link, or an out-of-project file after
+/// binding is refused instead of opened.
+fn stored_goal_path(project: &Project, stored: &str) -> Result<PathBuf> {
+    let (path, _) = regular_project_file(&project.root, Path::new(stored), "goal")?;
+    Ok(path)
 }
 
 /// Rewrite a caller-supplied path as a project-relative one, rejecting escapes.
@@ -269,10 +336,17 @@ fn project_relative(project: &Project, requested: &Path) -> Result<PathBuf> {
     Ok(relative.to_path_buf())
 }
 
+/// Compare the digest captured at bind time with the file the store names.
+///
+/// A stored path that no longer names a regular project file — deleted, or
+/// replaced by a directory or a link after binding — is reported as `missing`.
 fn source_status(project: &Project, binding: &GoalBinding) -> &'static str {
-    match sha256_file(&join_relative(&project.root, &binding.goal_path)) {
-        Ok(digest) if digest == binding.goal_sha256 => "unchanged",
-        Ok(_) => "changed",
+    match stored_goal_path(project, &binding.goal_path) {
+        Ok(path) => match sha256_file(&path) {
+            Ok(digest) if digest == binding.goal_sha256 => "unchanged",
+            Ok(_) => "changed",
+            Err(_) => "missing",
+        },
         Err(_) => "missing",
     }
 }
@@ -390,23 +464,45 @@ pub fn doctor_metadata(project: &Project) -> Value {
 }
 
 /// Receipt metadata recorded with every `goal run`.
-pub fn run_metadata(binding: Option<&GoalBinding>, source: GoalSource) -> Value {
+///
+/// `context_source` closes the gap an explicit `--goal` leaves open: such a run
+/// can still inherit the context bound to the active default goal, which
+/// `source` alone cannot express. `source_status` carries the `goal show` drift
+/// check into the run receipt, so a run records whether its goal still matched
+/// the digest captured when it was bound.
+///
+/// Both fields are additive: an older receipt keeps its `source`, `goal_id`,
+/// `goal_path`, and `context_path` keys.
+pub fn run_metadata(
+    project: &Project,
+    binding: Option<&GoalBinding>,
+    source: GoalSource,
+    context: Option<&RunContext>,
+    context_source: ContextSource,
+) -> Value {
+    let context_path = context
+        .map(RunContext::source_path)
+        .map(str::to_owned)
+        .or_else(|| binding.and_then(|binding| binding.context_path.clone()));
     json!({
         "source": source.as_str(),
         "goal_id": binding.map(|binding| binding.goal_id.clone()),
         "goal_path": binding.map(|binding| binding.goal_path.clone()),
-        "context_path": binding.and_then(|binding| binding.context_path.clone()),
+        "context_path": context_path,
+        "context_source": context_source.as_str(),
+        "source_status": binding.map(|binding| source_status(project, binding)),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        GOAL_BINDING_SCHEMA_VERSION, GoalSource, active, bind, doctor_metadata, load, resolve,
-        select,
+        ContextSource, GOAL_BINDING_SCHEMA_VERSION, GoalSource, active, bind, doctor_metadata,
+        load, resolve, run_metadata, select,
     };
     use crate::project::Project;
-    use serde_json::json;
+    use crate::run_context::RunContext;
+    use serde_json::{Value, json};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -547,5 +643,221 @@ mod tests {
         let metadata = doctor_metadata(&project);
         assert_eq!(metadata["active_goal_id"], "goal.default");
         assert_eq!(metadata["goal_count"], 1);
+    }
+
+    /// A `glr.run-context.v1` file and the input it names, both inside the project.
+    fn context(root: &Path, name: &str, context_id: &str) -> PathBuf {
+        fs::create_dir_all(root.join("config/contexts")).unwrap();
+        fs::write(
+            root.join("config/training.json"),
+            br#"{"schema_version":"glr.training.v1","algorithm":"ppo"}"#,
+        )
+        .unwrap();
+        let path = root.join(format!("config/contexts/{name}.toml"));
+        fs::write(
+            &path,
+            format!(
+                r#"schema_version = "glr.run-context.v1"
+context_id = "{context_id}"
+environment_id = "example.context-v1"
+protocol_version = "1.0"
+
+[labels]
+season = "{name}"
+
+[[inputs]]
+owner = "training"
+path = "config/training.json"
+schema_version = "glr.training.v1"
+"#
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    /// Write `goal-binding.json` by hand, the way an editor or a restore would.
+    fn write_store(root: &Path, goal_id: &str, goal_path: &str, context_path: Option<&str>) {
+        fs::create_dir_all(root.join(".glr")).unwrap();
+        fs::write(
+            root.join(".glr/goal-binding.json"),
+            serde_json::to_vec_pretty(&json!({
+                "schema_version": GOAL_BINDING_SCHEMA_VERSION,
+                "active_goal_id": goal_id,
+                "goals": {
+                    goal_id: {
+                        "goal_id": goal_id,
+                        "objective": "reach the destination",
+                        "environment_family": "test",
+                        "goal_path": goal_path,
+                        "goal_sha256": "0".repeat(64),
+                        "context_path": context_path,
+                    }
+                },
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_hand_edited_goal_path_outside_the_project_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let project = project(root.path());
+        write_store(root.path(), "goal.escaped", "../outside.json", None);
+        let error = load(&project).unwrap_err().to_string();
+        assert!(error.contains("project-relative"), "{error}");
+        assert!(error.contains("../outside.json"), "{error}");
+        // Every command reads the store through `load`, so the entry cannot be
+        // resolved either, and `doctor` reports the gap instead of failing.
+        assert!(resolve(&project, None).is_err());
+        assert!(active(&project).is_err());
+        let metadata = doctor_metadata(&project);
+        assert!(
+            metadata["error"]
+                .as_str()
+                .unwrap()
+                .contains("project-relative"),
+            "{metadata}"
+        );
+    }
+
+    #[test]
+    fn a_hand_edited_context_path_outside_the_project_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let project = project(root.path());
+        let goal = goal(root.path(), "goal.default");
+        bind(&project, &goal, None).unwrap();
+        write_store(
+            root.path(),
+            "goal.default",
+            "goals/goal.default.json",
+            Some("../../outside.toml"),
+        );
+        let error = load(&project).unwrap_err().to_string();
+        assert!(error.contains("project-relative"), "{error}");
+        assert!(error.contains("../../outside.toml"), "{error}");
+        assert!(crate::goal_binding::active_context(&project).is_err());
+    }
+
+    #[test]
+    fn a_store_edited_inside_the_project_still_resolves() {
+        let root = tempfile::tempdir().unwrap();
+        let project = project(root.path());
+        goal(root.path(), "goal.default");
+        write_store(root.path(), "goal.default", "goals/goal.default.json", None);
+        let (resolved, source) = resolve(&project, None).unwrap();
+        assert_eq!(
+            fs::canonicalize(&resolved).unwrap(),
+            fs::canonicalize(root.path().join("goals/goal.default.json")).unwrap()
+        );
+        assert_eq!(source, GoalSource::Default);
+    }
+
+    #[test]
+    fn an_explicit_goal_receipt_records_the_inherited_context() {
+        let root = tempfile::tempdir().unwrap();
+        let project = project(root.path());
+        let goal = goal(root.path(), "goal.default");
+        context(root.path(), "native", "example.native-1");
+        let binding = bind(
+            &project,
+            &goal,
+            Some(Path::new("config/contexts/native.toml")),
+        )
+        .expect("bind the goal with its context");
+        assert_eq!(
+            binding.context_path.as_deref(),
+            Some("config/contexts/native.toml")
+        );
+        let loaded =
+            RunContext::load(&project, Path::new("config/contexts/native.toml")).expect("context");
+        // An explicit `--goal` with no `--context` still inherits the bound
+        // context, which the receipt must show.
+        let receipt = run_metadata(
+            &project,
+            None,
+            GoalSource::Explicit,
+            Some(&loaded),
+            ContextSource::Default,
+        );
+        assert_eq!(receipt["source"], "explicit");
+        assert_eq!(receipt["goal_id"], Value::Null);
+        assert_eq!(receipt["context_path"], "config/contexts/native.toml");
+        assert_eq!(receipt["context_source"], "default");
+        assert_eq!(receipt["source_status"], Value::Null);
+
+        let receipt = run_metadata(
+            &project,
+            None,
+            GoalSource::Explicit,
+            Some(&loaded),
+            ContextSource::Explicit,
+        );
+        assert_eq!(receipt["context_source"], "explicit");
+
+        let receipt = run_metadata(
+            &project,
+            None,
+            GoalSource::Explicit,
+            None,
+            ContextSource::None,
+        );
+        assert_eq!(receipt["context_path"], Value::Null);
+        assert_eq!(receipt["context_source"], "none");
+    }
+
+    #[test]
+    fn the_receipt_records_whether_the_bound_goal_drifted() {
+        let root = tempfile::tempdir().unwrap();
+        let project = project(root.path());
+        let goal = goal(root.path(), "goal.default");
+        let binding = bind(&project, &goal, None).unwrap();
+        let receipt = run_metadata(
+            &project,
+            Some(&binding),
+            GoalSource::Default,
+            None,
+            ContextSource::None,
+        );
+        assert_eq!(receipt["source"], "default");
+        assert_eq!(receipt["source_status"], "unchanged");
+        assert_eq!(receipt["context_source"], "none");
+
+        // Same goal id, different content: the stored digest no longer matches.
+        let path = root.path().join("goals/goal.default.json");
+        let mut goal: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        goal["objective"] = json!("reach the other destination");
+        fs::write(&path, serde_json::to_vec_pretty(&goal).unwrap()).unwrap();
+        let receipt = run_metadata(
+            &project,
+            Some(&binding),
+            GoalSource::Default,
+            None,
+            ContextSource::None,
+        );
+        assert_eq!(receipt["source_status"], "changed");
+
+        fs::remove_file(&path).unwrap();
+        let receipt = run_metadata(
+            &project,
+            Some(&binding),
+            GoalSource::Default,
+            None,
+            ContextSource::None,
+        );
+        assert_eq!(receipt["source_status"], "missing");
+    }
+
+    #[test]
+    fn a_default_goal_that_is_no_longer_a_regular_file_asks_for_a_rebind() {
+        let root = tempfile::tempdir().unwrap();
+        let project = project(root.path());
+        let goal = goal(root.path(), "goal.default");
+        bind(&project, &goal, None).unwrap();
+        fs::remove_file(root.path().join("goals/goal.default.json")).unwrap();
+        fs::create_dir_all(root.path().join("goals/goal.default.json")).unwrap();
+        let error = resolve(&project, None).unwrap_err().to_string();
+        assert!(error.contains("no longer exists"), "{error}");
     }
 }

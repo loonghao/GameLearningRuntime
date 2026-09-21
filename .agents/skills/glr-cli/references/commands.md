@@ -349,8 +349,8 @@ to `GLR_STORE_PATH` during the current trial, including value, source, and autho
 `goal set` validates a `glr.agent-goal.v1` file, requires its `environment_family` to match the
 project, and saves it as the active default goal in `<data_dir>/goal-binding.json`
 (`glr.goal-binding.v1`) together with a project-relative path and a SHA-256 of the goal file.
-`goal set --context` additionally binds the `glr.run-context.v1` file that makes the goal
-executable.
+`goal set` with the global `--context` flag additionally binds the `glr.run-context.v1` file that
+makes the goal executable.
 
 Once a goal is bound, `goal run` reads the default when `--goal` is omitted, and `train` inherits
 the bound context when `--context` is omitted. An explicit `--goal` or `--context` always wins, so
@@ -360,8 +360,14 @@ Use `goal list` to enumerate saved goals, `goal show [goal-id]` to inspect one (
 `unchanged` / `changed` / `missing`, `context_status` is `unbound` / `bound` / `unresolved`), and
 `goal use <goal-id>` to move the active pointer. A binding only selects a goal and a context: the
 goal stays structured metadata, is copied into the run directory as an auditable receipt, and never
-shapes rewards or judges completion. Run receipts record `goal_binding.source` as `default` or
-`explicit`.
+shapes rewards or judges completion.
+
+Run receipts record `goal_binding.source` as `default` or `explicit`, plus
+`goal_binding.context_source` (`explicit` / `default` / `none`) and, for a default goal,
+`goal_binding.source_status`. An explicit `--goal` can still inherit the context bound to the
+active goal, so `context_source` names where the context came from. Stored paths are re-checked
+when the store is loaded: a hand-edited `goal_path` or `context_path` that is absolute, escapes
+the project, or names a link is refused instead of opened.
 
 ## Reuse and reproduction gates
 

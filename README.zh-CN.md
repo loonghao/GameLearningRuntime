@@ -179,7 +179,10 @@ glr --project . --json goal run
 （`unchanged` / `changed` / `missing`）与 `context_status`
 （`unbound` / `bound` / `unresolved`）。显式传入的 `--goal` 或 `--context` 始终优先于
 已保存的默认值，旧脚本行为不变。`doctor` 在 `goal_binding` 下报告当前激活目标，每次
-运行回执都会记录 `goal_binding.source` 为 `default` 或 `explicit`。
+运行回执都会记录 `goal_binding.source`（`default` 或 `explicit`）、
+`goal_binding.context_source`（`explicit` / `default` / `none`），以及默认目标的
+`source_status`。绑定使用 `goal set` 配合全局 `--context`；读取绑定存储时会复验已保存
+路径，手工改成项目外的路径会被拒绝而不是直接打开。
 
 ### 类 DSH 的插件 Bundle
 
