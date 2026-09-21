@@ -57,6 +57,28 @@ Call `reset()` only when a new logical episode starts. An outcome signal before
 terminal, a terminal transition without the required outcome, or another step
 after terminal fails closed.
 
+### Classify every reward term or fail closed
+
+Every term in `training.json` must be classified by `reward-safety.json`: the
+terminal `outcome_signal`, a member of `shaping_signals`, or an explicit opt-in
+member of `unbudgeted_signals`. A declared term that is none of the three makes
+`EpisodeRewardGuard` raise at construction time instead of silently escaping the
+episode budget:
+
+```python
+EpisodeRewardGuard(training, safety)
+# ContractViolation: reward terms are neither the outcome signal nor a declared
+# shaping signal: ['item_score']; add them to shaping_signals, or to
+# unbudgeted_signals if they must stay outside the budget
+```
+
+`unbudgeted_signals` defaults to `()`. It exists for terms that must stay
+outside the episode budget, such as an externally audited score feed; choosing
+it is a decision, not a fallback, so the name has to be spelled out, it must
+match a declared reward term, and it cannot overlap `shaping_signals` or the
+`outcome_signal`. Unbudgeted terms still count towards the step and episode
+return; only the positive-shaping budget ignores them.
+
 ## Stop BC policy self-imitation
 
 Every trajectory admitted to BC needs immutable origin and authoritative

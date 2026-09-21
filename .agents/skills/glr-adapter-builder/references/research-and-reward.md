@@ -60,6 +60,8 @@ through `EpisodeRewardGuard`:
 
 - declare exactly one authoritative, terminal-only outcome signal;
 - cap positive shaping per step and cumulatively per episode;
+- classify every declared term as the outcome signal, a `shaping_signals` member,
+  or an explicit `unbudgeted_signals` opt-in, so none escapes the budget silently;
 - require the outcome signal on every terminal transition;
 - set a failure episode ceiling so a loss cannot retain a positive return; and
 - log accepted and suppressed shaping plus any terminal correction.

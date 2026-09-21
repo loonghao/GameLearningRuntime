@@ -22,7 +22,37 @@ from game_learning_runtime import (
 from game_learning_runtime.errors import ContractViolation
 
 
-def _training_config() -> TrainingConfig:
+def _training_config(*, include_item_score: bool = False) -> TrainingConfig:
+    terms: list[dict[str, object]] = [
+        {
+            "name": "progress",
+            "source": "runtime",
+            "weight": 1,
+            "minimum": -10,
+            "maximum": 10,
+            "required": True,
+        },
+        {
+            "name": "outcome",
+            "source": "runtime",
+            "weight": 10,
+            "minimum": -1,
+            "maximum": 1,
+            "required": False,
+        },
+    ]
+    if include_item_score:
+        terms.insert(
+            1,
+            {
+                "name": "item_score",
+                "source": "runtime",
+                "weight": 1,
+                "minimum": 0,
+                "maximum": 5,
+                "required": False,
+            },
+        )
     return TrainingConfig.from_mapping(
         {
             "schema_version": "glr.training.v1",
@@ -35,29 +65,29 @@ def _training_config() -> TrainingConfig:
                     "required": True,
                 }
             ],
-            "reward": {
-                "minimum": -20,
-                "maximum": 20,
-                "terms": [
-                    {
-                        "name": "progress",
-                        "source": "runtime",
-                        "weight": 1,
-                        "minimum": -10,
-                        "maximum": 10,
-                        "required": True,
-                    },
-                    {
-                        "name": "outcome",
-                        "source": "runtime",
-                        "weight": 10,
-                        "minimum": -1,
-                        "maximum": 1,
-                        "required": False,
-                    },
-                ],
-            },
+            "reward": {"minimum": -20, "maximum": 20, "terms": terms},
         }
+    )
+
+
+def _budgeted_safety_mapping(
+    *, shaping_signals: list[str], unbudgeted_signals: list[str] | None = None
+) -> dict[str, object]:
+    mapping = _reward_safety_mapping()
+    mapping["shaping_signals"] = shaping_signals
+    mapping["max_positive_shaping_per_step"] = 10
+    mapping["max_positive_shaping_per_episode"] = 25
+    if unbudgeted_signals is not None:
+        mapping["unbudgeted_signals"] = unbudgeted_signals
+    return mapping
+
+
+def _item_score_episode(steps: int = 6) -> tuple[list[RewardSignal], ...]:
+    """Six identical steps: 5.0 of progress plus 5.0 of item score."""
+
+    return tuple(
+        [RewardSignal("progress", "runtime", 5), RewardSignal("item_score", "runtime", 5)]
+        for _ in range(steps)
     )
 
 
@@ -159,6 +189,11 @@ def test_reward_guard_requires_terminal_only_authoritative_outcome() -> None:
         ("outcome_signal", "local/path", "must match"),
         ("max_positive_shaping_per_step", -1, "non-negative"),
         ("max_positive_shaping_per_episode", 0.5, "cannot exceed"),
+        ("unbudgeted_signals", ["item-score", "item-score"], "duplicates"),
+        ("unbudgeted_signals", ["progress"], "cannot also be shaping signals"),
+        ("unbudgeted_signals", ["outcome"], "cannot also be an unbudgeted signal"),
+        ("unbudgeted_signals", ["local/path"], "must match"),
+        ("unbudgeted_signals", "item-score", "must be an array"),
     ],
 )
 def test_reward_safety_config_rejects_ambiguous_or_unsafe_values(
@@ -183,6 +218,65 @@ def test_reward_guard_rejects_unknown_or_non_positive_outcome_contract() -> None
     object.__setattr__(training.reward.terms[1], "weight", -1)
     with pytest.raises(ContractViolation, match="positive weight"):
         EpisodeRewardGuard(training, safety)
+
+
+def test_reward_guard_budgets_every_declared_shaping_term() -> None:
+    guard = EpisodeRewardGuard(
+        _training_config(include_item_score=True),
+        RewardSafetyConfig.from_mapping(
+            _budgeted_safety_mapping(shaping_signals=["progress", "item_score"])
+        ),
+    )
+
+    results = [guard.compose(signals) for signals in _item_score_episode()]
+
+    assert [result.episode_total for result in results] == [
+        pytest.approx(value) for value in (10, 20, 25, 25, 25, 25)
+    ]
+    assert results[-1].positive_shaping_total == pytest.approx(25.0)
+
+
+def test_reward_guard_fails_closed_on_an_unclassified_reward_term() -> None:
+    safety = RewardSafetyConfig.from_mapping(_budgeted_safety_mapping(shaping_signals=["progress"]))
+
+    with pytest.raises(ContractViolation, match="neither the outcome signal"):
+        EpisodeRewardGuard(_training_config(include_item_score=True), safety)
+
+
+def test_reward_guard_accepts_a_fully_classified_configuration() -> None:
+    safety = RewardSafetyConfig.from_mapping(
+        _budgeted_safety_mapping(shaping_signals=["progress", "item_score"])
+    )
+
+    assert "outcome" not in safety.shaping_signals
+    assert safety.unbudgeted_signals == ()
+    assert EpisodeRewardGuard(_training_config(include_item_score=True), safety) is not None
+
+
+def test_reward_guard_unbudgeted_opt_in_keeps_the_legacy_behaviour() -> None:
+    guard = EpisodeRewardGuard(
+        _training_config(include_item_score=True),
+        RewardSafetyConfig.from_mapping(
+            _budgeted_safety_mapping(
+                shaping_signals=["progress"], unbudgeted_signals=["item_score"]
+            )
+        ),
+    )
+
+    results = [guard.compose(signals) for signals in _item_score_episode()]
+
+    assert [result.episode_total for result in results] == [
+        pytest.approx(value) for value in (10, 20, 30, 40, 50, 55)
+    ]
+
+
+def test_reward_guard_rejects_an_unbudgeted_signal_without_a_reward_term() -> None:
+    safety = RewardSafetyConfig.from_mapping(
+        _budgeted_safety_mapping(shaping_signals=["progress"], unbudgeted_signals=["item_score"])
+    )
+
+    with pytest.raises(ContractViolation, match="unknown unbudgeted signals"):
+        EpisodeRewardGuard(_training_config(), safety)
 
 
 def test_demonstration_gate_rejects_policy_self_imitation_and_failed_episodes() -> None:

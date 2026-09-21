@@ -89,6 +89,7 @@ class RewardSafetyConfig:
     max_positive_shaping_per_episode: float
     failure_episode_maximum: float
     require_terminal_outcome: bool
+    unbudgeted_signals: tuple[str, ...] = ()
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> RewardSafetyConfig:
@@ -103,6 +104,7 @@ class RewardSafetyConfig:
                     "max_positive_shaping_per_episode",
                     "failure_episode_maximum",
                     "require_terminal_outcome",
+                    "unbudgeted_signals",
                 }
             ),
             path="reward safety",
@@ -124,6 +126,17 @@ class RewardSafetyConfig:
             raise ValueError("shaping_signals contains duplicates")
         if outcome in shaping:
             raise ValueError("outcome_signal cannot also be a shaping signal")
+        unbudgeted = tuple(
+            _identifier(item, path="unbudgeted_signals[]")
+            for item in _sequence(value.get("unbudgeted_signals", ()), path="unbudgeted_signals")
+        )
+        if len(set(unbudgeted)) != len(unbudgeted):
+            raise ValueError("unbudgeted_signals contains duplicates")
+        overlap = sorted(set(unbudgeted) & set(shaping))
+        if overlap:
+            raise ValueError(f"unbudgeted_signals cannot also be shaping signals: {overlap}")
+        if outcome in unbudgeted:
+            raise ValueError("outcome_signal cannot also be an unbudgeted signal")
         per_step = _number(
             value.get("max_positive_shaping_per_step"),
             path="max_positive_shaping_per_step",
@@ -150,6 +163,7 @@ class RewardSafetyConfig:
             require_terminal_outcome=_boolean(
                 value.get("require_terminal_outcome"), path="require_terminal_outcome"
             ),
+            unbudgeted_signals=unbudgeted,
         )
 
 
@@ -192,6 +206,23 @@ class EpisodeRewardGuard:
         if missing_shaping:
             raise ContractViolation(
                 f"reward safety references unknown shaping signals: {missing_shaping}"
+            )
+        unclassified = sorted(
+            terms.keys()
+            - set(safety.shaping_signals)
+            - {safety.outcome_signal}
+            - set(safety.unbudgeted_signals)
+        )
+        if unclassified:
+            raise ContractViolation(
+                "reward terms are neither the outcome signal nor a declared shaping signal: "
+                f"{unclassified}; add them to shaping_signals, or to unbudgeted_signals if "
+                "they must stay outside the budget"
+            )
+        unknown_unbudgeted = sorted(set(safety.unbudgeted_signals) - terms.keys())
+        if unknown_unbudgeted:
+            raise ContractViolation(
+                f"reward safety references unknown unbudgeted signals: {unknown_unbudgeted}"
             )
         self._training = training
         self._safety = safety
