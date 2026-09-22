@@ -13,6 +13,7 @@ from numpy.typing import NDArray
 
 from game_learning_runtime.declared_metrics import MetricDeclaration
 from game_learning_runtime.errors import ContractViolation
+from game_learning_runtime.learnability import LearnabilityDeclaration
 from game_learning_runtime.realtime import RealtimeTimingContract
 from game_learning_runtime.runtime_health import RuntimeIdentity
 from game_learning_runtime.termination import EpisodeCaps
@@ -209,6 +210,9 @@ class EnvironmentSpec:
     # Adapter-declared budgets; the runtime attributes an episode close to them
     # so an adapter never has to report the termination reason it already declared.
     episode_caps: EpisodeCaps | None = None
+    # Adapter-declared state-action cardinality. Inert on its own: a caller has
+    # to supply a LearnabilityPlan before anything is measured or enforced.
+    learnability: LearnabilityDeclaration | None = None
 
     def __post_init__(self) -> None:
         if not self.environment_id or any(character.isspace() for character in self.environment_id):
@@ -229,5 +233,9 @@ class EnvironmentSpec:
             raise TypeError("metrics must be a MetricDeclaration or None")
         if self.episode_caps is not None and not isinstance(self.episode_caps, EpisodeCaps):
             raise TypeError("episode_caps must be an EpisodeCaps or None")
+        if self.learnability is not None and not isinstance(
+            self.learnability, LearnabilityDeclaration
+        ):
+            raise TypeError("learnability must be a LearnabilityDeclaration or None")
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
