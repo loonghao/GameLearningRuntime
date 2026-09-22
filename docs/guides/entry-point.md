@@ -177,12 +177,17 @@ nothing.
 | Code | Where | Meaning |
 | --- | --- | --- |
 | `0` | `doctor`, runs | Everything passed. |
-| `2` | any command | A declared invariant failed — a typed contract violation. |
-| `4` | `doctor` | At least one included check failed. |
+| `2` | any command | The command could not be evaluated. For the entry point: a declared invariant could not be checked at all, reported as a typed contract violation — its root vanished between load and check, or a directory or candidate file it needed could not be read. |
+| `4` | `doctor` | At least one included check failed, including a declared invariant that was checked and did not hold: `missing`, `multiple`, or `truncated`. |
 | `79` | a strict run | The run was refused: entry drift, before attach. |
 
 A refused run leaves no trace in the store, so a scheduler can retry it once the
 launcher is fixed without paying for it twice.
+
+`2` and `4` are different questions. `4` answers "the invariant was checked and
+it failed"; `2` answers "it could not be checked", so the project's state is
+unknown. A scheduler that distinguishes them can retry a `2` once the filesystem
+settles and must not retry a `4`, which is a real violation that will fail again.
 
 ## Bounds
 

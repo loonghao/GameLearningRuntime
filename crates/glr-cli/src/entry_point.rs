@@ -499,9 +499,19 @@ fn scan(scan: &Scan<'_>) -> Result<ScanOutcome> {
             outcome.truncated = true;
             break;
         }
+        // A directory the OS will not list is a typed contract error naming
+        // the invariant and the path, never a silent skip. Skipping it would
+        // let the walk report "exactly one" over a subtree it never saw, which
+        // is the one thing this module exists to refuse (see
+        // [`InvariantConfig::check_with_budget`]).
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
-            Err(_) => continue,
+            Err(error) => {
+                return Err(Error::Contract(format!(
+                    "{SCHEMA_VERSION}: invariant {invariant_id:?} could not list {}: {error}",
+                    portable_path(project_root, &directory)
+                )));
+            }
         };
         for entry in entries.flatten() {
             if outcome.scanned_files >= budget.max_files {
@@ -949,6 +959,147 @@ argv = ["python", "-c", "pass"]
         assert!(
             message.contains("src/locked.py"),
             "the path is project-relative, as every other path in the report is: {message}"
+        );
+    }
+
+    /// Puts back whatever [`deny_list`] took away.
+    ///
+    /// One type on both platforms, so the test body that binds it is identical
+    /// and neither platform gets a lint the other cannot see. The handle is
+    /// released before the mode bits go back, because on Windows the handle is
+    /// the only thing denying access.
+    struct DenyListGuard {
+        /// Windows: the exclusive handle that stops the directory being listed.
+        handle: Option<fs::File>,
+        /// Unix: the directory whose mode bits must be restored, so the
+        /// temporary tree can still be torn down afterwards.
+        #[cfg(unix)]
+        path: Option<std::path::PathBuf>,
+    }
+
+    impl Drop for DenyListGuard {
+        fn drop(&mut self) {
+            drop(self.handle.take());
+            self.restore_mode();
+        }
+    }
+
+    impl DenyListGuard {
+        #[cfg(unix)]
+        fn restore_mode(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+
+            if let Some(path) = self.path.take() {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o755)).ok();
+            }
+        }
+
+        /// Windows denies access with the handle alone, so there is no mode to
+        /// restore.
+        #[cfg(windows)]
+        fn restore_mode(&mut self) {}
+    }
+
+    /// Makes `path` unlistable for as long as the returned guard is held.
+    ///
+    /// Unix denies every bit on the directory; Windows holds a directory
+    /// handle with share mode 0, which is what makes a later listing fail with
+    /// a sharing violation. `FILE_FLAG_BACKUP_SEMANTICS` is what lets a
+    /// directory be opened at all.
+    #[cfg(unix)]
+    fn deny_list(path: &Path) -> DenyListGuard {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o000)).expect("deniable");
+        DenyListGuard {
+            handle: None,
+            path: Some(path.to_path_buf()),
+        }
+    }
+
+    #[cfg(windows)]
+    fn deny_list(path: &Path) -> DenyListGuard {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        DenyListGuard {
+            handle: Some(
+                fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(0)
+                    .attributes(FILE_FLAG_BACKUP_SEMANTICS)
+                    .open(path)
+                    .expect("an exclusive directory handle is openable"),
+            ),
+        }
+    }
+
+    /// A directory the walk cannot list must be a typed contract error naming
+    /// the invariant and the path, not a silent skip.
+    #[test]
+    fn an_unlistable_directory_is_a_typed_contract_error() {
+        let root = TempDir::new().expect("tempdir");
+        write(root.path(), "src/learner.py", "class Learner");
+        write(root.path(), "src/hidden/copy_learner.py", "class Learner");
+        let hidden = root.path().join("src/hidden");
+
+        let guard = deny_list(&hidden);
+        if fs::read_dir(&hidden).is_ok() {
+            // A privileged process can list anything, so there is no failure
+            // to assert on. Skipping beats a false red.
+            return;
+        }
+
+        let error = scan(&Scan {
+            root: &root.path().join("src"),
+            project_root: root.path(),
+            suffix: Some(".py"),
+            marker: "class Learner",
+            invariant_id: "single-learner",
+            budget: ScanBudget::default(),
+        })
+        .expect_err("an unlistable directory must fail");
+        drop(guard);
+        let message = error.to_string();
+        assert!(
+            matches!(error, crate::error::Error::Contract(_)),
+            "the failure must be typed, not a bare OS error: {message}"
+        );
+        assert!(message.contains("single-learner"), "{message}");
+        assert!(
+            message.contains("src/hidden"),
+            "the path is project-relative, as every other path in the report is: {message}"
+        );
+    }
+
+    /// The invariant survives a directory it could not read: it refuses
+    /// instead of reporting exactly one learner over a subtree it never saw.
+    #[test]
+    fn an_unlistable_directory_never_reports_ok() {
+        let root = TempDir::new().expect("tempdir");
+        write(root.path(), "src/learner.py", "class Learner");
+        write(root.path(), "src/hidden/copy_learner.py", "class Learner");
+        let hidden = root.path().join("src/hidden");
+
+        let guard = deny_list(&hidden);
+        if fs::read_dir(&hidden).is_ok() {
+            return;
+        }
+
+        let checked = InvariantConfig {
+            id: "single-learner".into(),
+            root: "src".into(),
+            marker: "class Learner".into(),
+            suffix: Some(".py".into()),
+        }
+        .check(root.path());
+        drop(guard);
+        // The scan saw `src/learner.py` and nothing else, so a silent skip
+        // would have read as a satisfied invariant.
+        let error = checked.expect_err("an unverified tree must not read as verified");
+        assert!(
+            matches!(error, crate::error::Error::Contract(_)),
+            "the invariant must refuse, not report ok: {error}"
         );
     }
 
