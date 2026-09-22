@@ -5,10 +5,11 @@
   review before any code is written.
 - Proposed contract name: `glr.remote-admission.v1` (unassigned; reserved by this proposal)
 - Date: 2026-09-19
-- Related: issue #116 (acceptance stages 5–6), ADR-0001, ADR-0020, ADR-0027 (deliberately
-  separate stages 4 and 5), ADR-0030, ADR-0032, ADR-0036, and the roadmap entry
-  "Add authenticated multi-machine coordination around the implemented local agent
-  control plane".
+- Related: issue #116, ADR-0001, ADR-0020, ADR-0027 (which names this contract its stage
+  4 and remote conformance its stage 5), ADR-0030, ADR-0032, ADR-0036, ADR-0041 (whose
+  §D9 delegates cluster integration to a separate contract shaped exactly like this
+  one), and the roadmap entry "Add authenticated multi-machine coordination around the
+  implemented local agent control plane".
 
 ## Why this is a separate proposal
 
@@ -39,7 +40,7 @@ cloud provider, and it names none.
   proposed here is additive.
 - No concurrency or recovery guarantee that the conformance suite in this document does
   not test. See "Explicitly not claimed".
-- No claim that issue #116 stages 5–6 are satisfied by this document. It is the design
+- No claim that issue #116 stages 4–5 are satisfied by this document. It is the design
   input to them, not their evidence.
 
 ## Part 1 — Baseline: what exists today (implemented)
@@ -47,15 +48,20 @@ cloud provider, and it names none.
 Every row below is shipped behavior. None of it is a remote-distribution primitive, and
 the third column is why.
 
+Anchors are **symbol references, not line numbers**, written `module.py` → `Symbol` with
+`module.py` resolved under `src/game_learning_runtime/`. Line numbers shift on any rebase
+and misdirect a reviewer with no signal; a symbol stays `grep`-stable for as long as the
+behavior it names exists.
+
 | Primitive | Implemented guarantee | Why it cannot fence a remote worker |
 | --- | --- | --- |
-| `BoundedActorQueue` (`src/game_learning_runtime/collector.py:125`) | In-process, `threading.Condition`-based queue with capacity, `block` / `drop-oldest` / `fail` overflow policies, and `pause()` / `drain()` / `resume()` learner-lease barriers. | The lease is an integer counter (`QueuedUnroll.token`) allocated from one queue object. It is unique only inside that object, resets on process restart, and is meaningless in another process. There is no expiry. |
-| `commit` / `abort` fencing (`collector.py:377`, `collector.py:453`) | A leased unroll is finalized exactly once; a second or unknown finalization raises `ActorQueueCommitError`. | Exactly-once is enforced by an in-memory dict, not by a durable cross-machine token. A remote worker cannot prove it still holds anything. |
-| Optional policy-lag cutoff (`collector.py:469`) | Configurable `max_policy_version_lag` drops stale queued unrolls and rejects stale commits; disabled by default. | The cutoff compares an in-process `learner_policy_version` against `Unroll.policy_version`. Both are process-local. |
-| `RolloutAttempt` projection (`src/game_learning_runtime/run_store.py:172`, ADR-0020) | Retry lineage with `QUEUING` → `RUNNING` → `SUCCEEDED` / `FAILED`, expected-status fencing, and one SQLite transaction per projection change plus its append-only run event. | **`attempt_id` is `attempt-{uuid4().hex}`** (`run_store.py:969`). UUIDs are unique but carry no order, so they support no "monotonically increasing" check, no range dedupe, and no gap detection. Only `attempt_index` (per rollout lineage) and the append-only event `sequence_id` are ordered, and both are scoped to one store. |
-| `ExclusiveInstanceLease` (`src/game_learning_runtime/supervision.py:74`) | One holder per in-process registry; `ProcessIdentity` is `(pid, start_time_ns)` to resist PID reuse; `ArtifactOwnershipError` gates artifact operations while the owner is alive. | Docstring is explicit: "Small in-process lease registry; adapters may replace it with a durable store." There is no TTL, no expiry, and a crashed holder never releases. |
-| `ProcessSupervisor` (`supervision.py:112`, ADR-0032) | Explicit stop sequence, bounded waits, and exclusivity preserved across restarts. | Liveness is an adapter-supplied `ProcessProbe` for a PID on the local machine. |
-| Checkpoint manifest (`src/game_learning_runtime/checkpoint.py:171`) | `checkpoint_sha256`, size, and a `CheckpointContract`; `write_checkpoint_manifest` refuses to overwrite an existing manifest; writes are temp-file + `fsync` + `os.replace`. | No-replace is a local filesystem property. Nothing prevents two machines from each writing a manifest that would be valid on its own. |
+| `BoundedActorQueue` (`collector.py` → `BoundedActorQueue`) | In-process, `threading.Condition`-based queue with capacity, `block` / `drop-oldest` / `fail` overflow policies, and `pause()` / `drain()` / `resume()` learner-lease barriers. | The lease is an integer counter (`QueuedUnroll.token`) allocated from one queue object. It is unique only inside that object, resets on process restart, and is meaningless in another process. There is no expiry. |
+| `commit` / `abort` fencing (`collector.py` → `BoundedActorQueue.commit` / `BoundedActorQueue.abort`) | A leased unroll is finalized exactly once; a second or unknown finalization raises `ActorQueueCommitError` from `_validate_in_flight_locked`. | Exactly-once is enforced by an in-memory dict, not by a durable cross-machine token. A remote worker cannot prove it still holds anything. |
+| Optional policy-lag cutoff (`collector.py` → `BoundedActorQueue._is_stale_locked`) | Configurable `max_policy_version_lag` drops stale queued unrolls and rejects stale commits; disabled by default. | The cutoff compares an in-process `learner_policy_version` against `Unroll.policy_version`. Both are process-local. |
+| `RolloutAttempt` projection (`run_store.py` → `RolloutAttempt`, ADR-0020) | Retry lineage with `QUEUING` → `RUNNING` → `SUCCEEDED` / `FAILED`, expected-status fencing, and one SQLite transaction per projection change plus its append-only run event. | **`attempt_id` is `attempt-{uuid4().hex}`** (`run_store.py` → `TrainingStore._insert_rollout_attempt`). UUIDs are unique but carry no order, so they support no "monotonically increasing" check, no range dedupe, and no gap detection. Only `attempt_index` (per rollout lineage) and the append-only event `sequence_id` are ordered, and both are scoped to one store. |
+| `ExclusiveInstanceLease` (`supervision.py` → `ExclusiveInstanceLease`) | One holder per in-process registry; `ProcessIdentity` is `(pid, start_time_ns)` to resist PID reuse; `ArtifactOwnershipError` gates artifact operations while the owner is alive. | Docstring is explicit: "Small in-process lease registry; adapters may replace it with a durable store." There is no TTL, no expiry, and a crashed holder never releases. |
+| `ProcessSupervisor` (`supervision.py` → `ProcessSupervisor`, ADR-0032) | Explicit stop sequence, bounded waits, and exclusivity preserved across restarts. | Liveness is an adapter-supplied `ProcessProbe` for a PID on the local machine. |
+| Checkpoint manifest (`checkpoint.py` → `CheckpointManifest`) | `checkpoint_sha256`, size, and a `CheckpointContract`; `write_checkpoint_manifest` refuses to overwrite an existing manifest; writes are temp-file + `fsync` + `os.replace`. | No-replace is a local filesystem property. Nothing prevents two machines from each writing a manifest that would be valid on its own. |
 | Package import (ADR-0027) | Offline, script-free, atomic promote, and OS no-replace rename that prevents a racing destination from being overwritten. | Import is deliberately offline and non-executing. It has no notion of a worker identity. |
 | Watchdog heartbeats (ADR-0036) | Bounded liveness decisions driven by one command and three exit codes. | A heartbeat proves a producer wrote a line recently. It proves neither that a lease is held nor that an action was *not* performed. |
 | Workbench instance lease (ADR-0030) | Per-user lease registry; liveness by probing the port and comparing `instance_id`; stale and foreign leases are never claimed and never stopped. | The lease is explicitly "a hint, not the truth" — the right call for local discoverability, and explicitly not a fencing primitive. |
@@ -85,6 +91,14 @@ max_payload_bytes, max_duration)`. The candidate set is deliberately small:
 `collect:unroll`, `evaluate:episode`, `read:policy`, `propose:checkpoint`. Note what is
 absent — see open question 1.
 
+**Why there is no remote learner role.** ADR-0041 §D9 asks for "authenticated learner
+and actor roles". This proposal authenticates the **actor** side only and keeps the
+learner behind the coordinator on one machine, because the coordinator is already the
+single writer for the optimizer and the policy version counter. Admitting a remote
+learner would turn policy publication into a distributed decision and would need a
+second single-writer story that nothing here has earned. It is a deliberate v1 boundary,
+not an oversight — see open question 7.
+
 ### 2.2 Admission
 
 A worker requests admission with:
@@ -92,7 +106,7 @@ A worker requests admission with:
 | Field | Meaning |
 | --- | --- |
 | `worker_id` | Deployment-assigned identity. GLR does not mint it. |
-| `package_digest` | The `glr.source-package.v1` SHA-256 over the ordered selection/tool/inventory tuple (ADR-0027). |
+| `package_digest` | The package content identity. **Version-independent** (ADR-0041 §D4): SHA-256 over the ordered selection and inventory entries only, with `tool_version` recorded in the manifest but excluded from the hash. See the dependency note below for ADR-0027 as shipped. |
 | `policy_digest` | Digest of the policy artifact the worker will execute against (for a checkpoint, its manifest `checkpoint_sha256`). |
 | `capabilities` | The capabilities the worker requests. |
 | `lease_seconds` | Requested lease duration. |
@@ -117,6 +131,17 @@ the run pinned), `ADMISSION_CAPABILITY_DENIED`, `ADMISSION_CAPACITY_EXCEEDED`,
 interprets what a policy means (ADR-0027); it only refuses to let a worker that is
 running different source or different weights contribute to a run whose identity was
 pinned to specific digests.
+
+**Dependency: the ADR-0041 §D4 migration.** ADR-0027 as shipped computes content
+identity over selection, `tool_version`, and inventory. ADR-0041 §D4 changes that to
+selection and inventory only, and leaves the migration mechanism open (a new source-only
+schema revision, or a parallel identity field with a documented transition). This
+contract requires the ADR-0041 §D4 form, because admission is keyed on `package_digest`
+and refuses with `ADMISSION_DIGEST_MISMATCH`: a digest that varies with the packaging
+CLI version would reject two workers running byte-identical source, which is exactly the
+question ADR-0041 §D4 wants the identifier to answer. Until that migration lands,
+`package_digest` is whatever `glr.source-package.v1` emits, and mismatch is expected to
+over-reject across CLI versions. Tracked as open question 8.
 
 ### 2.3 Fencing tokens
 
@@ -207,8 +232,12 @@ once.
 ### 2.8 State taxonomy, and why it stays additive
 
 ADR-0020's local projection keeps its existing four states. The remote-only outcomes are
-coordinator-side and are mirrored into the local store as `FAILED` with a
-machine-readable `reason`, so nothing that reads `RolloutAttempt` today has to change.
+coordinator-side and are mirrored into the local store as `RolloutStatus.FAILED` with a
+machine-readable `failure_reason`, so nothing that reads `RolloutAttempt` today has to
+change. The mapping is one-to-one and lowercase: `ORPHANED` → `orphaned`, `STALE` →
+`stale`, `UNOWNED` → `unowned`. `run_store.py` → `TrainingStore.update_rollout_attempt`
+already rejects a `FAILED` attempt that carries no reason, so a remote outcome that
+loses its reason fails closed instead of landing as an unexplained failure.
 
 | State | Meaning | Applied to the optimizer |
 | --- | --- | --- |
@@ -218,6 +247,15 @@ machine-readable `reason`, so nothing that reads `RolloutAttempt` today has to c
 | `ORPHANED` | Outcome is unknowable: expired lease, disconnect, or unconfirmed cancellation. | No, and **never retried automatically**. |
 | `STALE` | Result accepted but `observed_policy_version` lags beyond the cutoff. | No, and counted. |
 | `UNOWNED` | Arrived without a live lease or with a stale fence. | No, and counted. |
+
+**These are attempt-level outcomes, not episode terminations.** `termination.py` →
+`TerminationReason` is episode-level and is deliberately **not** reused here. In
+particular `ENV_INDETERMINATE` ("the environment consequence of an action is unknown, so
+restart rather than act again") answers a different question than attempt-level
+`ORPHANED` ("this attempt's result never arrived and cannot be reconstructed"). An episode
+can end `env_indeterminate` while its attempt ingests normally, and an attempt can be
+`ORPHANED` with no episode termination recorded at all. The two must not be collapsed
+into a single "we do not know" concept.
 
 Policy lag mirrors the local cutoff with one remote difference: the worker is **told** to
 stop producing, because continuing to spend its budget on results that will be rejected
@@ -252,7 +290,10 @@ results are recorded as `STALE` metrics rather than discarded — recorded eithe
 ## Part 3 — Conformance checklist for a future implementation
 
 These are the tests an implementation must pass before it may claim anything about
-authenticated multi-machine execution. ADR-0027 stage 5 requires the first five.
+authenticated multi-machine execution. ADR-0027 stage 5 names six families — duplicate
+deliveries, stale ownership, dropped results, lease expiry, policy mismatch, and
+checkpoint conflict. Tests 1–8 and 11 below cover those families directly; the rest are
+this proposal's additions.
 
 | # | Scenario | Invariant that must hold |
 | --- | --- | --- |
@@ -286,7 +327,8 @@ layers need real infrastructure, and only those layers' claims stay out of CI's 
 | 3 | Attended multi-machine conformance run over tests 1–8 and 13, with published results. | Results published **before** any claim of authenticated multi-machine execution. |
 
 On acceptance this document should be promoted to a numbered ADR, and only then may
-Phase 1 begin.
+Phase 1 begin. (`0041` is already assigned to portable training packages, so promotion
+takes the next free number.)
 
 ## Explicitly not claimed
 
@@ -321,6 +363,15 @@ Phase 1 begin.
    per trial?
 6. **Ingest-log retention and content.** The proposal records digests, counters, and
    transitions only. Confirm that no deployment needs observation data there.
+7. **Should a remote learner role be admitted at all?** ADR-0041 §D9 asks for
+   authenticated learner *and* actor roles; 2.1 admits the actor side only and keeps the
+   learner behind the coordinator. Confirm that v1 boundary, or name the remote-learner
+   capability it should grow.
+8. **`package_digest` and the ADR-0041 §D4 migration.** This contract requires the
+   version-independent identity (selection + inventory, `tool_version` excluded). ADR-0027
+   as shipped still hashes `tool_version`, and ADR-0041 leaves the migration mechanism
+   open. Confirm that the remote-admission contract should follow §D4 and inherit its
+   migration decision, rather than pinning today's ADR-0027 computation.
 
 ## Acceptance
 
