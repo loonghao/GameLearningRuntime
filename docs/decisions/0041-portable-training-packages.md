@@ -276,6 +276,15 @@ in-memory queue after exit, and cross-process ownership and policy publication
 coordination remain future work. Unknown in-flight action outcomes are never
 replayed merely because a transport reconnected.
 
+The proposal that answers this list is
+[`docs/planning/remote-role-admission.md`](../planning/remote-role-admission.md)
+(`glr.remote-admission.v1`; design only, not yet accepted). Its §2.1–2.10 specify the
+roles, admission claims, fencing, ingestion, reconciliation, state taxonomy, checkpoint
+ownership, and trust boundary named above, and its Part 3 carries the conformance
+checklist. Two cross-references worth keeping in view: it takes `package_digest` from
+§D4 above (and so inherits this ADR's open question 2 on the D4 migration), and it
+admits the actor role only, deferring remote learner admission — see its open question 7.
+
 ## Non-functional requirements
 
 - **Correctness:** one compatibility gate; unknown groups, fields, and schema
@@ -404,3 +413,4 @@ attestation, and neither is a claim about policy quality (ADR-0027).
 - [ADR-0027: Offline source-only project packages](0027-offline-source-packages.md)
 - [ADR-0033: Package trained-stage installers](0033-package-trained-stage-installers.md)
 - [Phased acceptance plan](../planning/training-package-phases.md)
+- [Planning: Optional authenticated cluster distribution — remote role admission](../planning/remote-role-admission.md)
