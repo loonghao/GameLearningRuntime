@@ -6,8 +6,8 @@ it is that the failure is **invisible** — an operator cannot tell "the
 configuration is wrong" from "I have not run enough steps yet" and keeps tuning
 the wrong variable.
 
-The `learnability-budget-v1` capability puts two numbers next to each other so
-the question has an answer:
+The `learnability-budget-v1` capability puts the declared scale next to the
+measured coverage so the question has an answer:
 
 - **`state_action_cells`** — declared before the run. How big the space is that
   the learner would have to cover.
@@ -167,8 +167,14 @@ unlearnable configuration from a slow start.
 Three surfaces carry the same `glr.learnability-budget.v1` payload:
 
 - `SyncCollector.learnability_report()` during a run;
-- the run store, as a `learnability.budget` event plus two first-class metrics
-  (`TrainingStore.record_learnability` / `list_learnability`);
+- the run store, as a `learnability.budget` event plus three first-class
+  metrics — `learnability.coverage_ratio`,
+  `learnability.projected_steps_to_k_visits` and
+  `learnability.state_action_cells` (`TrainingStore.record_learnability` /
+  `list_learnability`). The cell count is recorded as a metric because it is
+  the scale the other two are fractions of: the same coverage ratio on 10
+  cells and on 10,000 is not the same result, and a ratio alone cannot say
+  which run this was;
 - `glr.cli-output.v1` from `glr --project . --json runs show <run-id>`, which
   adds `learnability` and a `learnability_summary` next to the run record.
 

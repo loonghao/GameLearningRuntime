@@ -75,9 +75,14 @@ LEARNABILITY_CELL_KEY = "learnability_cell"
 #: Run-store event kind carrying one learnability verdict.
 LEARNABILITY_BUDGET_EVENT = "learnability.budget"
 
-#: First-class metric names, so both numbers are readable without a log.
+#: First-class metric names, so all three numbers are readable without a log.
+#:
+#: ``state_action_cells`` is the declared scale the other two are fractions
+#: of: 90% coverage of 10 cells and 90% of 10,000 cells are not the same
+#: result, and a coverage ratio alone cannot say which one this run was.
 COVERAGE_RATIO_METRIC = "learnability.coverage_ratio"
 PROJECTED_STEPS_METRIC = "learnability.projected_steps_to_k_visits"
+STATE_ACTION_CELLS_METRIC = "learnability.state_action_cells"
 
 _MAX_CELLS = 2**62
 _MAX_DETAIL = 512
@@ -1186,6 +1191,7 @@ __all__ = [
     "LEARNABILITY_CELL_KEY",
     "MIN_EVIDENCE_STEPS",
     "PROJECTED_STEPS_METRIC",
+    "STATE_ACTION_CELLS_METRIC",
     "CardinalityKind",
     "LearnabilityBudget",
     "LearnabilityBudgetError",
