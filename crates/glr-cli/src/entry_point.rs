@@ -1103,6 +1103,38 @@ argv = ["python", "-c", "pass"]
         );
     }
 
+    /// The invariant root is the one directory whose failure changes the
+    /// verdict a reader sees: an unlistable root is "could not be evaluated",
+    /// not "no file declares the learner". Reporting `missing` there would tell
+    /// an agent the project simply has no entry point, and `doctor` would exit
+    /// `4` on a tree nothing ever looked at.
+    #[test]
+    fn an_unlistable_root_does_not_read_as_missing() {
+        let root = TempDir::new().expect("tempdir");
+        write(root.path(), "src/learner.py", "class Learner");
+        let declared = root.path().join("src");
+
+        let guard = deny_list(&declared);
+        if fs::read_dir(&declared).is_ok() {
+            return;
+        }
+
+        let checked = InvariantConfig {
+            id: "single-learner".into(),
+            root: "src".into(),
+            marker: "class Learner".into(),
+            suffix: Some(".py".into()),
+        }
+        .check(root.path());
+        drop(guard);
+        let error = checked.expect_err("an unlistable root is not an absent declaration");
+        assert!(
+            matches!(error, crate::error::Error::Contract(_)),
+            "the root's verdict is an evaluation failure, not `missing`: {error}"
+        );
+        assert!(error.to_string().contains("src"), "{error}");
+    }
+
     #[test]
     fn an_absent_root_is_a_typed_error() {
         let root = TempDir::new().expect("tempdir");
