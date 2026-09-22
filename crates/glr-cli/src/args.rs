@@ -195,6 +195,21 @@ pub enum PackageCommand {
         #[arg(long)]
         expected_contract: String,
     },
+    /// Offline synthetic conformance check for an already materialized package.
+    ///
+    /// Reports package validity, materialization, recipient-local overrides,
+    /// declared dependency locks and prerequisites as separate axes. It never
+    /// executes training, installs, downloads or resolves dependencies, and a
+    /// conformant package is never reported as a successful training run.
+    Conformance {
+        archive: PathBuf,
+        /// Re-assert the reviewed environment identity against the package.
+        #[arg(long)]
+        expected_environment: Option<String>,
+        /// Re-assert the reviewed contract fingerprint against the package.
+        #[arg(long)]
+        expected_contract: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
