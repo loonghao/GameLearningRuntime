@@ -435,6 +435,17 @@ struct Scan {
     forbidden: Vec<String>,
 }
 
+impl Scan {
+    /// Puts every discovery-ordered list into a canonical order.
+    ///
+    /// The walk yields entries in `read_dir` order, which differs per host and
+    /// per filesystem. The conformance report is part of the machine-readable
+    /// `glr.cli-output.v1` contract, so consumers need a stable order.
+    fn canonicalize(&mut self) {
+        self.local_overrides.sort();
+    }
+}
+
 fn scan_tree(root: &Path, prefix: &str, depth: usize, scan: &mut Scan) -> Result<()> {
     if depth > MAX_DEPTH {
         return Err(refusal("materialized tree exceeds the depth limit"));
@@ -567,6 +578,7 @@ fn conformance(project: &Path, command: &PackageCommand) -> Result<Value> {
     )?;
     let mut scan = Scan::default();
     scan_tree(&root, "", 0, &mut scan)?;
+    scan.canonicalize();
 
     let mut missing = Vec::new();
     let mut mismatched = Vec::new();
