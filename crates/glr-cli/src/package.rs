@@ -439,10 +439,13 @@ impl Scan {
     /// Puts every discovery-ordered list into a canonical order.
     ///
     /// The walk yields entries in `read_dir` order, which differs per host and
-    /// per filesystem. The conformance report is part of the machine-readable
-    /// `glr.cli-output.v1` contract, so consumers need a stable order.
+    /// per filesystem. `files` is already ordered because it is a `BTreeMap`,
+    /// but `local_overrides` and `forbidden` are pushed in walk order and go
+    /// straight into the machine-readable `glr.cli-output.v1` report, so
+    /// consumers need a stable order for both.
     fn canonicalize(&mut self) {
         self.local_overrides.sort();
+        self.forbidden.sort();
     }
 }
 
@@ -1103,6 +1106,44 @@ mod tests {
             json!(fs::canonicalize(&destination).unwrap())
         );
         assert_eq!(report["axes"]["synthetic_reproduction"], "pass");
+    }
+
+    #[test]
+    fn scan_canonicalize_orders_every_discovery_ordered_list() {
+        let mut scan = Scan {
+            files: BTreeMap::new(),
+            local_overrides: vec!["z.local.json".into(), "a.local.json".into()],
+            forbidden: vec!["logs".into(), ".glr".into(), "cache".into()],
+        };
+        scan.canonicalize();
+        assert_eq!(scan.local_overrides, vec!["a.local.json", "z.local.json"]);
+        assert_eq!(scan.forbidden, vec![".glr", "cache", "logs"]);
+    }
+
+    #[test]
+    fn conformance_reports_denied_artifact_paths_in_a_stable_order() {
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let (_recipient, destination, archive) = round_trip(&executable);
+        // Created in reverse sorted order so a walk-order report is visible.
+        fs::create_dir(destination.join("logs")).unwrap();
+        fs::create_dir(destination.join("cache")).unwrap();
+        let report = conformance(&destination, &conformance_command(&archive)).unwrap();
+        assert_eq!(report["artifacts"]["forbidden"], json!(["cache", "logs"]));
+        assert_eq!(report["artifacts"]["run_store"], false);
+        assert_eq!(report["materialization"]["status"], "complete");
+        assert!(
+            report["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|blocker| blocker["detail"].as_str().unwrap()
+                    == "2 denied cache, output or run-store path(s) are present"),
+            "{:?}",
+            report["blockers"]
+        );
     }
 
     #[test]
