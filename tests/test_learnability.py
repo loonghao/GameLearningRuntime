@@ -583,7 +583,7 @@ def _project(root: Path) -> None:
     )
 
 
-def test_cli_json_exposes_both_numbers_without_parsing_a_log(
+def test_cli_json_exposes_the_verdict_without_parsing_a_log(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _project(tmp_path)
@@ -605,6 +605,37 @@ def test_cli_json_exposes_both_numbers_without_parsing_a_log(
     assert data["learnability"][0]["projected_steps_to_k_visits"] == (
         expected.projected_steps_to_k_visits
     )
+
+
+def test_cli_json_exposes_all_three_numbers_as_metrics(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`glr runs show` publishes the verdict numbers as run metrics.
+
+    The summary and the event payload are projections of the same report; the
+    metrics are the surface a scheduler reads without knowing the schema. The
+    declared cardinality belongs there too: coverage is a fraction, and a
+    fraction published without its denominator cannot say which run this was.
+    """
+
+    _project(tmp_path)
+    store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
+    run = store.create_run(
+        environment_id="fixture.cells-v1", protocol_version="1.0", kind="training"
+    )
+    tracker = LearnabilityTracker(_declaration(1000), _budget())
+    for cell in range(100):
+        tracker.observe(cell=cell, elapsed_seconds=0.01)
+    expected = tracker.report()
+    store.record_learnability(run.run_id, expected)
+    store.finish_run(run.run_id, status=RunStatus.SUCCEEDED, exit_code=0)
+
+    assert main(["--project", str(tmp_path), "--json", "runs", "show", run.run_id]) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    metrics = {metric["name"]: metric["value"] for metric in data["metrics"]}
+    assert metrics[STATE_ACTION_CELLS_METRIC] == 1000.0
+    assert metrics[COVERAGE_RATIO_METRIC] == expected.coverage_ratio
+    assert metrics[PROJECTED_STEPS_METRIC] == float(expected.projected_steps_to_k_visits or 0)
 
 
 def test_cli_reports_an_absent_verdict_explicitly(
