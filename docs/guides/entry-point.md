@@ -177,17 +177,25 @@ nothing.
 | Code | Where | Meaning |
 | --- | --- | --- |
 | `0` | `doctor`, runs | Everything passed. |
-| `2` | any command | The command could not be evaluated. For the entry point: a declared invariant could not be checked at all, reported as a typed contract violation — its root vanished between load and check, or a directory or candidate file it needed could not be read. |
+| `2` | any command | The command could not complete as asked. For the entry point: a typed contract violation, which covers both an invariant that could not be checked at all (its root vanished between load and check, or a directory or candidate file it needed could not be read) and — on a run — one that was checked and failed. |
 | `4` | `doctor` | At least one included check failed, including a declared invariant that was checked and did not hold: `missing`, `multiple`, or `truncated`. |
 | `79` | a strict run | The run was refused: entry drift, before attach. |
 
 A refused run leaves no trace in the store, so a scheduler can retry it once the
 launcher is fixed without paying for it twice.
 
-`2` and `4` are different questions. `4` answers "the invariant was checked and
-it failed"; `2` answers "it could not be checked", so the project's state is
-unknown. A scheduler that distinguishes them can retry a `2` once the filesystem
-settles and must not retry a `4`, which is a real violation that will fail again.
+`2` and `4` are different questions, and which one a violation produces depends
+on the command. `doctor` is the only command that can exit `4`: it evaluates
+every check it can and fails when one of them fails. A run exits `2` for the
+**same** violation, because the run-start gate refuses the run with a typed
+contract error instead of recording a verdict — see
+`enforce_at_run_start`. So on a run, `2` covers both outcomes: the invariant
+could not be evaluated, or it was evaluated and failed.
+
+Do not read `2` on a run as "transient, retry me". Two learner definitions fail
+every time, and an unreadable directory stays unreadable until someone fixes it.
+Tell the two apart from the message, which names the invariant and, for a
+violation, every offending path.
 
 ## Bounds
 
