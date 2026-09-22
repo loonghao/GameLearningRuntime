@@ -254,6 +254,7 @@ from game_learning_runtime.learnability import (
     LEARNABILITY_CELL_KEY,
     MIN_EVIDENCE_STEPS,
     PROJECTED_STEPS_METRIC,
+    STATE_ACTION_CELLS_METRIC,
     CardinalityKind,
     LearnabilityBudget,
     LearnabilityBudgetError,
