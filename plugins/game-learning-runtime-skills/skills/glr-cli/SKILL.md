@@ -69,7 +69,8 @@ running a goal, transferring knowledge, or claiming reproduction.
 ## Pin the project entry point
 
 When `doctor.data.entry_point.status` is not `undeclared`, the project pins one
-entry point and the launching process must claim it with `GLR_ENTRY_ID`. A
+entry point and the launching process should claim it with `GLR_ENTRY_ID` — a
+non-strict project still runs and records `entry_drift`. A
 `entry_drift` verdict means the run did not come through the declared door; never
 work around it by editing the manifest to match whatever command you happened to
 run. `doctor` reports the drift but only fails on it when `strict = true` — it is
