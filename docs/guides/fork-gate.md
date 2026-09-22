@@ -158,5 +158,7 @@ be caught:
 
 - [Agent onboarding](agent-onboarding.md) — bootstrap and verify chain.
 - [Supervision and watchdog](supervision-watchdog.md) — scheduled supervision.
+- [Pin one entry point per project](entry-point.md) — drift against upstream is
+  here; drift within the project is there.
 - [Repository layout](repository-layout.md) — where automation lives.
 - ADR-0037 in [the decision index](../decisions/README.md).

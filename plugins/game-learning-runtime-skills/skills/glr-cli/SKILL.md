@@ -66,6 +66,20 @@ running a goal, transferring knowledge, or claiming reproduction.
 9. Use a verified model bundle for playback. A valid hash proves artifact integrity and config
    identity, not policy quality, hardware determinism, or successful live gameplay.
 
+## Pin the project entry point
+
+When `doctor.data.entry_point.status` is not `undeclared`, the project pins one
+entry point and the launching process must claim it with `GLR_ENTRY_ID`. A
+`entry_drift` verdict means the run did not come through the declared door; never
+work around it by editing the manifest to match whatever command you happened to
+run. `doctor` reports the drift but only fails on it when `strict = true` — it is
+a diagnosis, not a run, so it never carries `GLR_ENTRY_ID`. With `strict = true`
+the run is refused with exit code `79` before any run row exists — fix the
+launcher, then retry. An invariant reporting `multiple`
+names every offending path; converge on one home rather than deleting the
+constraint. Read [references/commands.md](references/commands.md) for the
+declaration form.
+
 ## Run project-local tasks through VX
 
 - When the project contains `glr.toml`, run `glr --project . --json task list`

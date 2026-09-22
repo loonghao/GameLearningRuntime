@@ -109,8 +109,15 @@ Unattended training uses the same entry points with explicit exit codes:
 - [Supervision and watchdog](supervision-watchdog.md) — heartbeat evaluation,
   bounded restarts, and the cron contract.
 - [Anti-fork gate](fork-gate.md) — drift detection for derived checkouts.
+- [Pin one entry point per project](entry-point.md) — declare the one command
+  allowed to launch the project, so a fresh agent cannot drift onto a stale
+  launcher. `glr doctor` reports the attestation (exit `0` / `4`); a strict
+  project refuses a drifting run with exit code `79` before any budget is spent.
 
 ```bash
 # One supervision pass: 0 healthy, 3 recovered, 4 escalated.
 vx just glr-watchdog --source trainer --timeout 30 --restart-attempt-limit 3
+
+# Aggregate readiness, including the entry-point attestation: 0 / 4.
+glr --project . doctor
 ```
