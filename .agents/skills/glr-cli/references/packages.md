@@ -23,10 +23,44 @@ prepared runtime and model bundle; this source-only contract remains unchanged.
 6. Recipient runs `glr --json package import source.zip --destination NEW_DIRECTORY --expected-environment ENVIRONMENT_ID --expected-contract SHA256`.
    Destination parent must already exist. Environment/contract expectations must
    come from the reviewed handoff, not be blindly copied from untrusted input.
-7. Separately configure ignored local overrides, inspect dependency locks and
-   obtain authorization for setup/execution. Run doctor and a bounded synthetic
-   conformance check after recreating dependencies through VX. Missing prerequisites
-   are blockers, not permission to download games or launch training.
+7. Recreate dependencies from the lock through VX as a separate, authorized step.
+   The package is a file list; it never carries a virtual environment, an
+   interpreter or a cache, and GLR never resolves, downloads or installs anything.
+8. Recipient runs `glr --project NEW_DIRECTORY --json package conformance source.zip`
+   offline. Add `--expected-environment ENVIRONMENT_ID` and
+   `--expected-contract SHA256` to re-assert the reviewed handoff at this gate.
+   A nested working directory resolves upward to the project manifest. Exit code
+   `0` means the synthetic conformance check passed; `4` means reproduction is
+   blocked and `blockers` explains why. Nothing is executed, installed or fetched.
+
+## Recipient conformance
+
+`glr package conformance` checks a package that is already materialized on disk.
+It reads and hashes bytes; it never runs a role, hook, installer or trainer. The
+report keeps its axes independent, so a passing check is a statement about the
+package and the destination tree — never about training:
+
+| Field | Meaning |
+| --- | --- |
+| `package.valid` | The archive verified offline: identity, inventory, sizes and digests. |
+| `materialization` | Every declared file is present and intact, and nothing undeclared is present. |
+| `local_overrides` | Recipient-local files matching `*.local.*` or `*.local`, reported and never merged. |
+| `artifacts.run_store` | A denied cache, output or run-store path is present in the destination. |
+| `dependency_setup` | `declared` or `missing`; `performed` is always `false`. |
+| `prerequisites` | Declared role and task programs that must already exist; never fetched. |
+| `axes.training`, `axes.live_acceptance`, `axes.policy_quality` | Always `not-evaluated`. |
+| `claims.training_succeeded` | Always `false`. |
+
+**Local overrides.** `*.local.*` and `*.local` paths are refused by the export
+allowlist, so a package never carries them. In the materialized destination the
+conformance scan reports them under `local_overrides.present_in_destination` and
+ignores them; it never merges them into the project (ADR-0021). Supplying them is
+a separate, explicit recipient action.
+
+**Missing prerequisites.** An unavailable role or task program is a blocker with
+a `remediation` string, not permission to download a game, install a provider SDK
+or launch training. A blocked reproduction is still reported as a valid,
+completely materialized package.
 
 ```json
 {
