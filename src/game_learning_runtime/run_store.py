@@ -43,6 +43,7 @@ from game_learning_runtime.learnability import (
     COVERAGE_RATIO_METRIC,
     LEARNABILITY_BUDGET_EVENT,
     PROJECTED_STEPS_METRIC,
+    STATE_ACTION_CELLS_METRIC,
     LearnabilityReport,
 )
 from game_learning_runtime.termination import EpisodeTermination
@@ -1458,11 +1459,14 @@ class TrainingStore:
         *,
         timestamp_ns: int | None = None,
     ) -> RunEvent:
-        """Persist one learnability verdict as an event plus two metrics.
+        """Persist one learnability verdict as an event plus three metrics.
 
-        ``coverage_ratio`` and ``projected_steps_to_k_visits`` are written as
-        first-class metrics so both numbers are readable from the run store and
-        from `glr runs show` without parsing a log.
+        ``coverage_ratio``, ``projected_steps_to_k_visits`` and
+        ``state_action_cells`` are written as first-class metrics so all three
+        numbers are readable from the run store and from `glr runs show`
+        without parsing a log. The cell count is the scale the other two are
+        fractions of: the same coverage ratio on 10 cells and on 10,000 is not
+        the same result, and a ratio alone cannot say which run this was.
         """
 
         if not isinstance(report, LearnabilityReport):
@@ -1476,6 +1480,7 @@ class TrainingStore:
         for name, value in (
             (COVERAGE_RATIO_METRIC, report.coverage_ratio),
             (PROJECTED_STEPS_METRIC, float(report.projected_steps_to_k_visits or 0)),
+            (STATE_ACTION_CELLS_METRIC, float(report.state_action_cells)),
         ):
             self.record_metric(
                 run_id,

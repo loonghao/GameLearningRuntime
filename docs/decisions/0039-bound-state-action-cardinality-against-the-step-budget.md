@@ -73,10 +73,14 @@ Add `game_learning_runtime.learnability` behind the optional
   all three remediation paths with the numbers that apply — shrink the space to
   at most N cells, switch to function approximation and declare an effective
   capacity, or raise throughput to M steps/s.
-- **Both numbers are first-class.** The verdict is persisted as a
-  `learnability.budget` event plus two metrics
-  (`learnability.coverage_ratio`, `learnability.projected_steps_to_k_visits`)
-  and projected into `glr.cli-output.v1` from `runs show` as `learnability` and
+- **All three numbers are first-class.** The verdict is persisted as a
+  `learnability.budget` event plus three metrics
+  (`learnability.coverage_ratio`,
+  `learnability.projected_steps_to_k_visits`,
+  `learnability.state_action_cells`). The cell count is the scale the other two
+  are fractions of, and this capability is about cardinality: a coverage
+  ratio without it describes 10 cells and 10,000 cells identically. It is
+  projected into `glr.cli-output.v1` from `runs show` as `learnability` and
   `learnability_summary`. An absent verdict renders as `reported: false` with
   null fields, never as a passing one. The verdict window is bounded by
   verdicts, not by the events around them: a run with a long telemetry stream

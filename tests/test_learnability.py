@@ -30,6 +30,7 @@ from game_learning_runtime.learnability import (
     LEARNABILITY_CAPABILITY,
     LEARNABILITY_CELL_KEY,
     PROJECTED_STEPS_METRIC,
+    STATE_ACTION_CELLS_METRIC,
     CardinalityKind,
     LearnabilityBudget,
     LearnabilityBudgetError,
@@ -489,7 +490,15 @@ def test_report_round_trips_through_the_run_store_projection() -> None:
     assert restored.to_mapping() == original.to_mapping()
 
 
-def test_run_store_exposes_both_numbers_as_first_class_metrics(tmp_path: Path) -> None:
+def test_run_store_exposes_all_three_numbers_as_first_class_metrics(tmp_path: Path) -> None:
+    """Scale is recorded next to the two ratios it explains.
+
+    A coverage ratio alone cannot say whether the run covered 10 cells or
+    10,000, and cardinality is the subject of this capability, so
+    ``state_action_cells`` is a metric of its own rather than a field a
+    consumer has to reconstruct from the event payload.
+    """
+
     store = TrainingStore(tmp_path / "runs.sqlite3")
     run = store.create_run(
         environment_id="fixture.cells-v1", protocol_version="1.0", kind="training"
@@ -500,8 +509,14 @@ def test_run_store_exposes_both_numbers_as_first_class_metrics(tmp_path: Path) -
     report = tracker.report()
     store.record_learnability(run.run_id, report)
 
-    names = {metric.name for metric in store.list_metrics(run.run_id)}
-    assert names == {COVERAGE_RATIO_METRIC, PROJECTED_STEPS_METRIC}
+    metrics = {metric.name: metric.value for metric in store.list_metrics(run.run_id)}
+    assert set(metrics) == {
+        COVERAGE_RATIO_METRIC,
+        PROJECTED_STEPS_METRIC,
+        STATE_ACTION_CELLS_METRIC,
+    }
+    assert metrics[STATE_ACTION_CELLS_METRIC] == 1000.0
+    assert metrics[COVERAGE_RATIO_METRIC] == report.coverage_ratio
     restored = store.list_learnability(run.run_id)
     assert len(restored) == 1
     assert restored[0].coverage_ratio == report.coverage_ratio
@@ -509,6 +524,33 @@ def test_run_store_exposes_both_numbers_as_first_class_metrics(tmp_path: Path) -
     assert restored[0].state_action_cells == 1000
     kinds = {event.kind for event in store.list_events(run.run_id)}
     assert LEARNABILITY_BUDGET_EVENT in kinds
+
+
+def test_run_store_records_the_scale_of_a_function_approximation_run(tmp_path: Path) -> None:
+    """The recorded scale is the effective capacity, not the bin product."""
+
+    store = TrainingStore(tmp_path / "runs.sqlite3")
+    run = store.create_run(
+        environment_id="fixture.cells-v1", protocol_version="1.0", kind="training"
+    )
+    tracker = build_tracker(
+        LearnabilityPlan(
+            budget=_budget(min_coverage=None),
+            declaration=_declaration(
+                1000,
+                actions=4,
+                kind=CardinalityKind.FUNCTION_APPROXIMATION,
+                effective_capacity=512,
+            ),
+        ),
+        observation_spec=_cell_spec(1000),
+    )
+    for cell in range(256):
+        tracker.observe(cell=cell, elapsed_seconds=0.01)
+    store.record_learnability(run.run_id, tracker.report())
+    metrics = {metric.name: metric.value for metric in store.list_metrics(run.run_id)}
+    assert metrics[STATE_ACTION_CELLS_METRIC] == 512.0
+    assert metrics[COVERAGE_RATIO_METRIC] == pytest.approx(0.5)
 
 
 def test_run_store_rejects_a_foreign_report(tmp_path: Path) -> None:
