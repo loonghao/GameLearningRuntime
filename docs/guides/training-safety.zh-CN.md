@@ -55,6 +55,25 @@ Guard 只限制正向 shaping，不会抹掉负向证据。如果失败局累计
 只有新逻辑 episode 开始时才调用 `reset()`。非终局提前发送 outcome、终局缺少必需
 outcome，或终局后未 reset 继续发送 step，都会失败即关闭。
 
+### 每个奖励项都必须分类，否则加载即失败
+
+`training.json` 中的每个奖励项都必须被 `reward-safety.json` 分类：要么是终局
+`outcome_signal`，要么属于 `shaping_signals`，要么显式登记进 `unbudgeted_signals`。
+三者都不是的已声明奖励项会让 `EpisodeRewardGuard` 在构造时直接报错，而不是静默绕过
+episode 预算：
+
+```python
+EpisodeRewardGuard(training, safety)
+# ContractViolation: reward terms are neither the outcome signal nor a declared
+# shaping signal: ['item_score']; add them to shaping_signals, or to
+# unbudgeted_signals if they must stay outside the budget
+```
+
+`unbudgeted_signals` 默认为 `()`，只服务于必须留在 episode 预算之外的奖励项，例如
+外部审计的计分数据。选择它是一次显式决策而不是兜底：名称必须写出、必须对应一个已
+声明的奖励项、且不能与 `shaping_signals` 或 `outcome_signal` 相交。未纳入预算的奖励
+项仍然计入 step 与 episode 回报，只是正向 shaping 预算不再约束它们。
+
 ## 阻止 BC 模仿策略自身
 
 每条进入 BC 的轨迹都必须携带不可变的来源和权威终局结果。脚手架默认配置刻意严格：
