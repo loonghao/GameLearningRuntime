@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -39,6 +40,7 @@ from game_learning_runtime.learnability import (
     LearnabilityTracker,
     SpaceCardinality,
     StateCellResolver,
+    _string_cell,
     build_tracker,
     coerce_cell_identity,
     derive_action_cardinality,
@@ -1080,3 +1082,125 @@ Path(r"{seen}").write_text(os.environ.get("GLR_MIN_COVERAGE", ""), encoding="utf
     monkeypatch.setattr(cli, "GameLauncher", _StubGameLauncher)
     assert main(["--project", str(tmp_path), "--json", "train", "--min-coverage", "0.5"]) == 0
     assert seen.read_text(encoding="utf-8") == "0.500000"
+
+
+def test_coverage_efficiency_decays_on_a_long_run() -> None:
+    """Efficiency is new cells per step, so it must fall as steps accumulate.
+
+    Bounding the denominator by ``cells`` froze the ratio at the coverage
+    ratio once ``steps`` passed ``cells``. The projection then shrank below the
+    steps already spent and the fail-fast gate never fired -- on exactly the
+    long runs this capability exists to catch.
+    """
+
+    declaration = LearnabilityDeclaration(
+        schema_version=LEARNABILITY_BUDGET_SCHEMA_VERSION,
+        kind=CardinalityKind.TABULAR,
+        state=SpaceCardinality(cells=1_000),
+        action=SpaceCardinality(cells=1),
+    )
+    budget = LearnabilityBudget(budget_steps=100_000, min_coverage=0.8, visit_target=4)
+    tracker = LearnabilityTracker(declaration, budget)
+    # 20,000 steps that cycle through only 300 of the 1,000 cells.
+    for step in range(20_000):
+        tracker.observe(cell=step % 300, steps=1)
+
+    report = tracker.report()
+    assert report.steps == 20_000
+    assert report.distinct_cells_visited == 300
+    # 300 new cells over 20,000 steps, not over min(20_000, 1_000).
+    assert report.coverage_ratio == pytest.approx(0.3)
+    projected = report.projected_steps_to_k_visits
+    assert projected is not None
+    # The old formula produced 13,334 -- fewer steps than were already spent.
+    assert projected == 266_667
+    assert projected > report.steps
+
+
+def test_an_unresolvable_observation_is_charged_not_raised() -> None:
+    """A declared binning that does not fit the observation must not escape.
+
+    ``StateCellResolver.resolve`` raises ``KeyError`` for a missing leaf and
+    ``ValueError`` for a wrong arity or an out-of-range value. Those are
+    declared-configuration mismatches, not caller bugs, and the tracker's own
+    contract is that an untracked step is not free.
+    """
+
+    plan = LearnabilityPlan(
+        budget=LearnabilityBudget(budget_steps=1_000, min_coverage=None, visit_target=4),
+        declaration=LearnabilityDeclaration(
+            schema_version=LEARNABILITY_BUDGET_SCHEMA_VERSION,
+            kind=CardinalityKind.TABULAR,
+            state=SpaceCardinality(cells=100, bins={"a": 10, "b": 10}),
+            action=SpaceCardinality(cells=1),
+        ),
+    )
+    observation_spec = CompositeSpec(
+        {
+            "a": TensorSpec((1,), np.int64, kind=SpaceKind.DISCRETE, minimum=0, maximum=9),
+            "b": TensorSpec((1,), np.int64, kind=SpaceKind.DISCRETE, minimum=0, maximum=9),
+        }
+    )
+    tracker = build_tracker(plan, observation_spec=observation_spec)
+    assert tracker is not None
+
+    for observation in (
+        {"a": 1},  # missing leaf -> KeyError
+        {"a": [1, 2], "b": 3},  # wrong arity -> ValueError
+        {"a": 99, "b": 3},  # outside the declared bins -> ValueError
+    ):
+        report = tracker.observe(observation=observation, steps=1)
+
+    assert report.steps == 3
+    assert report.unresolved_steps == 3
+    assert report.distinct_cells_visited == 0
+
+
+def test_string_cells_do_not_collide_with_each_other_or_with_integers() -> None:
+    """Two different string cells must count as two visited cells.
+
+    The previous position-weighted sum was not injective: ``"ab"`` and ``"ca"``
+    both summed to 293, and ``""`` summed to 0, colliding with the very common
+    integer cell ``0``. Either collision under-reports coverage and can turn a
+    healthy run into a FAILED verdict.
+    """
+
+    assert _string_cell("ab") != _string_cell("ca")
+
+    declaration = LearnabilityDeclaration(
+        schema_version=LEARNABILITY_BUDGET_SCHEMA_VERSION,
+        kind=CardinalityKind.TABULAR,
+        state=SpaceCardinality(cells=1_000),
+        action=SpaceCardinality(cells=1),
+    )
+    budget = LearnabilityBudget(budget_steps=1_000, min_coverage=None)
+
+    strings = LearnabilityTracker(declaration, budget)
+    strings.observe(cell="ab")
+    strings.observe(cell="ca")
+    assert strings.distinct_cells_visited == 2
+
+    mixed = LearnabilityTracker(declaration, budget)
+    mixed.observe(cell=0)
+    mixed.observe(cell="")
+    assert mixed.distinct_cells_visited == 2
+
+
+def test_string_cell_identity_is_stable_across_processes() -> None:
+    """A run must report the same coverage after a restart.
+
+    :func:`hash` is salted per process, so using it here would let two runs of
+    the same configuration disagree about how much space they covered.
+    """
+
+    script = (
+        "from game_learning_runtime.learnability import _string_cell; print(_string_cell('zone-a'))"
+    )
+    first = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    )
+    second = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    )
+    assert first.stdout.strip() == second.stdout.strip()
+    assert first.stdout.strip() == str(_string_cell("zone-a"))

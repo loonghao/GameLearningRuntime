@@ -32,6 +32,7 @@ before: no tracker, no metrics, no verdict.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import numbers
 import re
@@ -80,6 +81,12 @@ PROJECTED_STEPS_METRIC = "learnability.projected_steps_to_k_visits"
 
 _MAX_CELLS = 2**62
 _MAX_DETAIL = 512
+
+#: String cell identities are offset beyond every integer cell so that a
+#: reported integer cell can never be counted as the same cell as a string.
+#: ``""`` hashing to ``0`` would otherwise merge with the very common
+#: ``cell=0``, and an adapter mixing both kinds would under-report coverage.
+_STRING_CELL_OFFSET = 2**63
 _LEAF_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -711,7 +718,15 @@ class LearnabilityTracker:
         timestamp = _timestamp(now_ns)
         resolved = cell
         if resolved is None and observation is not None and self._resolver is not None:
-            resolved = self._resolver.resolve(observation)
+            try:
+                resolved = self._resolver.resolve(observation)
+            except (KeyError, ValueError):
+                # The declared bins do not describe this observation, so the
+                # step has no cell. It is still charged: an untracked step is
+                # not free. This is a declared-configuration mismatch rather
+                # than a caller bug, so it must not escape collect() as a bare
+                # KeyError or ValueError that no caller can handle as GLRError.
+                resolved = None
         if resolved is not None:
             resolved = coerce_cell_identity(resolved)
             if resolved is None:
@@ -949,11 +964,20 @@ def _leaf_kind(leaf: TensorSpec) -> str:
 
 
 def _coverage_efficiency(*, distinct: int, steps: int, cells: int) -> float | None:
-    """New cells discovered per step, as a fraction of what was discoverable."""
+    """New cells discovered per step, as a fraction of what was discoverable.
+
+    The denominator is every step taken, not ``min(steps, cells)``. A bound of
+    ``cells`` would stop the ratio decaying once ``steps`` passes ``cells``: on a
+    long run the efficiency would freeze at the coverage ratio instead of
+    falling, the projected step count would shrink below the steps already
+    spent, and the fail-fast gate would stay on its permissive branch forever.
+    ``min(..., 1.0)`` covers ``distinct > steps``, which cannot happen but is
+    cheap to bound.
+    """
 
     if steps <= 0:
         return None
-    return min(distinct / min(steps, cells), 1.0)
+    return min(distinct / steps, 1.0)
 
 
 def _projected_steps_to_k_visits(
@@ -1066,9 +1090,19 @@ def _timestamp(value: int | None) -> int:
 
 
 def _string_cell(value: str) -> int:
+    """Project one string cell identity into the tracker's integer key space.
+
+    The digest is a keyed-free BLAKE2b, so it is stable across processes and
+    interpreter runs -- unlike :func:`hash`, which is salted per process and
+    would make the same run report different coverage on a restart. The
+    previous position-weighted sum was not injective: ``"ab"`` and ``"ca"``
+    both summed to 293 and were counted as one cell.
+    """
+
     if len(value) > _MAX_DETAIL:
         raise ValueError("cell identity cannot exceed 512 characters")
-    return sum((index + 1) * ord(character) for index, character in enumerate(value)) % _MAX_CELLS
+    digest = hashlib.blake2b(value.encode("utf-8"), digest_size=8).digest()
+    return _STRING_CELL_OFFSET + int.from_bytes(digest, "big") % _MAX_CELLS
 
 
 def coerce_cell_identity(value: object) -> int | str | None:
