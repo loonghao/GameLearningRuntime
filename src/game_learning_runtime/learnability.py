@@ -33,6 +33,7 @@ before: no tracker, no metrics, no verdict.
 from __future__ import annotations
 
 import math
+import numbers
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -711,9 +712,12 @@ class LearnabilityTracker:
         resolved = cell
         if resolved is None and observation is not None and self._resolver is not None:
             resolved = self._resolver.resolve(observation)
-        if resolved is not None and not isinstance(resolved, (int, str)):
-            raise TypeError("cell must be an integer, a string, or None")
         if resolved is not None:
+            resolved = coerce_cell_identity(resolved)
+            if resolved is None:
+                # Not an unresolvable step but a caller mistake: charging it as
+                # unresolved would hide it behind a coverage number.
+                raise TypeError("cell must be an integer, a string, or None")
             key = resolved if isinstance(resolved, int) else _string_cell(resolved)
             self._visited.add(key)
         elif count:
@@ -1067,6 +1071,34 @@ def _string_cell(value: str) -> int:
     return sum((index + 1) * ord(character) for index, character in enumerate(value)) % _MAX_CELLS
 
 
+def coerce_cell_identity(value: object) -> int | str | None:
+    """Normalize one reported state-cell identity to a Python native value.
+
+    A ``numpy`` integer is not a Python ``int`` and an observation is a numpy
+    array, so ``info[LEARNABILITY_CELL_KEY] = observation[0]`` is the natural
+    way for an adapter to report the cell a step landed in. Treating that
+    scalar as unresolvable charges every step to no cell: coverage stays at
+    zero, the floor never fires, and the note tells the operator to emit the
+    key they already emit. Integers of any flavour and strings resolve; a
+    value that is neither is not a cell identity, so it resolves to ``None``
+    and the step is charged as unresolved.
+    """
+
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, numbers.Integral) and not isinstance(value, bool):
+        return int(value)
+    item = getattr(value, "item", None)
+    if callable(item):
+        # A zero-dimensional array or a scalar wrapper. A multi-element array
+        # raises here, and it is not one cell either.
+        try:
+            return coerce_cell_identity(item())
+        except (AttributeError, TypeError, ValueError):
+            return None
+    return None
+
+
 def _non_negative_integer(value: object, *, path: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError(f"{path} must be a non-negative integer")
@@ -1131,6 +1163,7 @@ __all__ = [
     "SpaceCardinality",
     "StateCellResolver",
     "build_tracker",
+    "coerce_cell_identity",
     "derive_action_cardinality",
     "derive_state_cardinality",
 ]

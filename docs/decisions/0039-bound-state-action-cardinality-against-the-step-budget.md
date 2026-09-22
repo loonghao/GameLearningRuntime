@@ -41,7 +41,9 @@ Add `game_learning_runtime.learnability` behind the optional
   bin count, and `cells` must equal the product of those counts. When it does,
   a `StateCellResolver` derives the cell identity from the observation in mixed
   radix. When it does not, the adapter reports identity through
-  `info["learnability_cell"]`.
+  `info["learnability_cell"]`, which may hold any integer — a `numpy` one
+  included, because an observation is a `numpy` array and `observation[0]` is
+  the natural thing to report — or a string.
 - **Coverage is measured, and projected.** `coverage_ratio` is
   `distinct_cells_visited / state_action_cells`. Discovery efficiency is
   `distinct / min(steps, cells)`, and `projected_steps_to_k_visits` is
@@ -59,6 +61,12 @@ Add `game_learning_runtime.learnability` behind the optional
   before `MIN_EVIDENCE_STEPS` (8) steps, because a cold start cannot be told
   apart from an unlearnable configuration. In the 1,000-cell / 100-step
   fixture it raises at step 8, leaving 92% of the budget unspent.
+- **A gate abort still settles the episode.** The gate raises mid-collection,
+  so the episode it stopped would otherwise end without a terminal state and
+  without a declared-metric audit. It is closed with
+  `TerminationReason.FAILED` on the way out, like an environment error: no
+  caller may observe an episode that neither recorded a reason nor raised a
+  violation.
 - **A distinct error type.** `LearnabilityBudgetError` subclasses `GLRError` and
   deliberately is *not* a `ContractViolation` and *not* a transport error:
   nothing was violated on the wire and nothing is retryable. Its message names
@@ -70,7 +78,10 @@ Add `game_learning_runtime.learnability` behind the optional
   (`learnability.coverage_ratio`, `learnability.projected_steps_to_k_visits`)
   and projected into `glr.cli-output.v1` from `runs show` as `learnability` and
   `learnability_summary`. An absent verdict renders as `reported: false` with
-  null fields, never as a passing one.
+  null fields, never as a passing one. The verdict window is bounded by
+  verdicts, not by the events around them: a run with a long telemetry stream
+  still yields its latest verdict, so a failed verdict cannot be crowded out
+  of the window and read as a green run.
 - **`glr train --min-coverage FRACTION`** carries the floor into the run. The
   trainer owns collection, so the floor travels as configuration (run metadata
   `learnability_min_coverage`, plus a `min_coverage` value for the trainer

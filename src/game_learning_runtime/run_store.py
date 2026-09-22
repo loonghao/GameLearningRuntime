@@ -1488,12 +1488,30 @@ class TrainingStore:
     def list_learnability(
         self, run_id: str, *, limit: int = 1000
     ) -> tuple[LearnabilityReport, ...]:
-        """Return every persisted learnability verdict in sequence order."""
+        """Return the newest persisted learnability verdicts in sequence order.
 
+        The window is taken from the tail of the run's verdict stream, and the
+        kind filter happens in SQL. Selecting the first ``limit`` events and
+        filtering by kind in Python would drop every verdict of a run with
+        more than ``limit`` events -- a run that recorded a failed verdict and
+        then exited zero would read green, which is the exact hole this
+        accounting closes. Reading backwards keeps the newest verdicts and the
+        result is reversed back into sequence order, so ``verdicts[-1]`` is
+        still the latest one.
+        """
+
+        _limit(limit)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM events WHERE run_id = ? AND kind = ?
+                ORDER BY sequence_id DESC LIMIT ?
+                """,
+                (run_id, LEARNABILITY_BUDGET_EVENT, limit),
+            ).fetchall()
         return tuple(
-            LearnabilityReport.from_mapping(event.payload)
-            for event in self.list_events(run_id, limit=limit)
-            if event.kind == LEARNABILITY_BUDGET_EVENT
+            LearnabilityReport.from_mapping(json.loads(row["payload_json"]))
+            for row in reversed(rows)
         )
 
     def record_metric(

@@ -769,12 +769,17 @@ def _run_training(
             stage = "game-launch"
             game_set = GameLauncher(project.game, project_root=project.root).start(run_dir)
             manifest_path = game_set.manifest_path
-            game_extra = {
-                "game_id": project.game.game_id,
-                "game_instance_count": str(len(game_set.instances)),
-                "game_instance_ids": ",".join(item.instance_id for item in game_set.instances),
-                "game_instances_manifest": manifest_path,
-            }
+            # Merged, not rebound: a coverage floor recorded above has to
+            # survive the game launch, or a run that looks gated in its own
+            # metadata trains without the gate.
+            game_extra.update(
+                {
+                    "game_id": project.game.game_id,
+                    "game_instance_count": str(len(game_set.instances)),
+                    "game_instance_ids": ",".join(item.instance_id for item in game_set.instances),
+                    "game_instances_manifest": manifest_path,
+                }
+            )
         if capture_enabled and project.capture is not None:
             stage = "capture"
             capture_session = _start_capture(
