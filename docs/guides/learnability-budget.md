@@ -162,7 +162,7 @@ The verdict needs evidence before it is trusted: nothing raises in the first
 `MIN_EVIDENCE_STEPS` steps, because a few cold-start steps cannot distinguish an
 unlearnable configuration from a slow start.
 
-## Read both numbers without parsing logs
+## Read all three numbers without parsing logs
 
 Three surfaces carry the same `glr.learnability-budget.v1` payload:
 

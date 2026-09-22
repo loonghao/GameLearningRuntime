@@ -15,6 +15,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
+import game_learning_runtime
 from game_learning_runtime import cli
 from game_learning_runtime.cli import main
 from game_learning_runtime.collector import SyncCollector
@@ -1246,3 +1247,30 @@ def test_string_cell_identity_is_stable_across_processes() -> None:
     )
     assert first.stdout.strip() == second.stdout.strip()
     assert first.stdout.strip() == str(_string_cell("zone-a"))
+
+
+def test_package_reexports_every_name_it_publishes() -> None:
+    """`__all__` must not advertise a name the package does not bind.
+
+    A re-export that lands in `__all__` but not in the import block breaks
+    `from game_learning_runtime import *` for every consumer, and ruff cannot
+    catch it: F822 is suppressed in `__init__.py`. The learnability metric
+    constants are exactly the surface that shipped with that defect once.
+    """
+
+    missing = sorted(set(game_learning_runtime.__all__) - set(dir(game_learning_runtime)))
+    assert missing == []
+    for identifier in (
+        "COVERAGE_RATIO_METRIC",
+        "PROJECTED_STEPS_METRIC",
+        "STATE_ACTION_CELLS_METRIC",
+    ):
+        assert identifier in game_learning_runtime.__all__
+        assert getattr(game_learning_runtime, identifier) == getattr(
+            game_learning_runtime.learnability, identifier
+        )
+    assert (
+        game_learning_runtime.STATE_ACTION_CELLS_METRIC
+        == STATE_ACTION_CELLS_METRIC
+        == "learnability.state_action_cells"
+    )
