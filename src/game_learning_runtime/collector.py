@@ -29,10 +29,12 @@ from game_learning_runtime.declared_metrics import (
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
 from game_learning_runtime.learnability import (
     LEARNABILITY_CELL_KEY,
+    LearnabilityBudgetError,
     LearnabilityPlan,
     LearnabilityReport,
     LearnabilityTracker,
     build_tracker,
+    coerce_cell_identity,
 )
 from game_learning_runtime.termination import (
     EpisodeCaps,
@@ -802,6 +804,11 @@ class SyncCollector:
         A declared binning resolves the cell from the observation; otherwise an
         adapter may report it through ``info[LEARNABILITY_CELL_KEY]``. A step that resolves
         to no cell is still charged, because an untracked step is not free.
+
+        The reported cell is coerced first: an observation is a numpy array, so
+        the natural way for an adapter to report a cell yields a numpy integer,
+        which is not a Python ``int``. Dropping it would charge every step to
+        no cell and the floor would never fire.
         """
 
         tracker = self._learnability
@@ -811,7 +818,7 @@ class SyncCollector:
         cell = timestep.info.get(LEARNABILITY_CELL_KEY)
         observation = None if declared is None or not declared.bins else timestep.observation
         tracker.observe(
-            cell=cell if isinstance(cell, (int, str)) else None,
+            cell=coerce_cell_identity(cell),
             observation=observation,
             now_ns=timestep.timestamp_ns,
         )
@@ -968,7 +975,26 @@ class SyncCollector:
                     timestamp_ns=following.timestamp_ns,
                 )
             )
-            self._observe_learnability(current)
+            try:
+                self._observe_learnability(current)
+            except LearnabilityBudgetError:
+                # The gate stopped the run mid-episode, and that episode still
+                # owes a terminal state for the same reason an environment
+                # error does: no caller may observe an episode that neither
+                # recorded a reason nor raised a violation. Declared-metric
+                # strictness stays quiet -- the budget error is the failure
+                # worth propagating.
+                self._close_episode(
+                    reason=TerminationReason.FAILED,
+                    detail="learnability budget cannot reach its coverage floor",
+                    step_id=current.step_id,
+                    now_ns=current.timestamp_ns,
+                )
+                self._close_declared_metrics(
+                    current.episode_id, timestamp_ns=time.time_ns(), require=False
+                )
+                self._current = None
+                raise
             self._current = following
             if following.done:
                 # Episode close. A metric that was declared and never arrived is

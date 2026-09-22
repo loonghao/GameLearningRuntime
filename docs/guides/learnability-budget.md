@@ -63,6 +63,12 @@ identity has to arrive through `TimeStep.info`:
 info = {"learnability_cell": current_cell}
 ```
 
+The value may be any integer or a string. A `numpy` integer counts: an
+observation is a `numpy` array, so `observation[0]` is the natural thing to
+report, and `numpy` integers are not Python `int`. A value that is neither an
+integer nor a string is not a cell identity, so the step is charged as
+unresolved.
+
 Either way a step that resolves to no cell is still charged against the budget:
 an untracked step is not free, and the report says so in `notes`.
 

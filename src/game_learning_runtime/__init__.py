@@ -265,6 +265,7 @@ from game_learning_runtime.learnability import (
     SpaceCardinality,
     StateCellResolver,
     build_tracker,
+    coerce_cell_identity,
     derive_action_cardinality,
     derive_state_cardinality,
 )
@@ -876,6 +877,7 @@ __all__ = [
     "build_model_bundle",
     "build_tracker",
     "capture_atomically",
+    "coerce_cell_identity",
     "command",
     "compare_checkpoint_contract",
     "compute_visual_metrics",

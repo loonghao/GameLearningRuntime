@@ -6,7 +6,7 @@ import json
 import random
 import sys
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,6 +14,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
+from game_learning_runtime import cli
 from game_learning_runtime.cli import main
 from game_learning_runtime.collector import SyncCollector
 from game_learning_runtime.contracts import TimeStep
@@ -39,11 +40,13 @@ from game_learning_runtime.learnability import (
     SpaceCardinality,
     StateCellResolver,
     build_tracker,
+    coerce_cell_identity,
     derive_action_cardinality,
     derive_state_cardinality,
 )
 from game_learning_runtime.run_store import RunStatus, TrainingStore
 from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKind, TensorSpec
+from game_learning_runtime.termination import TerminationReason
 
 BUDGET_STEPS = 100
 
@@ -87,6 +90,25 @@ class _CellEnvironment(GameEnvironment):
             episode_id=self._episode_id,
             step_id=self._step_id,
             info={LEARNABILITY_CELL_KEY: self._position},
+        )
+
+
+class _NumpyCellEnvironment(_CellEnvironment):
+    """The same walk, reporting the cell as the numpy scalar an adapter sees.
+
+    ``observation[0]`` on a numpy observation is a ``numpy`` integer, which is
+    not a Python ``int``.
+    """
+
+    def _timestep(self) -> TimeStep:
+        return TimeStep(
+            observation={"cell": np.array([self._position], dtype=np.int64)},
+            reward=np.array([0.0], dtype=np.float32),
+            terminated=np.array([False], dtype=np.bool_),
+            truncated=np.array([False], dtype=np.bool_),
+            episode_id=self._episode_id,
+            step_id=self._step_id,
+            info={LEARNABILITY_CELL_KEY: np.int64(self._position)},
         )
 
 
@@ -153,6 +175,41 @@ def _policy(timestep: TimeStep) -> dict[str, Any]:
     return {"choice": np.array([0], dtype=np.int64)}
 
 
+class _StubGameLauncher:
+    """Stands in for :class:`~game_learning_runtime.game_launcher.GameLauncher`.
+
+    A CLI regression only needs the shape the train command consumes: one
+    instance id, one manifest file, and a close fence. Spawning a real game
+    process would test the launcher, not the mapping under test.
+    """
+
+    def __init__(self, config: object, *, project_root: object) -> None:
+        self.config = config
+
+    def start(self, run_dir: Path) -> _StubGameSet:
+        manifest = Path(run_dir) / "games" / "game-instances.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            json.dumps({"schema_version": "glr.game-instances.v1", "instances": []}),
+            encoding="utf-8",
+        )
+        return _StubGameSet(manifest)
+
+
+@dataclass(slots=True)
+class _StubGameInstance:
+    instance_id: str = "fixture.game-0000"
+
+
+@dataclass(slots=True)
+class _StubGameSet:
+    manifest_path: Path
+    instances: tuple[_StubGameInstance, ...] = (_StubGameInstance(),)
+
+    def close(self) -> None:
+        return None
+
+
 def _budget(min_coverage: float | None = 0.5) -> LearnabilityBudget:
     return LearnabilityBudget(
         budget_steps=BUDGET_STEPS,
@@ -163,6 +220,25 @@ def _budget(min_coverage: float | None = 0.5) -> LearnabilityBudget:
 
 def _plan(min_coverage: float | None = 0.5) -> LearnabilityPlan:
     return LearnabilityPlan(budget=_budget(min_coverage))
+
+
+def _upper_bound_declaration(cells: int = 1000) -> LearnabilityDeclaration:
+    """A declaration that names an upper bound and no bins.
+
+    This is the other legal path: the resolver is never built, so the cell can
+    only arrive through ``info[LEARNABILITY_CELL_KEY]``.
+    """
+
+    return LearnabilityDeclaration(
+        schema_version=LEARNABILITY_BUDGET_SCHEMA_VERSION,
+        kind=CardinalityKind.TABULAR,
+        state=SpaceCardinality(cells=cells, upper_bound=True),
+        action=SpaceCardinality(cells=1),
+    )
+
+
+def _upper_bound_plan(min_coverage: float | None = 0.5) -> LearnabilityPlan:
+    return LearnabilityPlan(budget=_budget(min_coverage), declaration=_upper_bound_declaration())
 
 
 def test_cardinality_bins_must_multiply_to_cells() -> None:
@@ -862,3 +938,145 @@ def test_report_from_mapping_rejects_a_non_numeric_ratio() -> None:
     payload = tracker.report().to_mapping()
     with pytest.raises(TypeError, match="coverage_ratio must be a number"):
         LearnabilityReport.from_mapping({**payload, "coverage_ratio": None})
+
+
+def test_numpy_cell_reported_through_info_is_resolved() -> None:
+    """An observation is a numpy array, so its scalar is a numpy integer.
+
+    Upper-bound-only adapters take this path: with no declared bins no
+    resolver is built, so dropping the scalar would charge every step to no
+    cell, hold coverage at zero, and never fire the floor -- while the note
+    tells the operator to emit the key they already emit.
+    """
+
+    tracker = LearnabilityTracker(_upper_bound_declaration(), _budget(min_coverage=None))
+    tracker.observe(cell=np.int64(5))
+    tracker.observe(cell=np.int32(5))
+    tracker.observe(cell=np.array(6))
+    assert tracker.distinct_cells_visited == 2
+    report = tracker.report()
+    assert report.unresolved_steps == 0
+    assert not any("no state cell was resolved" in note for note in report.notes)
+
+
+def test_upper_bound_adapter_reached_through_info_meets_the_floor() -> None:
+    """The collector agrees with the tracker: a numpy cell still counts."""
+
+    collector = SyncCollector(
+        _NumpyCellEnvironment(_environment(1000).spec), learnability=_upper_bound_plan()
+    )
+    with pytest.raises(LearnabilityBudgetError):
+        collector.collect(_policy, steps=BUDGET_STEPS)
+    report = collector.learnability_report()
+    assert report is not None
+    assert report.distinct_cells_visited > 0
+    assert report.unresolved_steps == 0
+
+
+def test_foreign_cell_values_stay_inert_or_loud() -> None:
+    """The two reporting paths agree: what one resolves the other resolves."""
+
+    tracker = LearnabilityTracker(_upper_bound_declaration(), _budget(min_coverage=None))
+    with pytest.raises(TypeError, match="cell must be an integer, a string, or None"):
+        tracker.observe(cell=1.5)  # type: ignore[arg-type]
+    # A value that is not a cell identity at all is unresolvable, not wrong:
+    # it stays charged as an unresolved step, exactly as it was before.
+    assert coerce_cell_identity(object()) is None
+    assert coerce_cell_identity(np.array([1, 2])) is None
+    assert coerce_cell_identity(np.int64(7)) == 7
+    assert coerce_cell_identity("zone-a") == "zone-a"
+
+
+def test_learnability_abort_settles_the_episode_it_stopped(tmp_path: Path) -> None:
+    """A gate abort owes a terminal state, like an environment error does.
+
+    An episode that neither recorded a reason nor raised a violation must not
+    be observable: the store would otherwise show a run that ended an episode
+    as having ended none, and its declared-metric audit would never settle.
+    """
+
+    store = TrainingStore(tmp_path / "runs.sqlite3")
+    run = store.create_run(
+        environment_id="fixture.cells-v1", protocol_version="1.0", kind="training"
+    )
+    collector = SyncCollector(
+        _environment(1000),
+        learnability=_plan(),
+        on_termination=store.termination_sink(run.run_id),
+    )
+    with pytest.raises(LearnabilityBudgetError):
+        collector.collect(_policy, steps=BUDGET_STEPS)
+    terminations = store.list_episode_terminations(run.run_id)
+    assert len(terminations) == 1
+    assert terminations[0].reason is TerminationReason.FAILED
+    assert len(collector.terminations) == 1
+
+
+def test_list_learnability_survives_a_long_event_stream(tmp_path: Path) -> None:
+    """The verdict window is bounded by verdicts, not by the events around them.
+
+    A run that records a failed verdict after a long telemetry stream still has
+    to be readable, or a trainer that exits zero reads green while `runs show`
+    reports the verdict as unreported.
+    """
+
+    store = TrainingStore(tmp_path / "runs.sqlite3")
+    run = store.create_run(
+        environment_id="fixture.cells-v1", protocol_version="1.0", kind="training"
+    )
+    for index in range(1200):
+        store.append_event(run.run_id, kind="telemetry", payload={"index": index})
+    tracker = LearnabilityTracker(_upper_bound_declaration(), _budget())
+    tracker.observe(cell=1, elapsed_seconds=0.01, steps=20)
+    report = tracker.report()
+    assert report.failed
+    store.record_learnability(run.run_id, report)
+    verdicts = store.list_learnability(run.run_id)
+    assert len(verdicts) == 1
+    assert verdicts[-1].failed
+
+
+def test_train_passes_the_coverage_floor_when_a_game_is_launched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The floor has to survive the game launch.
+
+    Rebinding the extra mapping at game launch dropped it, and a game-backed
+    project is the ordinary shape of a real run, so the gate never reached the
+    trainer while the run metadata still claimed it was set.
+    """
+
+    seen = tmp_path / "min-coverage.txt"
+    (tmp_path / "trainer.py").write_text(
+        f"""
+import os
+from pathlib import Path
+
+Path(r"{seen}").write_text(os.environ.get("GLR_MIN_COVERAGE", ""), encoding="utf-8")
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "bridge").mkdir()
+    project = {
+        "schema_version": "glr.project.v1",
+        "environment_id": "fixture.cells-v1",
+        "environment_family": "fixture",
+        "protocol_version": "1.0",
+        "data_dir": ".glr",
+        "bridge_path": "bridge",
+        "runtime": {"argv": [sys.executable, "-c", "print('runtime')"]},
+        "player": {"argv": [sys.executable, "-c", "print('play')", "{bundle}"]},
+        "trainer": {"argv": [sys.executable, str(tmp_path / "trainer.py")]},
+        "game": {
+            "schema_version": "glr.game-launch.v1",
+            "game_id": "fixture.game",
+            "command": {"argv": [sys.executable, "-c", "print('game')"]},
+            "instances": 1,
+            "readiness": {"kind": "file", "path": "ready.json"},
+        },
+    }
+    (tmp_path / "glr-project.json").write_text(json.dumps(project), encoding="utf-8")
+    monkeypatch.setattr(cli, "GameLauncher", _StubGameLauncher)
+    assert main(["--project", str(tmp_path), "--json", "train", "--min-coverage", "0.5"]) == 0
+    assert seen.read_text(encoding="utf-8") == "0.500000"
