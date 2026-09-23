@@ -52,18 +52,20 @@ def prepare(payload: Path, output: Path, **overrides: str) -> Path:
 def test_release_snapshots_a_model_and_never_autoruns_it(payload: Path, tmp_path: Path) -> None:
     prepared = tmp_path / "installer project"
     script = prepare(payload, prepared)
-    manifest = json.loads((prepared / "release.json").read_text())
+    manifest = json.loads((prepared / "release.json").read_text(encoding="utf-8"))
     assert manifest["mode"] == "frozen-playback"
     assert manifest["evidence_kind"] == "synthetic"
     assert manifest["files"]["app.exe"]["size_bytes"] > 0
-    assert str(payload) not in (prepared / "release.json").read_text()
-    text = script.read_text()
+    assert str(payload) not in (prepared / "release.json").read_text(encoding="utf-8")
+    text = script.read_text(encoding="utf-8")
     assert "PrivilegesRequired=lowest" in text
     assert "AppId=glr-example-app-1.0.0" in text
     assert "[Run]" not in text
     assert "[UninstallDelete]" not in text
-    (payload / "app.exe").write_text("modified original")
-    assert (prepared / "payload/app.exe").read_text() == "synthetic build fixture only"
+    (payload / "app.exe").write_text("modified original", encoding="utf-8")
+    assert (prepared / "payload/app.exe").read_text(
+        encoding="utf-8"
+    ) == "synthetic build fixture only"
     with pytest.raises(FileExistsError):
         prepare(payload, prepared)
 
@@ -92,7 +94,7 @@ def test_release_rejects_incomplete_or_mismatched_payload(payload: Path, tmp_pat
         prepare(payload, payload / "output")
     with pytest.raises(ValueError, match="same stage"):
         prepare(payload, tmp_path / "output", stage="stage-2")
-    (payload / "evaluation.json").write_text("[]")
+    (payload / "evaluation.json").write_text("[]", encoding="utf-8")
     with pytest.raises(ValueError, match="same stage"):
         prepare(payload, tmp_path / "output")
     (payload / "app.exe").unlink()
@@ -102,9 +104,9 @@ def test_release_rejects_incomplete_or_mismatched_payload(payload: Path, tmp_pat
 
 def test_release_rejects_unlabelled_evidence(payload: Path, tmp_path: Path) -> None:
     evaluation = payload / "evaluation.json"
-    value = json.loads(evaluation.read_text())
+    value = json.loads(evaluation.read_text(encoding="utf-8"))
     value["evidence_kind"] = "assumed"
-    evaluation.write_text(json.dumps(value))
+    evaluation.write_text(json.dumps(value), encoding="utf-8")
     with pytest.raises(ValueError, match="distinguish"):
         prepare(payload, tmp_path / "output")
 
@@ -136,11 +138,11 @@ def test_release_checks_compiler_output_and_integrity(
 def test_release_rejects_modified_compiler_script(payload: Path, tmp_path: Path) -> None:
     prepared = tmp_path / "prepared"
     script = prepare(payload, prepared)
-    script.write_text(script.read_text() + "[Run]\n")
+    script.write_text(script.read_text(encoding="utf-8") + "[Run]\n", encoding="utf-8")
     with pytest.raises(ValueError, match="script differs"):
         compile_windows_installer(prepared, compiler=tmp_path / "unused")
     manifest = prepared / "release.json"
-    manifest.write_text('{"schema_version":"unknown"}')
+    manifest.write_text('{"schema_version":"unknown"}', encoding="utf-8")
     with pytest.raises(ValueError, match="schema"):
         compile_windows_installer(prepared, compiler=tmp_path / "unused")
 

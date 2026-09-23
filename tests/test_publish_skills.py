@@ -13,7 +13,8 @@ def test_publisher_passes_an_isolated_config_and_cleans_it(monkeypatch):
     with registry_environment(True) as env:
         path = Path(env["CLAWHUB_CONFIG_PATH"])
         assert path.name == "config.json"
-        assert path.read_text() and json.loads(path.read_text())["token"] == "test-token"
+        content = path.read_text(encoding="utf-8")
+        assert content and json.loads(content)["token"] == "test-token"
         assert "CLAWHUB_TOKEN" not in env
         assert os.environ["CLAWHUB_CONFIG_PATH"] == "existing-user-config.json"
     assert not path.exists()
