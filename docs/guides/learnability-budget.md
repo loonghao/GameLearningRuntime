@@ -241,3 +241,12 @@ must not read green.
   question, reported elsewhere as `learning_status`.
 - **No enforcement without opt-in.** An undeclared adapter, or a caller that
   supplies no plan, gets no tracker, no metrics, and no verdict.
+
+## Related
+
+- [Agent-first CLI](agent-first-cli.md) — the `glr.cli-output.v1` envelope these
+  keys are projected into.
+- ADR-0039 in [the decision index](../decisions/README.md) — why the cardinality
+  bound is gated on coverage.
+- ADR-0043 in [the decision index](../decisions/README.md) — why one key is one
+  shape in every verb that publishes it.
