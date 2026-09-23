@@ -228,6 +228,7 @@ from game_learning_runtime.hooks import (
     HookRegistry,
     HookResult,
     HookSubscription,
+    hook_config_guard,
     render_message,
     validate_message_template,
 )
@@ -1005,6 +1006,7 @@ __all__ += [
     "WebhookHookAction",
     "WebhookRecordedCall",
     "WebhookTransport",
+    "hook_config_guard",
     "register_builtin_actions",
     "render_message",
     "urllib_webhook_transport",

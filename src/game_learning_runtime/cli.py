@@ -844,6 +844,17 @@ def _run_training(
                 except BaseException as error:
                     if failure_error is None and interrupted is None:
                         failure_error = error
+                    else:
+                        # Keeping the first error is deliberate: it is the root
+                        # cause of the run. Dropping the capture failure without
+                        # a trace would still hide a second defect that loses
+                        # review artifacts, so it is logged instead.
+                        _LOGGER.warning(
+                            "capture finalization failed after the run already failed;"
+                            " keeping the original error: %s: %s",
+                            type(error).__name__,
+                            error,
+                        )
         finally:
             if game_set is not None:
                 game_set.close()

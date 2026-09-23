@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+import game_learning_runtime
+from game_learning_runtime import hooks as hooks_module
 from game_learning_runtime.cli import main
 from game_learning_runtime.hook_actions import (
     LogHookAction,
@@ -35,6 +37,7 @@ from game_learning_runtime.hooks import (
     HookEventStatus,
     HookRegistry,
     HookSubscription,
+    hook_config_guard,
     render_message,
     validate_message_template,
 )
@@ -48,6 +51,9 @@ def _project(
     trainer_argv: list[str] | None = None,
     capture_argv: list[str] | None = None,
     hooks: dict[str, Any] | None = None,
+    researcher_argv: list[str] | None = None,
+    planner_argv: list[str] | None = None,
+    evaluator_argv: list[str] | None = None,
 ) -> None:
     (root / "bridge").mkdir()
     value: dict[str, object] = {
@@ -60,6 +66,9 @@ def _project(
         "runtime": {"argv": [sys.executable, "-c", "print('runtime')"]},
         "trainer": {"argv": trainer_argv or [sys.executable, "-c", "print('train')"]},
         "player": {"argv": [sys.executable, "-c", "print('play')", "{bundle}"]},
+        "researcher": (None if researcher_argv is None else {"argv": researcher_argv}),
+        "planner": (None if planner_argv is None else {"argv": planner_argv}),
+        "evaluator": (None if evaluator_argv is None else {"argv": evaluator_argv}),
         "capture": (
             None
             if capture_argv is None
@@ -79,6 +88,70 @@ def _project(
     if hooks is not None:
         value["hooks"] = hooks
     (root / "glr-project.json").write_text(json.dumps(value), encoding="utf-8")
+
+
+def _recorder(root: Path) -> Path:
+    """Write a recorder that produces the declared video and index artifacts."""
+
+    recorder = root / "recorder.py"
+    recorder.write_text(
+        """
+import json
+import os
+import sys
+from pathlib import Path
+
+Path(os.environ["GLR_CAPTURE_VIDEO"]).write_bytes(b"synthetic-h264")
+Path(os.environ["GLR_CAPTURE_INDEX"]).write_text(json.dumps({
+    "schema_version": "glr.capture-frame.v1",
+    "run_id": os.environ["GLR_RUN_ID"],
+    "episode_id": "12345678-1234-5678-1234-567812345678",
+    "step_id": 0,
+    "frame_index": 0,
+    "pts_ns": 0,
+    "observation_timestamp_ns": 1
+}) + "\\n", encoding="utf-8")
+for line in sys.stdin:
+    if line.strip() == "q":
+        break
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    return recorder
+
+
+def _goal(root: Path) -> Path:
+    """Write a minimal agent goal and return its path."""
+
+    goal = root / "goal.json"
+    goal.write_text(
+        json.dumps(
+            {
+                "schema_version": "glr.agent-goal.v1",
+                "goal_id": "goal.reach-destination",
+                "objective": "Reach the destination and verify arrival.",
+                "environment_family": "action-rpg",
+                "success_criteria": [
+                    {
+                        "metric": "objective.arrived",
+                        "operator": "gte",
+                        "target": 1,
+                        "source": "runtime.telemetry",
+                    }
+                ],
+                "budget": {
+                    "max_trials": 2,
+                    "max_training_steps": 1000,
+                    "max_wall_seconds": 60,
+                    "max_research_sources": 4,
+                },
+                "allowed_research_media": ["text-guide"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return goal
 
 
 def _event(name: str = "train.failed", **overrides: Any) -> HookEvent:
@@ -949,35 +1022,10 @@ def test_exception_path_still_records_the_failure_hook_result(tmp_path: Path) ->
 def test_exception_path_records_the_record_stop_hook_result(tmp_path: Path) -> None:
     """`record.stop` is published from a `finally`, so it needs a live run too."""
 
-    recorder = tmp_path / "recorder.py"
-    recorder.write_text(
-        """
-import json
-import os
-import sys
-from pathlib import Path
-
-Path(os.environ["GLR_CAPTURE_VIDEO"]).write_bytes(b"synthetic-h264")
-Path(os.environ["GLR_CAPTURE_INDEX"]).write_text(json.dumps({
-    "schema_version": "glr.capture-frame.v1",
-    "run_id": os.environ["GLR_RUN_ID"],
-    "episode_id": "12345678-1234-5678-1234-567812345678",
-    "step_id": 0,
-    "frame_index": 0,
-    "pts_ns": 0,
-    "observation_timestamp_ns": 1
-}) + "\\n", encoding="utf-8")
-for line in sys.stdin:
-    if line.strip() == "q":
-        break
-""".strip()
-        + "\n",
-        encoding="utf-8",
-    )
     _project(
         tmp_path,
         trainer_argv=[str(tmp_path / "does-not-exist")],
-        capture_argv=[sys.executable, str(recorder)],
+        capture_argv=[sys.executable, str(_recorder(tmp_path))],
         hooks={"subscriptions": [{"event": "record.*", "action": "notify.message"}]},
     )
 
@@ -991,6 +1039,194 @@ for line in sys.stdin:
     ]
     assert [item["event"] for item in events] == ["record.start", "record.stop"]
     assert run.status is RunStatus.FAILED
+
+
+def test_keyboard_interrupt_marks_the_run_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl+C is a verdict of its own, not a failure with an exit code.
+
+    `KeyboardInterrupt` is a `BaseException`, so a single `except BaseException`
+    would report an interrupted run as `failed` and hand it exit code 1. The
+    run status, the `train.failed` status, and the published event sequence all
+    have to keep telling the interrupted story, and the recorder started before
+    the interrupt still has to be finalized.
+    """
+
+    _project(
+        tmp_path,
+        capture_argv=[sys.executable, str(_recorder(tmp_path))],
+        hooks={
+            "subscriptions": [
+                {
+                    "event": "train.*",
+                    "action": "notify.message",
+                    "config": {"outbox": "hooks/messages.jsonl"},
+                },
+                {
+                    "event": "record.*",
+                    "action": "notify.message",
+                    "config": {"outbox": "hooks/messages.jsonl"},
+                },
+            ]
+        },
+    )
+
+    def _interrupt(*args: object, **kwargs: object) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("game_learning_runtime.cli._run_command", _interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        main(["--project", str(tmp_path), "--format", "json", "train"])
+
+    store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
+    runs = store.list_runs(environment_id="example.adventure-v1")
+    assert len(runs) == 1
+    run = store.get_run(runs[0].run_id)
+    assert run.status is RunStatus.INTERRUPTED
+    assert run.exit_code is None
+
+    events = [
+        event.payload for event in store.list_events(run.run_id) if event.kind == "hook.dispatched"
+    ]
+    assert [item["event"] for item in events] == [
+        "train.start",
+        "record.start",
+        "record.stop",
+        "train.failed",
+    ]
+    assert all(item["dispatched"] == 1 for item in events)
+
+    messages = [
+        json.loads(line)
+        for line in (tmp_path / "hooks/messages.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [item["event"] for item in messages] == [
+        "train.start",
+        "record.start",
+        "record.stop",
+        "train.failed",
+    ]
+    interrupted = messages[-1]
+    assert interrupted["status"] == "interrupted"
+    assert interrupted["exit_code"] is None
+    assert interrupted["reason"] == "training was interrupted"
+    assert interrupted["kind"] == "training"
+
+
+def test_goal_failure_publishes_the_goal_failed_event(tmp_path: Path) -> None:
+    """A goal run that raises still publishes `goal.failed` before it dies.
+
+    The run stays non-terminal until its lifecycle events are published, so
+    without the `BaseException` branch the store keeps a `goal` run that never
+    reached a verdict and never recorded why.
+    """
+
+    _project(
+        tmp_path,
+        hooks={
+            "subscriptions": [
+                {
+                    "event": "goal.*",
+                    "action": "notify.message",
+                    "config": {"outbox": "hooks/messages.jsonl"},
+                }
+            ]
+        },
+        researcher_argv=[str(tmp_path / "does-not-exist")],
+        planner_argv=[sys.executable, "-c", "print('plan')"],
+        evaluator_argv=[sys.executable, "-c", "print('evaluate')"],
+    )
+
+    with pytest.raises(FileNotFoundError):
+        main(
+            [
+                "--project",
+                str(tmp_path),
+                "--format",
+                "json",
+                "goal",
+                "run",
+                "--goal",
+                str(_goal(tmp_path)),
+            ]
+        )
+
+    store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
+    runs = store.list_runs(environment_id="example.adventure-v1")
+    assert len(runs) == 1
+    run = store.get_run(runs[0].run_id)
+    assert run.status is RunStatus.FAILED
+    assert run.exit_code == 1
+
+    events = [
+        event.payload for event in store.list_events(run.run_id) if event.kind == "hook.dispatched"
+    ]
+    assert [item["event"] for item in events] == ["goal.start", "goal.failed"]
+    assert all(item["dispatched"] == 1 for item in events)
+
+    messages = [
+        json.loads(line)
+        for line in (tmp_path / "hooks/messages.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [item["event"] for item in messages] == ["goal.start", "goal.failed"]
+    failure = messages[-1]
+    assert failure["status"] == "failed"
+    assert failure["kind"] == "goal"
+    assert failure["exit_code"] == 1
+    assert failure["reason"].startswith("FileNotFoundError: ")
+
+
+def test_capture_finalization_error_is_logged_when_the_run_already_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The root cause wins, but the discarded capture error is still visible.
+
+    Without the warning, a recorder that loses its artifacts on the way out
+    leaves no trace at all behind a trainer failure, and the next run looks
+    like it failed for the trainer's reason alone.
+    """
+
+    _project(
+        tmp_path,
+        trainer_argv=[str(tmp_path / "does-not-exist")],
+        capture_argv=[sys.executable, str(_recorder(tmp_path))],
+    )
+
+    def _broken_capture(*args: object, **kwargs: object) -> bool:
+        raise RuntimeError("capture manifest could not be written")
+
+    monkeypatch.setattr("game_learning_runtime.cli._finish_capture", _broken_capture)
+
+    with (
+        caplog.at_level(logging.WARNING, logger="game_learning_runtime.cli"),
+        pytest.raises(FileNotFoundError),
+    ):
+        main(["--project", str(tmp_path), "--format", "json", "train"])
+
+    store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
+    run = store.list_runs(environment_id="example.adventure-v1")[0]
+    assert run.status is RunStatus.FAILED
+
+    discarded = [
+        record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING
+    ]
+    assert [text for text in discarded if "capture finalization failed" in text] == [
+        "capture finalization failed after the run already failed; keeping the original error:"
+        " RuntimeError: capture manifest could not be written"
+    ]
+
+
+def test_hook_config_guard_is_exported_for_third_party_actions() -> None:
+    """A third-party action must reach the shared guard through the package."""
+
+    assert "hook_config_guard" in hooks_module.__all__
+    assert game_learning_runtime.hook_config_guard is hook_config_guard
+    with pytest.raises(HookConfigurationError, match=r"unexpected fields: \['typo'\]"):
+        game_learning_runtime.hook_config_guard(
+            {"typo": 1}, allowed=frozenset({"queue"}), path="ticket.create config"
+        )
 
 
 def test_runtime_failure_still_records_its_hook_result(tmp_path: Path) -> None:

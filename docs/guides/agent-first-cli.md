@@ -173,20 +173,24 @@ still parking and the caller should retry — while every other verdict keeps th
 
 ## Notify on lifecycle events
 
-Hooks attach a named action to a named lifecycle event. The control plane publishes
-`train.start`, `train.complete`, `train.failed`, `record.start`, `record.stop`, `goal.*`,
-`runtime.*`, and `play.*`; any other lowercase dotted identifier is also a legal event name, so an
-adapter can publish its own. A subscription selects an event or a whole namespace (`train.*`) and
-narrows it by environment, run kind, stage, status, and exit-code range.
+Hooks attach a named action to a named lifecycle event. The control plane publishes `train.start`,
+`train.complete`, `train.failed`, `record.start`, `record.stop`, `goal.start`, `goal.complete`,
+`goal.failed`, `runtime.start`, `runtime.complete`, `runtime.failed`, `play.start`,
+`play.complete`, and `play.failed`; any other lowercase dotted identifier is also a legal event
+name, so an adapter can publish its own. A subscription selects an event or a whole namespace
+(`train.*`) and narrows it by environment, run kind, stage, status, and exit-code range.
 
 ```bash
 glr hooks list --format json
-glr hooks emit --event train.failed --status failed --exit-code 7 --reason oom --dry-run
+glr hooks emit --event train.failed --status failed --kind training --stage trainer \
+  --exit-code 7 --reason oom --dry-run
 ```
 
 `hooks list` fails on an unknown action or a malformed configuration, so a mistake surfaces when the
-manifest is edited. `hooks emit` publishes a synthetic event and exits `1` when an action failed or
-timed out.
+manifest is edited. `hooks emit` publishes a synthetic event through the same dispatcher and is
+strict about the event itself: an illegal event, `--kind`, or `--stage` fails the verb instead of
+reporting a quiet no-op. It exits `1` when an action failed or timed out, which makes it usable as a
+configuration smoke test.
 
 A hook is observability, never a dependency: an action that raises or exceeds its budget is reported
 as a `failed` or `timeout` result, and a run whose hook configuration is unusable proceeds with no
