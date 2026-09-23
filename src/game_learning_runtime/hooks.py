@@ -880,6 +880,7 @@ __all__ = [
     "HookRegistry",
     "HookResult",
     "HookSubscription",
+    "hook_config_guard",
     "render_message",
     "validate_message_template",
 ]
