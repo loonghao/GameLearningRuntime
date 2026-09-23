@@ -659,12 +659,8 @@ def test_cli_rejects_a_coverage_floor_outside_the_unit_interval(tmp_path: Path) 
         main(["--project", str(tmp_path), "--json", "train", "--min-coverage", "0"])
 
 
-def test_cli_fails_a_green_trainer_that_recorded_a_failed_verdict(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _project(tmp_path)
-    (tmp_path / "trainer.py").write_text(
-        """
+_RECORDING_TRAINER = (
+    """
 import os
 from game_learning_runtime.learnability import (
     LEARNABILITY_BUDGET_SCHEMA_VERSION,
@@ -689,10 +685,16 @@ tracker = LearnabilityTracker(
 tracker.observe(cell=1, elapsed_seconds=0.01, steps=20)
 store.record_learnability(os.environ["GLR_RUN_ID"], tracker.report())
 """.strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "glr-project.json").write_text(
+    + "\n"
+)
+
+
+def _project_recording_a_verdict(root: Path) -> None:
+    """A project whose trainer records one failed verdict and still exits zero."""
+
+    _project(root)
+    (root / "trainer.py").write_text(_RECORDING_TRAINER, encoding="utf-8")
+    (root / "glr-project.json").write_text(
         json.dumps(
             {
                 "schema_version": "glr.project.v1",
@@ -703,16 +705,48 @@ store.record_learnability(os.environ["GLR_RUN_ID"], tracker.report())
                 "bridge_path": "bridge",
                 "runtime": {"argv": [sys.executable, "-c", "print('runtime')"]},
                 "player": {"argv": [sys.executable, "-c", "print('play')", "{bundle}"]},
-                "trainer": {"argv": [sys.executable, str(tmp_path / "trainer.py")]},
+                "trainer": {"argv": [sys.executable, str(root / "trainer.py")]},
             }
         ),
         encoding="utf-8",
     )
+
+
+def test_cli_fails_a_green_trainer_that_recorded_a_failed_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _project_recording_a_verdict(tmp_path)
     exit_code = main(["--project", str(tmp_path), "--json", "train", "--min-coverage", "0.5"])
     assert exit_code == 1
     data = json.loads(capsys.readouterr().out)["data"]
     assert data["status"] == "failed"
-    assert data["learnability"]["status"] == "failed"
+    assert data["learnability_summary"]["status"] == "failed"
+    assert [verdict["status"] for verdict in data["learnability"]] == ["failed"]
+
+
+def test_cli_train_publishes_the_same_learnability_shapes_as_runs_show(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`learnability` means one shape from every verb that publishes it.
+
+    `train` used to put the newest verdict under `learnability` while
+    `runs show` put the recorded history there, so a caller had to know which
+    verb produced the payload before it could read the key. One name now means
+    one shape everywhere: the list is the history, the `learnability_summary`
+    key is the newest entry.
+    """
+
+    _project_recording_a_verdict(tmp_path)
+    assert main(["--project", str(tmp_path), "--json", "train", "--min-coverage", "0.5"]) == 1
+    trained = json.loads(capsys.readouterr().out)["data"]
+
+    assert main(["--project", str(tmp_path), "--json", "runs", "show", trained["run_id"]]) == 0
+    shown = json.loads(capsys.readouterr().out)["data"]
+
+    assert isinstance(trained["learnability"], list)
+    assert isinstance(trained["learnability_summary"], dict)
+    assert trained["learnability"] == shown["learnability"]
+    assert trained["learnability_summary"] == shown["learnability_summary"]
 
 
 def test_cardinality_rejects_malformed_bins_and_bounds() -> None:

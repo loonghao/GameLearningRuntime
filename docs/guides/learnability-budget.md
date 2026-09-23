@@ -175,15 +175,35 @@ Three surfaces carry the same `glr.learnability-budget.v1` payload:
   the scale the other two are fractions of: the same coverage ratio on 10
   cells and on 10,000 is not the same result, and a ratio alone cannot say
   which run this was;
-- `glr.cli-output.v1` from `glr --project . --json runs show <run-id>`, which
-  adds `learnability` and a `learnability_summary` next to the run record.
+- `glr.cli-output.v1` from `glr --project . --json runs show <run-id>` and from
+  `glr --project . --json train`, which add the same two keys next to the run
+  record: `learnability` is the list of recorded verdicts, oldest first, and
+  `learnability_summary` is the newest one.
 
 ```json
+"learnability": [
+  {
+    "schema_version": "glr.learnability-budget.v1",
+    "state_action_cells": 1000,
+    "distinct_cells_visited": 95,
+    "steps": 100,
+    "updates": 100,
+    "visit_target": 4,
+    "coverage_ratio": 0.095,
+    "projected_steps_to_k_visits": 4211,
+    "steps_per_second": 2.5,
+    "budget_steps": 100,
+    "min_coverage": 0.5,
+    "status": "failed"
+  }
+],
 "learnability_summary": {
   "schema_version": "glr.learnability-budget.v1",
   "reported": true,
+  "verdict_count": 1,
   "status": "failed",
   "state_action_cells": 1000,
+  "distinct_cells_visited": 95,
   "coverage_ratio": 0.095,
   "projected_steps_to_k_visits": 4211,
   "steps_per_second": 2.5,
@@ -192,8 +212,11 @@ Three surfaces carry the same `glr.learnability-budget.v1` payload:
 }
 ```
 
-When no verdict was recorded, `reported` is `false` and every field is `null`.
-An absent verdict is never silently rendered as a passing one.
+Both verbs publish both keys with these shapes, so a caller reads the payload
+without first asking which verb produced it. When no verdict was recorded,
+`learnability` is an empty list and `learnability_summary` reports
+`reported: false` with every field `null`. An absent verdict is never silently
+rendered as a passing one.
 
 ## Enforce it from the CLI
 
@@ -218,3 +241,12 @@ must not read green.
   question, reported elsewhere as `learning_status`.
 - **No enforcement without opt-in.** An undeclared adapter, or a caller that
   supplies no plan, gets no tracker, no metrics, and no verdict.
+
+## Related
+
+- [Agent-first CLI](agent-first-cli.md) — the `glr.cli-output.v1` envelope these
+  keys are projected into.
+- ADR-0039 in [the decision index](../decisions/README.md) — why the cardinality
+  bound is gated on coverage.
+- ADR-0043 in [the decision index](../decisions/README.md) — why one key is one
+  shape in every verb that publishes it.
