@@ -12,4 +12,5 @@ def test_qa_creates_dated_json_and_html(tmp_path):
     assert result.status == "passed"
     files = list(Path(result.output_dir).iterdir())
     assert {path.name for path in files} == {"result.json", "index.html"}
-    assert "inspect whole game" in (Path(result.output_dir) / "index.html").read_text()
+    report = (Path(result.output_dir) / "index.html").read_text(encoding="utf-8")
+    assert "inspect whole game" in report

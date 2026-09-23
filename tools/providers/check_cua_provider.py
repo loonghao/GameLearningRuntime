@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--state-file", required=True, type=Path)
     parser.add_argument("--activate-before-capture", action="store_true")
     args = parser.parse_args()
-    before_count = json.loads(args.state_file.read_text())["count"]
+    before_count = json.loads(args.state_file.read_text(encoding="utf-8"))["count"]
     print(f"provider=dcc-cua runtime=1.8.1 pid={args.pid} hwnd={args.hwnd}", flush=True)
     backend = DccCuaBackend(
         args.cli.resolve(),
@@ -40,7 +40,7 @@ def main():
         after = session.act("advance", expected_sequence=before.sequence, hold_ms=50)
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
-            count = json.loads(args.state_file.read_text())["count"]
+            count = json.loads(args.state_file.read_text(encoding="utf-8"))["count"]
             if count == before_count + 1:
                 break
             time.sleep(0.05)

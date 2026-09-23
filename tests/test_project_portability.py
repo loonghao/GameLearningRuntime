@@ -65,16 +65,21 @@ def test_extension_mount_is_root_relative_and_strict(tmp_path: Path) -> None:
     config = tmp_path / "config/runtime.toml"
     config.parent.mkdir()
     config.write_text('[game]\ndirectory = "game"\n', encoding="utf-8")
-    path.write_text(MANIFEST + '\n[extensions.example]\nconfig = "config/runtime.toml"\n')
+    path.write_text(
+        MANIFEST + '\n[extensions.example]\nconfig = "config/runtime.toml"\n', encoding="utf-8"
+    )
     project = load_project(path)
     assert project.extensions == {"example": config}
     with pytest.raises(TypeError):
         project.extensions["other"] = config
-    path.write_text(MANIFEST + '\n[extensions.example]\nconfig = "../outside.toml"\n')
+    path.write_text(
+        MANIFEST + '\n[extensions.example]\nconfig = "../outside.toml"\n', encoding="utf-8"
+    )
     with pytest.raises(ValueError, match="project-relative"):
         load_project(path)
     path.write_text(
-        MANIFEST + '\n[extensions.example]\nconfig = "config/runtime.toml"\nextra = 1\n'
+        MANIFEST + '\n[extensions.example]\nconfig = "config/runtime.toml"\nextra = 1\n',
+        encoding="utf-8",
     )
     with pytest.raises(ValueError, match="unexpected"):
         load_project(path)
@@ -85,7 +90,7 @@ def test_extension_mount_is_root_relative_and_strict(tmp_path: Path) -> None:
 )
 def test_toml_rejects_unknown_fields(tmp_path: Path, extra: str) -> None:
     path = _manifest(tmp_path)
-    path.write_text(MANIFEST + extra)
+    path.write_text(MANIFEST + extra, encoding="utf-8")
     with pytest.raises(ValueError):
         load_project(path)
 
@@ -106,9 +111,9 @@ def test_game_directory_accepts_owned_or_explicit_external(tmp_path: Path) -> No
 
 def test_legacy_json_subdirectory_still_works(tmp_path: Path) -> None:
     path = _manifest(tmp_path)
-    value = tomllib.loads(path.read_text())
+    value = tomllib.loads(path.read_text(encoding="utf-8"))
     path.unlink()
-    (tmp_path / "glr-project.json").write_text(json.dumps(value))
+    (tmp_path / "glr-project.json").write_text(json.dumps(value), encoding="utf-8")
     nested = tmp_path / "src/deep"
     nested.mkdir(parents=True)
     assert load_project(nested).root == tmp_path
