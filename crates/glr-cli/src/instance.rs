@@ -583,11 +583,34 @@ mod tests {
         }
     }
 
-    fn free_port() -> u16 {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        port
+    /// A loopback port held open for as long as this guard lives, and never
+    /// answered.
+    ///
+    /// Both properties a "no longer there" fixture needs come from *keeping*
+    /// the listener rather than binding it, reading the number and dropping
+    /// it:
+    ///
+    /// * the number stays ours for the whole test, so a test running in
+    ///   parallel cannot bind it in the window between choosing the port and
+    ///   probing it, and then answer on this instance's behalf;
+    /// * nothing replies, which is what makes a probe read it as
+    ///   [`State::Stale`] for the right reason: the kernel completes the
+    ///   handshake into the listen backlog and the read then times out, the
+    ///   same verdict a server that stopped answering gets.
+    struct SilentPort {
+        listener: TcpListener,
+    }
+
+    impl SilentPort {
+        fn bind() -> Self {
+            Self {
+                listener: TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap(),
+            }
+        }
+
+        fn port(&self) -> u16 {
+            self.listener.local_addr().unwrap().port()
+        }
     }
 
     /// A one-shot loopback responder, so a probe can be tested against a real
@@ -680,7 +703,8 @@ mod tests {
     #[test]
     fn a_lease_round_trips_and_removes_itself() {
         let directory = tempfile::tempdir().unwrap();
-        let mine = sample(free_port());
+        let silent = SilentPort::bind();
+        let mine = sample(silent.port());
         let path = directory.path().join(format!("{}.json", mine.instance_id));
         let lease = Lease::publish(directory.path(), mine.clone()).unwrap();
         assert!(path.is_file());
@@ -724,9 +748,12 @@ mod tests {
             "{listing}"
         );
 
-        // The same address answering as *this* instance is live.
+        // The same address answering as *this* instance is live. The number
+        // below is a placeholder `moved` replaces; it is held rather than
+        // merely unused so nothing can claim it while the record carries it.
         let directory = tempfile::tempdir().unwrap();
-        let mine = sample(free_port());
+        let placeholder = SilentPort::bind();
+        let mine = sample(placeholder.port());
         let owned = responder(&format!(
             r#"{{"instance":{{"instance_id":"{}"}}}}"#,
             mine.instance_id
@@ -742,7 +769,10 @@ mod tests {
     #[test]
     fn pruning_forgets_only_addresses_that_stopped_answering() {
         let directory = tempfile::tempdir().unwrap();
-        let gone = sample(free_port());
+        // Held and silent: nothing may bind this number and answer for it, and
+        // the probe has to time out on it to call it gone.
+        let silent = SilentPort::bind();
+        let gone = sample(silent.port());
         let _gone = Lease::publish(directory.path(), gone.clone()).unwrap();
         let answered = sample(responder(
             r#"{"instance":{"instance_id":"ffffffffffffffffffffffffffffffff"}}"#,
@@ -762,9 +792,28 @@ mod tests {
     }
 
     #[test]
+    fn a_held_port_answers_nobody_and_stays_ours() {
+        let silent = SilentPort::bind();
+        let port = silent.port();
+
+        // Nothing replies, so the address reads as gone for the reason a dead
+        // server does: the probe is accepted and then times out.
+        let (state, detail) = probe(&sample(port));
+        assert_eq!(state, State::Stale, "{detail:?}");
+
+        // Still exclusively ours: the number is not handed out again while the
+        // guard lives, which is exactly what bind-then-drop gave away.
+        assert!(
+            TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_err(),
+            "port {port} was handed out again while it was held"
+        );
+    }
+
+    #[test]
     fn an_unreadable_lease_does_not_hide_the_readable_ones() {
         let directory = tempfile::tempdir().unwrap();
-        let lease = Lease::publish(directory.path(), sample(free_port())).unwrap();
+        let silent = SilentPort::bind();
+        let lease = Lease::publish(directory.path(), sample(silent.port())).unwrap();
         fs::write(directory.path().join("truncated.json"), b"{").unwrap();
         let listing = survey(directory.path(), None, false).unwrap();
         assert_eq!(listing["instances"].as_array().unwrap().len(), 1);
@@ -774,7 +823,8 @@ mod tests {
 
     #[test]
     fn stop_refuses_what_it_cannot_prove() {
-        let nothing = request_stop(&sample(free_port())).unwrap_err();
+        let silent = SilentPort::bind();
+        let nothing = request_stop(&sample(silent.port())).unwrap_err();
         assert!(nothing.to_string().contains("nothing to stop"), "{nothing}");
 
         let stranger = sample(responder(r#"{"instance":{"instance_id":"beef"}}"#));
