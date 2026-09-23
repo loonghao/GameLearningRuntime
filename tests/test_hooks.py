@@ -1218,6 +1218,47 @@ def test_capture_finalization_error_is_logged_when_the_run_already_failed(
     ]
 
 
+def test_capture_finalization_error_names_the_interrupted_terminal_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`Ctrl+C` is not a failure, and the discarded capture log says which one it was.
+
+    Capture finalization runs in the `finally` block, so it runs after an
+    interrupt too. Naming that run `failed` in the only trace left behind by
+    the lost artifacts sends the operator after the wrong terminal state.
+    """
+
+    _project(tmp_path, capture_argv=[sys.executable, str(_recorder(tmp_path))])
+
+    def _interrupt(*args: object, **kwargs: object) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("game_learning_runtime.cli._run_command", _interrupt)
+
+    def _broken_capture(*args: object, **kwargs: object) -> bool:
+        raise RuntimeError("capture manifest could not be written")
+
+    monkeypatch.setattr("game_learning_runtime.cli._finish_capture", _broken_capture)
+
+    with (
+        caplog.at_level(logging.WARNING, logger="game_learning_runtime.cli"),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        main(["--project", str(tmp_path), "--format", "json", "train"])
+
+    store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
+    run = store.list_runs(environment_id="example.adventure-v1")[0]
+    assert run.status is RunStatus.INTERRUPTED
+
+    discarded = [
+        record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING
+    ]
+    assert [text for text in discarded if "capture finalization failed" in text] == [
+        "capture finalization failed after the run was interrupted; keeping the original error:"
+        " RuntimeError: capture manifest could not be written"
+    ]
+
+
 def test_hook_config_guard_is_exported_for_third_party_actions() -> None:
     """A third-party action must reach the shared guard through the package."""
 
