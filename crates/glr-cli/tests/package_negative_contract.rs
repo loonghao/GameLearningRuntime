@@ -485,6 +485,10 @@ fn non_source_and_machine_local_paths_are_refused() {
         "config.local.json",
         "bundle.local",
         "override.local.yaml",
+        // A directory component that ends in `.local` is a local override too:
+        // the rule matches per path component, not on the whole path string.
+        "a.local/b.json",
+        "a.local/sub/b.json",
         // The package manifest is generated, never selected.
         "glr-package.json",
     ];
