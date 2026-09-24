@@ -186,6 +186,33 @@ jobs:
           path: dashboard-ui/dist/
       - run: vx just ci-runtime-host
 
+  runtime-host-windows:
+    # Windows counterpart of the Ubuntu Rust lane. It protects the
+    # platform-specific branches that never execute on Linux. Only the tests run
+    # here: formatting and clippy are host independent and stay with the Ubuntu
+    # lane. Not part of branch protection: adding it changes the merge gate for
+    # every pull request and needs its own decision.
+    name: Runtime Host and provider SDKs (Windows)
+    needs: dashboard
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned vx toolchain
+        uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
+        with:
+          version: "0.9.30"
+          github-token: ${{ github.token }}
+          tools: "just rust"
+          cache: "true"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dashboard-ui
+          path: dashboard-ui/dist/
+      - run: vx just ci-runtime-host-windows
+
   package:
     name: Build distribution
     needs: [core, gymnasium, torchrl, runtime-host]
