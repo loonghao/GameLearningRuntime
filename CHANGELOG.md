@@ -4,6 +4,48 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.23.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.22.0...v0.23.0) (2026-09-24)
+
+
+### Features
+
+* **entry-point:** pin one entry point per project with launch attestation ([9452131](https://github.com/loonghao/GameLearningRuntime/commit/945213139c5020d739f8a7f1fa3ed6bf4d93f6eb)), closes [#159](https://github.com/loonghao/GameLearningRuntime/issues/159)
+* **episode:** make an indeterminate outcome absorbing (GLR [#155](https://github.com/loonghao/GameLearningRuntime/issues/155)) ([226f1b9](https://github.com/loonghao/GameLearningRuntime/commit/226f1b946635a4a9a17e125d2d8ceaf427ce7fca))
+* **episode:** require a termination reason for every episode (GLR [#156](https://github.com/loonghao/GameLearningRuntime/issues/156)) ([af2f010](https://github.com/loonghao/GameLearningRuntime/commit/af2f0105fbf9d5e2a25f7a04b41a9c9367d6672f))
+* **glr-cli:** bind a default goal per project ([#151](https://github.com/loonghao/GameLearningRuntime/issues/151)) ([8422166](https://github.com/loonghao/GameLearningRuntime/commit/8422166dcbeb3890db167fc6578a3e36c11565f0))
+* **glr-cli:** record the trainer window during glr train ([fd652f1](https://github.com/loonghao/GameLearningRuntime/commit/fd652f1267b85918148edefd3c4dffda7cd220e3))
+* **glr-cli:** report offline conformance for materialized packages ([#163](https://github.com/loonghao/GameLearningRuntime/issues/163)) ([859b4f4](https://github.com/loonghao/GameLearningRuntime/commit/859b4f4fa574777b8e29a63a778bd92688c162db))
+* **glr-recording:** add PID-scoped Windows Graphics Capture recording ([345a5fe](https://github.com/loonghao/GameLearningRuntime/commit/345a5fe54fb212b9ec5dac6f5450ac59055c328a))
+* **governance:** add agent onboarding, modular tools, watchdog and fork gate ([852332f](https://github.com/loonghao/GameLearningRuntime/commit/852332fcc005f58cf1ac73d7a9cfb52e25447741))
+* **hooks:** register lifecycle hooks per environment and dimension ([#175](https://github.com/loonghao/GameLearningRuntime/issues/175)) ([5cacd40](https://github.com/loonghao/GameLearningRuntime/commit/5cacd408a74b6290b46e9ef62c5c9961b7b3c56c))
+* **learnability:** bound state-action cardinality against the step budget ([1a3d233](https://github.com/loonghao/GameLearningRuntime/commit/1a3d2330c3d36b6baa46cabbf902bd3d66790b38))
+* **learnability:** record the declared scale as a first-class metric ([f43ccd8](https://github.com/loonghao/GameLearningRuntime/commit/f43ccd8d9a9156946d66f5a2e3db57a8933da3ed))
+* **metrics:** fail closed on a declared metric that is never emitted ([f19edb9](https://github.com/loonghao/GameLearningRuntime/commit/f19edb989e81935ffc57dc97f51157e262b8735a))
+
+
+### Bug Fixes
+
+* align release metadata and formatting with the recording crate ([0bb5d2e](https://github.com/loonghao/GameLearningRuntime/commit/0bb5d2e0e0b4eb03c7a9a2d923ef9d852ebadfdd))
+* **cli:** publish one learnability shape from train and runs show ([#180](https://github.com/loonghao/GameLearningRuntime/issues/180)) ([c580983](https://github.com/loonghao/GameLearningRuntime/commit/c580983da02139916b779ce6809f510cc53112d4))
+* **entry-point:** fail closed on a directory the walk cannot list ([#176](https://github.com/loonghao/GameLearningRuntime/issues/176)) ([97d15d6](https://github.com/loonghao/GameLearningRuntime/commit/97d15d68ff90d19f7362f3668f4520394f9e1279)), closes [#159](https://github.com/loonghao/GameLearningRuntime/issues/159)
+* **episode:** bind the termination sink with the run ([6b8c5cb](https://github.com/loonghao/GameLearningRuntime/commit/6b8c5cb0d3de5aca2e8624ca8097aca09594eeb1))
+* **episode:** land every termination in the run store ([b58d437](https://github.com/loonghao/GameLearningRuntime/commit/b58d437972342ae1b83a6b9cf5eaf49878f0ed4b))
+* **goal:** revalidate stored bindings and record the context source ([6ff1985](https://github.com/loonghao/GameLearningRuntime/commit/6ff19853c53882a5f602898bebcf5194d7a089e9))
+* **governance:** harden the watchdog contract and the layout gate ([e6d132e](https://github.com/loonghao/GameLearningRuntime/commit/e6d132eeb167369e7cdf808e69dddeb043383163))
+* **learnability:** land the coverage floor a game-backed run can reach ([c697862](https://github.com/loonghao/GameLearningRuntime/commit/c6978626cdf05052bff1151432bf39c78a654b8d))
+* **learnability:** let coverage efficiency decay with every step ([90a356f](https://github.com/loonghao/GameLearningRuntime/commit/90a356fd264e3cb6f9d32faf7918e3d21f9a9ae1))
+* **learnability:** re-export the state-action-cells metric from the package ([22705d2](https://github.com/loonghao/GameLearningRuntime/commit/22705d245a61c3400b7e1a7c6cb33af44284c024))
+* **recording:** resolve review findings on PID window recording ([78d003d](https://github.com/loonghao/GameLearningRuntime/commit/78d003dcc406f1ffa7818af38138cac088c9da44))
+* **safety:** fail closed on unclassified reward terms ([#173](https://github.com/loonghao/GameLearningRuntime/issues/173)) ([ff39105](https://github.com/loonghao/GameLearningRuntime/commit/ff39105b3f8959160d72ece362bf49e8cec87080)), closes [#160](https://github.com/loonghao/GameLearningRuntime/issues/160)
+
+
+### Documentation
+
+* add portable training package ADR and phased plan ([d4844d4](https://github.com/loonghao/GameLearningRuntime/commit/d4844d4734d452c5013258879f21470ee3821b96))
+* docs/guides/learnability-budget.md and ADR-0039. ([1a3d233](https://github.com/loonghao/GameLearningRuntime/commit/1a3d2330c3d36b6baa46cabbf902bd3d66790b38))
+* document window recording configuration and outputs ([cb3e42e](https://github.com/loonghao/GameLearningRuntime/commit/cb3e42eb8296b768d428eb75da8b8630953fd428))
+* **entry-point:** exit code 2 on a run is not retryable; pin the unlistable root ([#177](https://github.com/loonghao/GameLearningRuntime/issues/177)) ([36c4110](https://github.com/loonghao/GameLearningRuntime/commit/36c41100665a08327894d5a16a473fc7887fda79)), closes [#159](https://github.com/loonghao/GameLearningRuntime/issues/159)
+
 ## [0.22.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.21.0...v0.22.0) (2026-09-17)
 
 

@@ -517,7 +517,7 @@ terms.loss.backward()
 ```yaml
 jobs:
   quality:
-    uses: loonghao/GameLearningRuntime/.github/workflows/reusable-python-ci.yml@v0.22.0 # x-release-please-version
+    uses: loonghao/GameLearningRuntime/.github/workflows/reusable-python-ci.yml@v0.23.0 # x-release-please-version
     with:
       python-versions: '["3.10", "3.12"]'
       sync-args: "--frozen --all-groups"
