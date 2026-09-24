@@ -214,7 +214,7 @@ impl InvariantConfig {
             .map(|path| portable_path(project_root, path))
             .collect::<Vec<_>>();
         let skipped_files = outcome
-            .too_large
+            .unchecked
             .iter()
             .map(|path| portable_path(project_root, path))
             .collect::<Vec<_>>();
@@ -251,7 +251,10 @@ pub struct InvariantResult {
     pub marker: String,
     /// Every matching path, project-relative with forward slashes.
     pub matches: Vec<String>,
-    /// Candidates too large to read, so the invariant could not be verified.
+    /// Entries the walk could not check, so the invariant could not be
+    /// verified over them. Every path here makes the verdict `truncated`,
+    /// never `ok`: an unchecked entry may be the second declaration this
+    /// module exists to refuse.
     pub skipped_files: Vec<String>,
     pub scanned_files: usize,
 }
@@ -474,9 +477,47 @@ pub fn enforce_at_run_start(project: &Project) -> Result<EntryPointReport> {
 #[derive(Debug, Default)]
 struct ScanOutcome {
     matches: Vec<PathBuf>,
-    too_large: Vec<PathBuf>,
+    /// Entries the walk could not check, so the marker question is unanswered
+    /// for them: a candidate too large to read, or an entry the OS would not
+    /// describe. Named, never dropped, so [`InvariantConfig::check_with_budget`]
+    /// can refuse an invariant it could only partly verify.
+    unchecked: Vec<PathBuf>,
+    /// Files the walk recognised as files. An entry it could not classify was
+    /// never recognised as anything, so it is not counted here.
     scanned_files: usize,
+    /// A bound stopped the walk, so the tree is only partly covered.
     truncated: bool,
+}
+
+/// What the walk learned about one directory entry.
+///
+/// `file_type()` is the walk's only look at an entry, and it fails when the
+/// entry changes between the listing and that look. `Unknown` keeps the
+/// failure visible instead of dropping it: the entry may be the second
+/// declaration this module exists to refuse, so the walk records it in
+/// [`ScanOutcome::unchecked`] and lets the invariant refuse.
+#[derive(Debug, PartialEq, Eq)]
+enum Inspected {
+    /// The OS would not describe the entry, so nothing about it is known.
+    Unknown,
+    Symlink,
+    Directory,
+    File,
+    /// A socket, a device, or anything else that cannot carry the marker.
+    Other,
+}
+
+impl Inspected {
+    /// Classify one entry from the only look the walk gets at it.
+    fn of(result: std::io::Result<fs::FileType>) -> Self {
+        match result {
+            Err(_) => Self::Unknown,
+            Ok(file_type) if file_type.is_symlink() => Self::Symlink,
+            Ok(file_type) if file_type.is_dir() => Self::Directory,
+            Ok(file_type) if file_type.is_file() => Self::File,
+            Ok(_) => Self::Other,
+        }
+    }
 }
 
 /// Bounded, symlink-free, std-only walk over one invariant root.
@@ -513,69 +554,76 @@ fn scan(scan: &Scan<'_>) -> Result<ScanOutcome> {
                 )));
             }
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            // The OS stopped yielding entries part-way through the listing. It
+            // names no entry, so the directory is what the report can name:
+            // the walk no longer knows what is under it, which is exactly the
+            // state this module refuses to read as "exactly one".
+            let Ok(entry) = entry else {
+                outcome.unchecked.push(directory.clone());
+                continue;
+            };
             if outcome.scanned_files >= budget.max_files {
                 outcome.truncated = true;
                 break 'walk;
             }
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(_) => continue,
-            };
-            // Never follow a symlink: the walk cannot loop or leave the root.
-            if file_type.is_symlink() {
-                continue;
-            }
             let path = entry.path();
-            if file_type.is_dir() {
-                if depth + 1 > budget.max_depth {
-                    outcome.truncated = true;
-                    continue;
+            match Inspected::of(entry.file_type()) {
+                // Not a skip. The entry was never classified, so it is never
+                // counted as scanned either: all the walk knows is that a
+                // candidate it cannot rule out is under this root.
+                Inspected::Unknown => outcome.unchecked.push(path),
+                // Never follow a symlink: the walk cannot loop or leave the root.
+                Inspected::Symlink | Inspected::Other => continue,
+                Inspected::Directory => {
+                    if depth + 1 > budget.max_depth {
+                        outcome.truncated = true;
+                        continue;
+                    }
+                    let name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default();
+                    if SKIP_DIRECTORIES.contains(&name) {
+                        continue;
+                    }
+                    stack.push((path, depth + 1));
                 }
-                let name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default();
-                if SKIP_DIRECTORIES.contains(&name) {
-                    continue;
+                Inspected::File => {
+                    outcome.scanned_files += 1;
+                    if suffix.is_some_and(|suffix| !path.to_string_lossy().ends_with(suffix)) {
+                        continue;
+                    }
+                    let size = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+                    if size > budget.max_file_bytes {
+                        outcome.unchecked.push(path);
+                        continue;
+                    }
+                    if total_bytes + size > budget.max_total_bytes {
+                        outcome.truncated = true;
+                        break 'walk;
+                    }
+                    total_bytes += size;
+                    // A file that vanished between `read_dir` and `read`, or one
+                    // the OS will not open, is a typed contract error naming the
+                    // invariant and the path — never a bare OS error from inside
+                    // the walk.
+                    let bytes = fs::read(&path).map_err(|error| {
+                        Error::Contract(format!(
+                            "{SCHEMA_VERSION}: invariant {invariant_id:?} could not read {}: {error}",
+                            portable_path(project_root, &path)
+                        ))
+                    })?;
+                    if contains(&bytes, marker) {
+                        outcome.matches.push(path);
+                    }
                 }
-                stack.push((path, depth + 1));
-                continue;
-            }
-            if !file_type.is_file() {
-                continue;
-            }
-            outcome.scanned_files += 1;
-            if suffix.is_some_and(|suffix| !path.to_string_lossy().ends_with(suffix)) {
-                continue;
-            }
-            let size = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
-            if size > budget.max_file_bytes {
-                outcome.too_large.push(path);
-                continue;
-            }
-            if total_bytes + size > budget.max_total_bytes {
-                outcome.truncated = true;
-                break 'walk;
-            }
-            total_bytes += size;
-            // A file that vanished between `read_dir` and `read`, or one the OS
-            // will not open, is a typed contract error naming the invariant and
-            // the path — never a bare OS error from inside the walk.
-            let bytes = fs::read(&path).map_err(|error| {
-                Error::Contract(format!(
-                    "{SCHEMA_VERSION}: invariant {invariant_id:?} could not read {}: {error}",
-                    portable_path(project_root, &path)
-                ))
-            })?;
-            if contains(&bytes, marker) {
-                outcome.matches.push(path);
             }
         }
     }
 
     outcome.matches.sort();
-    outcome.too_large.sort();
+    outcome.unchecked.sort();
     Ok(outcome)
 }
 
@@ -604,8 +652,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        ENTRY_DRIFT_REFUSED_EXIT_CODE, InvariantConfig, Scan, ScanBudget, attest_with, contains,
-        enforce_with, report_with, scan,
+        ENTRY_DRIFT_REFUSED_EXIT_CODE, Inspected, InvariantConfig, Scan, ScanBudget, attest_with,
+        contains, enforce_with, report_with, scan,
     };
 
     const MANIFEST: &str = r#"
@@ -809,6 +857,65 @@ argv = ["python", "-c", "pass"]
         assert_eq!(result.status, "truncated");
         assert_eq!(result.skipped_files, vec!["src/huge.py"]);
         assert!(!result.is_ok());
+    }
+
+    /// An entry the walk could not check is named and the invariant is
+    /// `truncated`, even when the marker was already seen: what is unverified
+    /// is the whole root, not the one candidate that failed.
+    #[test]
+    fn an_unchecked_candidate_is_named_and_truncated() {
+        let root = TempDir::new().expect("tempdir");
+        write(root.path(), "src/learner.py", "class Learner");
+        let result = InvariantConfig {
+            id: "single-learner".into(),
+            root: "src".into(),
+            marker: "class Learner".into(),
+            suffix: Some(".py".into()),
+        }
+        .check_with_budget(
+            root.path(),
+            &ScanBudget {
+                // No candidate is readable, so every candidate is unchecked.
+                max_file_bytes: 0,
+                ..ScanBudget::default()
+            },
+        )
+        .expect("check succeeds");
+        assert_eq!(result.status, "truncated", "{result:?}");
+        assert_eq!(result.skipped_files, vec!["src/learner.py"]);
+        assert!(!result.is_ok(), "{result:?}");
+    }
+
+    /// How one directory entry is classified, including the failure the walk
+    /// can no longer drop.
+    ///
+    /// `file_type()` failing is a race between the listing and the look, so no
+    /// test can construct it deterministically; the error arm is pinned here
+    /// and the reporting it feeds is pinned in [`scan`] and in
+    /// [`an_unchecked_candidate_is_named_and_truncated`].
+    #[test]
+    fn entries_are_classified_from_the_only_look_the_walk_gets() {
+        let root = TempDir::new().expect("tempdir");
+        write(root.path(), "learner.py", "class Learner");
+        write(root.path(), "nested/keep.txt", "");
+        let entries = fs::read_dir(root.path())
+            .expect("root is listable")
+            .map(|entry| entry.expect("entry is readable"))
+            .collect::<Vec<_>>();
+        let file = entries
+            .iter()
+            .find(|entry| entry.path().is_file())
+            .expect("a file is present");
+        let directory = entries
+            .iter()
+            .find(|entry| entry.path().is_dir())
+            .expect("a directory is present");
+        assert_eq!(Inspected::of(file.file_type()), Inspected::File);
+        assert_eq!(Inspected::of(directory.file_type()), Inspected::Directory);
+        // An entry the OS will not describe is `Unknown`, which `scan` records
+        // instead of skipping.
+        let gone = std::io::Error::other("the entry changed during the walk");
+        assert_eq!(Inspected::of(Err(gone)), Inspected::Unknown);
     }
 
     #[test]
@@ -1371,6 +1478,48 @@ marker = "class Learner"
             .expect("one learner passes");
         assert!(report.ready);
         assert_eq!(report.invariants[0].status, "ok");
+    }
+
+    /// The chain the fail-closed decision rests on, under the documented
+    /// budget and through the gate the unattended loop calls: a candidate the
+    /// walk could not check is `truncated`, and `truncated` is refused before
+    /// the run starts rather than recorded as `ok`.
+    #[test]
+    fn an_unchecked_candidate_fails_the_run_start_gate() {
+        let (_root, project) = project_with_tree(
+            r#"
+[entry_point]
+schema_version = "glr.entry-point.v1"
+id = "campaign-driver"
+command = "python -m campaign.driver"
+version = "1.4.0"
+
+[[entry_point.invariants]]
+id = "single-learner"
+root = "src"
+suffix = ".py"
+marker = "class Learner"
+"#,
+            &[
+                ("src/learner.py", "class Learner: pass\n"),
+                (
+                    "src/huge.py",
+                    &"x".repeat((super::MAX_FILE_BYTES as usize) + 1),
+                ),
+            ],
+        );
+        let error = enforce_with(&project, claimed("campaign-driver", Some("1.4.0")))
+            .expect_err("an unverified invariant must refuse the run");
+        let message = error.to_string();
+        assert!(
+            matches!(error, crate::error::Error::Contract(_)),
+            "the refusal must be typed, not a bare OS error: {message}"
+        );
+        assert!(message.contains("single-learner"), "{message}");
+        assert!(
+            message.contains("src/huge.py"),
+            "the unchecked candidate must be named, so the report shows what was not verified: {message}"
+        );
     }
 
     #[test]
