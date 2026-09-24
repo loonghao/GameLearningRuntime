@@ -1239,7 +1239,13 @@ argv = ["python", "-c", "pass"]
             matches!(error, crate::error::Error::Contract(_)),
             "the root's verdict is an evaluation failure, not `missing`: {error}"
         );
-        assert!(error.to_string().contains("src"), "{error}");
+        // Anchored on the colon so the root is named as a whole path: a bare
+        // `src` substring would also pass on `could not list src/learner.py`,
+        // which is a different failure than the one this test pins.
+        assert!(
+            error.to_string().contains("could not list src:"),
+            "the error must name the invariant root itself: {error}"
+        );
     }
 
     #[test]
