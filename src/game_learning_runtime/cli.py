@@ -958,7 +958,12 @@ def _run_training(
     # Every run verb reports `failure` unconditionally so an agent can parse
     # one shape instead of guessing whether the key is present.
     output["failure"] = failure
-    output["learnability"] = _learnability_summary(verdicts)
+    # Projected so a scheduler can read the verdicts without walking events,
+    # metrics, or a log. `learnability` is the history and
+    # `learnability_summary` is the newest entry, the same two shapes
+    # `runs show` publishes under the same two names.
+    output["learnability"] = [_learnability_value(verdict) for verdict in verdicts]
+    output["learnability_summary"] = _learnability_summary(verdicts)
     _emit("train", output, as_json=as_json)
     return exit_code
 
@@ -2243,7 +2248,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "terminations": _terminations_value(terminations),
             "termination_summary": _termination_summary(terminations),
             # Projected so a scheduler can read both learnability numbers
-            # without walking events, metrics, or a log.
+            # without walking events, metrics, or a log. Same two shapes as
+            # `train`: the history, then the newest entry.
             "learnability": [_learnability_value(report) for report in learnability],
             "learnability_summary": _learnability_summary(learnability),
         }
