@@ -53,7 +53,7 @@ def main():
         check=True,
         timeout=60,
     )
-    receipt = json.loads((player / "glr-player-smoke.json").read_text())
+    receipt = json.loads((player / "glr-player-smoke.json").read_text(encoding="utf-8"))
     if receipt != {
         "engine": "unity",
         "backend": args.backend,

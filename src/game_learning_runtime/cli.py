@@ -849,9 +849,18 @@ def _run_training(
                         # cause of the run. Dropping the capture failure without
                         # a trace would still hide a second defect that loses
                         # review artifacts, so it is logged instead.
+                        #
+                        # The branch is shared with `Ctrl+C`: an interrupted
+                        # run ends with a different verdict than a failed one,
+                        # so the log names the terminal state it belongs to
+                        # instead of always claiming a failure.
+                        outcome = "already failed"
+                        if interrupted is not None:
+                            outcome = "was interrupted"
                         _LOGGER.warning(
-                            "capture finalization failed after the run already failed;"
+                            "capture finalization failed after the run %s;"
                             " keeping the original error: %s: %s",
+                            outcome,
                             type(error).__name__,
                             error,
                         )

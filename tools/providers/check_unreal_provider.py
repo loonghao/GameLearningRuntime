@@ -29,7 +29,8 @@ def main():
                     {"Name": "EditorScriptingUtilities", "Enabled": True},
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     with (output / "startup.log").open("w") as log:
         subprocess.run(
@@ -49,7 +50,7 @@ def main():
             check=True,
             timeout=300,
         )
-    receipt = json.loads((output / "Saved/glr-smoke.json").read_text())
+    receipt = json.loads((output / "Saved/glr-smoke.json").read_text(encoding="utf-8"))
     if receipt != {
         "engine": "unreal-editor",
         "actor_steps": 3,
