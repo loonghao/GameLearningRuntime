@@ -53,6 +53,14 @@ fn is_local_override(name: &str) -> bool {
     lower.contains(".local.") || lower.ends_with(".local")
 }
 
+/// True when any path component is a recipient-local override form.
+///
+/// Both gates must call this: whatever export refuses is exactly what the
+/// conformance scan ignores. Keep it as the single definition.
+fn is_local_override_path(raw: &str) -> bool {
+    raw.split('/').any(is_local_override)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Selection {
@@ -138,8 +146,7 @@ fn source_path(raw: &str) -> Result<()> {
                 "cache",
             ]
             .contains(&part)
-    }) || lower.contains(".local.")
-        || lower.ends_with(".local")
+    }) || is_local_override_path(&lower)
         || lower == MANIFEST
         || ![
             "py", "rs", "toml", "json", "yaml", "yml", "md", "txt", "lock", "cs", "cpp", "h",
@@ -476,7 +483,7 @@ fn scan_tree(root: &Path, prefix: &str, depth: usize, scan: &mut Scan) -> Result
             if name.to_ascii_lowercase() == RUN_STORE_FILE {
                 scan.forbidden.push(relative.clone());
             }
-            if relative.split('/').any(is_local_override) {
+            if is_local_override_path(&relative) {
                 scan.local_overrides.push(relative);
                 continue;
             }
@@ -1176,8 +1183,52 @@ mod tests {
         );
         assert_eq!(report["axes"]["synthetic_reproduction"], "pass");
         // A local override is never acceptable inside the package itself.
-        for path in ["glr-project.local.json", "secrets.local.toml", "a.local"] {
+        for path in [
+            "glr-project.local.json",
+            "secrets.local.toml",
+            "a.local",
+            "a.local/b.json",
+            "a.local/sub/b.json",
+        ] {
             assert!(source_path(path).is_err(), "{path}");
+        }
+    }
+
+    /// Export and conformance must answer the same question with the same
+    /// predicate: what export refuses is exactly what the scan ignores.
+    #[test]
+    fn export_and_conformance_agree_on_every_local_override_form() {
+        // Every entry is otherwise source-legal, so the local-override rule is
+        // the only thing that can make `source_path` refuse it.
+        let cases: &[(&str, bool)] = &[
+            ("train.py", false),
+            ("pkg/mod.py", false),
+            ("src/deep/nested/lib.rs", false),
+            ("local.py", false),
+            ("pkg/local/mod.py", false),
+            ("docs/local.override.md", false),
+            ("glr-project.local.json", true),
+            ("secrets.local.toml", true),
+            ("pkg/config.local.json", true),
+            ("pkg/a.local.d/b.json", true),
+            ("x/a.local.deep/b.py", true),
+            ("a.local/b.json", true),
+            ("a.local/sub/b.json", true),
+            ("a.local/sub/deep/c.md", true),
+            ("pkg/inner.local/nested/b.json", true),
+            ("A.LOCAL/B.JSON", true),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(
+                is_local_override_path(path),
+                *expected,
+                "is_local_override_path({path:?})"
+            );
+            assert_eq!(
+                source_path(path).is_ok(),
+                !is_local_override_path(path),
+                "export and conformance disagree on {path:?}"
+            );
         }
     }
 

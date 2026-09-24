@@ -48,7 +48,13 @@ overwritten. A rejected or interrupted operation never replaces an existing
 project. A killed process may leave an isolated temporary directory for cleanup.
 
 Selection is an explicit redistribution decision. Denied roots/extensions exclude
-environments, caches, raw logs, recordings, datasets and binaries. An extension
+environments, caches, raw logs, recordings, datasets and binaries. Recipient-local
+overrides (`*.local.*` and `*.local`) are refused per path component, so a file
+inside a directory whose name ends in `.local` — `a.local/b.json`, for example —
+is refused just like `glr-project.local.json`. Export and conformance share that
+single predicate: what export refuses is exactly what the conformance scan
+ignores in the destination, which is what makes "a `.local` path in the
+destination is a recipient artifact" a safe assumption. An extension
 allowlist cannot prove that a source file contains no secret or licensed content:
 the exporter must review selected source contents, local overrides, credentials,
 endpoints, and redistribution rights before export. The package is not a trusted
