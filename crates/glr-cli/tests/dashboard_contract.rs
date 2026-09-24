@@ -987,13 +987,21 @@ fn two_projects_start_without_a_port_and_a_port_names_its_own_project() {
         64
     );
     // `project.root` is canonicalised, which on Windows means the verbatim
-    // `\\?\` prefix; compare the path the operator would recognise.
+    // `\\?\` prefix; compare the path the operator would recognise. The temp
+    // directory is spelled the way `TEMP` spells it - an 8.3 short name on some
+    // runners - so canonicalise the expectation the same way instead of
+    // comparing the raw string.
+    let canonical_root = fs::canonicalize(first.path()).unwrap();
+    let expected_root = canonical_root
+        .to_string_lossy()
+        .trim_start_matches("\\\\?\\")
+        .to_owned();
     assert_eq!(
         health["instance"]["project_root"]
             .as_str()
             .unwrap()
             .trim_start_matches("\\\\?\\"),
-        first.path().to_str().unwrap(),
+        expected_root,
         "{health}"
     );
 
