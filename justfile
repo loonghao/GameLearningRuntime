@@ -137,6 +137,14 @@ ci-package: setup workflow-check build
 ci-runtime-host: setup lock-check rust-check provider-sdk-check
     vx uv run --no-sync python tools/ci/check_store_interop.py
 
+# Windows counterpart of the Rust lane. It exercises the platform-specific
+# branches that never execute on Linux: exclusive `share_mode(0)` opens and
+# `FILE_FLAG_BACKUP_SEMANTICS` directory handles. Formatting and clippy stay
+# with the Ubuntu lane: both are host independent, and running them twice only
+# lengthens the signal.
+ci-runtime-host-windows:
+    vx cargo test --locked -p glr-cli -p glr-host
+
 release-check tag:
     vx uv run python tools/release/verify_release.py {{tag}}
     vx just check
