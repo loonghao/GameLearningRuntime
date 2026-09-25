@@ -46,6 +46,7 @@
 - [ADR-0041: Ship portable training packages as group-scoped, non-executing envelopes](0041-portable-training-packages.md)
 - [ADR-0042: Pin one entry point per project](0042-pin-one-entry-point-per-project.md)
 - [ADR-0043: One `glr.cli-output.v1` key is one shape](0043-one-cli-output-key-is-one-shape.md)
+- [ADR-0044: Bound negative shaping with optional budgets](0044-bound-negative-shaping-budgets.md)
 
 Accepted ADRs describe implemented architecture. Its staged delivery plan for
 issue #116 is [the phased plan](../planning/training-package-phases.md). Proposed future designs belong

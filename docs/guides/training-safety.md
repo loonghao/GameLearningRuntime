@@ -53,6 +53,41 @@ terminal failure would still exceed the failure ceiling, the result records a
 `suppressed_positive_shaping` counter: frequent intervention usually means the
 underlying shaping needs redesign or ablation.
 
+## Bound negative shaping before surviving stops paying
+
+A positive-only budget caps the upside of shaping, not its downside. When a
+negative shaping term keeps charging as the episode grows, the return peaks
+before the episode ends and the optimal policy becomes dying early — the exact
+opposite of a terminal-dominance reward. Add the symmetric budgets when a
+shaping term can go negative:
+
+```json
+{
+  "schema_version": "glr.reward-safety.v1",
+  "outcome_signal": "outcome",
+  "shaping_signals": ["survival", "damage"],
+  "max_positive_shaping_per_step": 5,
+  "max_positive_shaping_per_episode": 100,
+  "max_negative_shaping_per_step": 1,
+  "max_negative_shaping_per_episode": 10,
+  "failure_episode_maximum": 0,
+  "require_terminal_outcome": true
+}
+```
+
+Both fields bound the **magnitude** of negative shaping and both are optional;
+omitting them leaves negative shaping unbounded, so every existing policy keeps
+its current behaviour. `max_negative_shaping_per_step` cannot exceed
+`max_negative_shaping_per_episode`. When no episode budget is declared and a
+shaping term can contribute a negative value, the guard logs a warning at
+construction time naming the terms.
+
+The guard reports `negative_shaping_total` and `suppressed_negative_shaping`
+alongside the positive counters, so a budget that fires constantly is visible
+before it silently reshapes the objective. Measure the effect before tightening
+a default: compare the per-episode regret — the return lost by surviving to the
+end instead of stopping at the peak — with and without the budget.
+
 Call `reset()` only when a new logical episode starts. An outcome signal before
 terminal, a terminal transition without the required outcome, or another step
 after terminal fails closed.
