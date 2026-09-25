@@ -8,6 +8,7 @@ provenance; GLR validates them before reward or BC ingestion.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -18,13 +19,19 @@ from types import MappingProxyType
 from typing import Any, TypeVar
 
 from game_learning_runtime.errors import ContractViolation
-from game_learning_runtime.training import RewardComposer, RewardSignal, TrainingConfig
+from game_learning_runtime.training import (
+    RewardComposer,
+    RewardSignal,
+    RewardTermSpec,
+    TrainingConfig,
+)
 
 REWARD_SAFETY_SCHEMA_VERSION = "glr.reward-safety.v1"
 DEMONSTRATION_POLICY_SCHEMA_VERSION = "glr.demonstration-policy.v1"
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _FAILURE_CORRECTION = "guardrail.failure-correction"
 _EnumT = TypeVar("_EnumT", bound=Enum)
+_LOGGER = logging.getLogger(__name__)
 
 
 def _mapping(value: object, *, path: str) -> Mapping[str, Any]:
@@ -64,6 +71,12 @@ def _number(value: object, *, path: str, non_negative: bool = False) -> float:
     return result
 
 
+def _optional_number(value: object, *, path: str, non_negative: bool = False) -> float | None:
+    if value is None:
+        return None
+    return _number(value, path=path, non_negative=non_negative)
+
+
 def _boolean(value: object, *, path: str) -> bool:
     if not isinstance(value, bool):
         raise TypeError(f"{path} must be a boolean")
@@ -80,7 +93,13 @@ def _clip(value: float, minimum: float | None, maximum: float | None) -> float:
 
 @dataclass(frozen=True, slots=True)
 class RewardSafetyConfig:
-    """Episode-level budget and terminal-outcome policy."""
+    """Episode-level budget and terminal-outcome policy.
+
+    Negative budgets bound the *magnitude* of negative shaping, so
+    ``max_negative_shaping_per_step: 2`` admits at most ``-2`` of negative
+    shaping in one step. Both default to ``None``, which keeps negative shaping
+    unbounded and preserves the behaviour of every existing policy.
+    """
 
     schema_version: str
     outcome_signal: str
@@ -90,6 +109,8 @@ class RewardSafetyConfig:
     failure_episode_maximum: float
     require_terminal_outcome: bool
     unbudgeted_signals: tuple[str, ...] = ()
+    max_negative_shaping_per_step: float | None = None
+    max_negative_shaping_per_episode: float | None = None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> RewardSafetyConfig:
@@ -102,6 +123,8 @@ class RewardSafetyConfig:
                     "shaping_signals",
                     "max_positive_shaping_per_step",
                     "max_positive_shaping_per_episode",
+                    "max_negative_shaping_per_step",
+                    "max_negative_shaping_per_episode",
                     "failure_episode_maximum",
                     "require_terminal_outcome",
                     "unbudgeted_signals",
@@ -151,6 +174,24 @@ class RewardSafetyConfig:
             raise ValueError(
                 "max_positive_shaping_per_step cannot exceed max_positive_shaping_per_episode"
             )
+        negative_per_step = _optional_number(
+            value.get("max_negative_shaping_per_step"),
+            path="max_negative_shaping_per_step",
+            non_negative=True,
+        )
+        negative_per_episode = _optional_number(
+            value.get("max_negative_shaping_per_episode"),
+            path="max_negative_shaping_per_episode",
+            non_negative=True,
+        )
+        if (
+            negative_per_step is not None
+            and negative_per_episode is not None
+            and negative_per_step > negative_per_episode
+        ):
+            raise ValueError(
+                "max_negative_shaping_per_step cannot exceed max_negative_shaping_per_episode"
+            )
         return cls(
             schema_version=schema_version,
             outcome_signal=outcome,
@@ -164,6 +205,8 @@ class RewardSafetyConfig:
                 value.get("require_terminal_outcome"), path="require_terminal_outcome"
             ),
             unbudgeted_signals=unbudgeted,
+            max_negative_shaping_per_step=negative_per_step,
+            max_negative_shaping_per_episode=negative_per_episode,
         )
 
 
@@ -177,6 +220,8 @@ class GuardedRewardResult:
     positive_shaping_total: float
     suppressed_positive_shaping: float
     terminal: bool
+    negative_shaping_total: float = 0.0
+    suppressed_negative_shaping: float = 0.0
 
     def __post_init__(self) -> None:
         for name in (
@@ -184,10 +229,39 @@ class GuardedRewardResult:
             "episode_total",
             "positive_shaping_total",
             "suppressed_positive_shaping",
+            "negative_shaping_total",
+            "suppressed_negative_shaping",
         ):
             if not math.isfinite(getattr(self, name)):
                 raise ValueError(f"{name} must be finite")
         object.__setattr__(self, "contributions", MappingProxyType(dict(self.contributions)))
+
+
+def _can_be_negative(term: RewardTermSpec) -> bool:
+    """Whether a term's clipped, weighted contribution can ever be negative.
+
+    The composer emits ``clip(signal, minimum, maximum) * weight`` and accepts
+    any finite signal, so the term bounds decide whether a negative value is
+    reachable at all. A zero weight can never contribute anything.
+    """
+
+    if term.weight == 0:
+        return False
+    if term.weight > 0:
+        return term.minimum is None or term.minimum < 0
+    return term.maximum is None or term.maximum > 0
+
+
+def _unbounded_negative_shaping(
+    terms: Mapping[str, RewardTermSpec], safety: RewardSafetyConfig
+) -> tuple[str, ...]:
+    """Shaping terms that may go negative without an episode-level budget."""
+
+    if safety.max_negative_shaping_per_episode is not None:
+        return ()
+    return tuple(
+        name for name in safety.shaping_signals if name in terms and _can_be_negative(terms[name])
+    )
 
 
 class EpisodeRewardGuard:
@@ -224,6 +298,14 @@ class EpisodeRewardGuard:
             raise ContractViolation(
                 f"reward safety references unknown unbudgeted signals: {unknown_unbudgeted}"
             )
+        unbounded = _unbounded_negative_shaping(terms, safety)
+        if unbounded:
+            _LOGGER.warning(
+                "shaping signals %s can contribute negative reward without an episode-level "
+                "budget; set max_negative_shaping_per_episode to keep the marginal value of "
+                "surviving from turning negative",
+                unbounded,
+            )
         self._training = training
         self._safety = safety
         self._composer = RewardComposer(training)
@@ -234,6 +316,7 @@ class EpisodeRewardGuard:
 
         self._episode_total = 0.0
         self._positive_shaping_total = 0.0
+        self._negative_shaping_total = 0.0
         self._closed = False
 
     def compose(
@@ -259,6 +342,11 @@ class EpisodeRewardGuard:
             for name, value in contributions.items()
             if name in self._safety.shaping_signals and value > 0
         )
+        negative_shaping = -math.fsum(
+            value
+            for name, value in contributions.items()
+            if name in self._safety.shaping_signals and value < 0
+        )
         remaining = max(
             0.0,
             self._safety.max_positive_shaping_per_episode - self._positive_shaping_total,
@@ -271,12 +359,21 @@ class EpisodeRewardGuard:
                 if contribution is not None and contribution > 0:
                     contributions[name] = contribution * scale
 
+        negative_accepted = min(negative_shaping, self._negative_budget())
+        if negative_shaping > 0:
+            scale = negative_accepted / negative_shaping
+            for name in self._safety.shaping_signals:
+                contribution = contributions.get(name)
+                if contribution is not None and contribution < 0:
+                    contributions[name] = contribution * scale
+
         step_total = _clip(
             math.fsum(contributions.values()),
             self._training.reward.minimum,
             self._training.reward.maximum,
         )
         self._positive_shaping_total += accepted
+        self._negative_shaping_total += negative_accepted
         self._episode_total += step_total
         failed = terminal and outcome_signal is not None and outcome_signal.value < 0
         if failed and self._episode_total > self._safety.failure_episode_maximum:
@@ -294,7 +391,23 @@ class EpisodeRewardGuard:
             positive_shaping_total=self._positive_shaping_total,
             suppressed_positive_shaping=positive_shaping - accepted,
             terminal=terminal,
+            negative_shaping_total=self._negative_shaping_total,
+            suppressed_negative_shaping=negative_shaping - negative_accepted,
         )
+
+    def _negative_budget(self) -> float:
+        """Magnitude of negative shaping this step may still contribute."""
+
+        budget = math.inf
+        if self._safety.max_negative_shaping_per_step is not None:
+            budget = min(budget, self._safety.max_negative_shaping_per_step)
+        if self._safety.max_negative_shaping_per_episode is not None:
+            remaining = max(
+                0.0,
+                self._safety.max_negative_shaping_per_episode - self._negative_shaping_total,
+            )
+            budget = min(budget, remaining)
+        return budget
 
 
 class DemonstrationOrigin(str, Enum):

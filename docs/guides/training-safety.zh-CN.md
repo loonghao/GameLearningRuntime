@@ -52,6 +52,37 @@ Guard 只限制正向 shaping，不会抹掉负向证据。如果失败局累计
 `suppressed_positive_shaping`；如果它们频繁触发，说明需要重新设计或消融 shaping，
 而不是继续提高终局奖励数值。
 
+## 先给负向 shaping 设上限，否则“活着”会开始亏本
+
+只设正向上限封住的是 shaping 的收益上界，封不住下界。当负向 shaping 项随 episode
+变长持续扣分时，累计回报会在结束之前就到达峰值，最优策略退化成尽早自杀 —— 与
+terminal-dominance reward 的意图正好相反。只要 shaping 项可能取负值，就补上对称的
+负向预算：
+
+```json
+{
+  "schema_version": "glr.reward-safety.v1",
+  "outcome_signal": "outcome",
+  "shaping_signals": ["survival", "damage"],
+  "max_positive_shaping_per_step": 5,
+  "max_positive_shaping_per_episode": 100,
+  "max_negative_shaping_per_step": 1,
+  "max_negative_shaping_per_episode": 10,
+  "failure_episode_maximum": 0,
+  "require_terminal_outcome": true
+}
+```
+
+两个字段限制的都是负向 shaping 的**幅度**，且都是可选的：缺省时负向 shaping 不受限，
+已有配置的行为完全不变。`max_negative_shaping_per_step` 不得大于
+`max_negative_shaping_per_episode`。如果没有配置 episode 级上限、而某个 shaping 项又
+可能贡献负值，guard 会在构造时打出 warning 并列出这些项。
+
+guard 会与正向计数器一起上报 `negative_shaping_total` 和
+`suppressed_negative_shaping`，预算被频繁触发时能在它悄悄改写目标函数之前被发现。
+收紧默认值之前先量化效果：对比开启预算前后的 episode regret —— 也就是“活到最后”
+相对“停在峰值时刻”少拿到的回报。
+
 只有新逻辑 episode 开始时才调用 `reset()`。非终局提前发送 outcome、终局缺少必需
 outcome，或终局后未 reset 继续发送 step，都会失败即关闭。
 
