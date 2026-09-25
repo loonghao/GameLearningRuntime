@@ -60,11 +60,15 @@ through `EpisodeRewardGuard`:
 
 - declare exactly one authoritative, terminal-only outcome signal;
 - cap positive shaping per step and cumulatively per episode;
+- cap negative shaping the same way with `max_negative_shaping_per_step` and
+  `max_negative_shaping_per_episode`, so an episode that keeps charging damage
+  never makes an early death the optimal policy;
 - classify every declared term as the outcome signal, a `shaping_signals` member,
   or an explicit `unbudgeted_signals` opt-in, so none escapes the budget silently;
 - require the outcome signal on every terminal transition;
 - set a failure episode ceiling so a loss cannot retain a positive return; and
-- log accepted and suppressed shaping plus any terminal correction.
+- log accepted and suppressed shaping, in both directions, plus any terminal
+  correction.
 
 Treat the correction as a guardrail, not a substitute for reward design. Audit
 how often it fires and reduce or remove shaping terms that repeatedly consume
