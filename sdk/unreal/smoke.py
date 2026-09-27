@@ -44,7 +44,8 @@ try:
                 "reset": True,
                 "stale_rejected": True,
             }
-        )
+        ),
+        encoding="utf-8",
     )
 finally:
     actors.destroy_actor(actor)
@@ -76,5 +77,6 @@ Path(unreal.Paths.project_saved_dir(), "glr-smoke.json").write_text(
             "reset": True,
             "stale_rejected": True,
         }
-    )
+    ),
+    encoding="utf-8",
 )

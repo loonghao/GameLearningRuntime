@@ -32,7 +32,9 @@ def test_multi_engine_lanes(tmp_path: Path, engine, runtime, access):
     subprocess.run(args, check=True, capture_output=True)
     profile = load_runtime_integration(tmp_path / "adapter/runtime-integration.json")
     assert profile.engine_family.value == engine
-    selection = json.loads((tmp_path / "adapter/runtime-selection.json").read_text())
+    selection = json.loads(
+        (tmp_path / "adapter/runtime-selection.json").read_text(encoding="utf-8")
+    )
     assert selection["live_verified"] is False
     if access == "external":
         assert "manual-step" not in profile.required_capabilities

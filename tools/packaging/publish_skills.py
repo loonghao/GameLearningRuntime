@@ -75,7 +75,8 @@ def main() -> None:
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--output", type=Path, default=Path("dist/clawhub-receipts.json"))
     args = parser.parse_args()
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    version = pyproject["project"]["version"]
     if re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
         raise ValueError("skills require a stable project semver")
     ref = os.environ.get("GITHUB_REF", "")
@@ -158,7 +159,8 @@ def main() -> None:
                 },
                 indent=2,
             )
-            + "\n"
+            + "\n",
+            encoding="utf-8",
         )
     if not results:
         raise ValueError("no skill bundles found")
