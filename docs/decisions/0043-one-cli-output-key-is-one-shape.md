@@ -38,7 +38,8 @@ it.**
 - The plural key is the history: an array of the recorded entries, oldest first,
   empty when nothing was recorded.
 - The `<name>_summary` key is the newest entry, or an explicit `reported=false`
-  with null fields when the history is empty. It is never omitted.
+  with null fields when the history is empty. The key set is the same either
+  way, so `reported` never changes the shape. It is never omitted.
 - `train` now publishes both `learnability` and `learnability_summary`, matching
   `runs show` key for key and shape for shape. The object it used to publish
   under `learnability` is still readable, under the name that says it is a

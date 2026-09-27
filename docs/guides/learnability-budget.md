@@ -215,8 +215,9 @@ Three surfaces carry the same `glr.learnability-budget.v1` payload:
 Both verbs publish both keys with these shapes, so a caller reads the payload
 without first asking which verb produced it. When no verdict was recorded,
 `learnability` is an empty list and `learnability_summary` reports
-`reported: false` with every field `null`. An absent verdict is never silently
-rendered as a passing one.
+`reported: false` with every field `null` — the same key set, so a caller never
+has to branch on `reported` before it reads a field. An absent verdict is never
+silently rendered as a passing one.
 
 ## Enforce it from the CLI
 

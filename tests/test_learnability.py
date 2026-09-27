@@ -638,9 +638,39 @@ def test_cli_json_exposes_all_three_numbers_as_metrics(
     assert metrics[PROJECTED_STEPS_METRIC] == float(expected.projected_steps_to_k_visits or 0)
 
 
+LEARNABILITY_SUMMARY_KEYS = frozenset(
+    {
+        "schema_version",
+        "reported",
+        "verdict_count",
+        "status",
+        "state_action_cells",
+        "distinct_cells_visited",
+        "coverage_ratio",
+        "projected_steps_to_k_visits",
+        "steps_per_second",
+        "budget_steps",
+        "min_coverage",
+    }
+)
+
+LEARNABILITY_SUMMARY_NULL_WHEN_ABSENT = LEARNABILITY_SUMMARY_KEYS - {
+    "schema_version",
+    "reported",
+}
+
+
 def test_cli_reports_an_absent_verdict_explicitly(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """An absent verdict publishes every field as null, not a shorter shape.
+
+    ADR-0043 promises `reported: false` *with null fields*. Omitting the keys
+    instead turns a plain read of `learnability_summary["min_coverage"]` into a
+    `KeyError`, and the empty history is the path most runs take, so the trap
+    would sit on the highest-traffic branch.
+    """
+
     _project(tmp_path)
     store = TrainingStore(tmp_path / ".glr/runs.sqlite3")
     run = store.create_run(
@@ -651,6 +681,57 @@ def test_cli_reports_an_absent_verdict_explicitly(
     summary = json.loads(capsys.readouterr().out)["data"]["learnability_summary"]
     assert summary["reported"] is False
     assert summary["status"] is None
+    assert set(summary) == set(LEARNABILITY_SUMMARY_KEYS)
+    assert {key: summary[key] for key in LEARNABILITY_SUMMARY_NULL_WHEN_ABSENT} == dict.fromkeys(
+        LEARNABILITY_SUMMARY_NULL_WHEN_ABSENT
+    )
+
+
+def test_cli_train_publishes_the_absent_verdict_from_both_verbs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The empty history is `train`'s default path, so both verbs must nail it.
+
+    `runs show` never owned this shape alone: `train` reaches the same empty
+    history on every run whose trainer records no verdict, which is the common
+    case. One test runs both verbs against one run, because a test that reads
+    only one verb is how the two shapes drifted apart in the first place.
+    """
+
+    _project(tmp_path)
+    assert main(["--project", str(tmp_path), "--json", "train"]) == 0
+    trained = json.loads(capsys.readouterr().out)["data"]
+
+    assert main(["--project", str(tmp_path), "--json", "runs", "show", trained["run_id"]]) == 0
+    shown = json.loads(capsys.readouterr().out)["data"]
+
+    assert trained["learnability"] == []
+    assert set(trained["learnability_summary"]) == set(LEARNABILITY_SUMMARY_KEYS)
+    assert trained["learnability_summary"]["reported"] is False
+    assert trained["learnability_summary"]["min_coverage"] is None
+    assert trained["learnability_summary"] == shown["learnability_summary"]
+
+
+def test_cli_summary_keys_do_not_shrink_when_no_verdict_is_recorded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`reported` changes the values, never the key set."""
+
+    recorded = tmp_path / "recorded"
+    recorded.mkdir()
+    _project_recording_a_verdict(recorded)
+    assert main(["--project", str(recorded), "--json", "train", "--min-coverage", "0.5"]) == 1
+    reported = json.loads(capsys.readouterr().out)["data"]["learnability_summary"]
+
+    absent_root = tmp_path / "absent"
+    absent_root.mkdir()
+    _project(absent_root)
+    assert main(["--project", str(absent_root), "--json", "train", "--min-coverage", "0.5"]) == 0
+    absent = json.loads(capsys.readouterr().out)["data"]["learnability_summary"]
+
+    assert reported["reported"] is True
+    assert absent["reported"] is False
+    assert set(reported) == set(absent) == set(LEARNABILITY_SUMMARY_KEYS)
 
 
 def test_cli_rejects_a_coverage_floor_outside_the_unit_interval(tmp_path: Path) -> None:
