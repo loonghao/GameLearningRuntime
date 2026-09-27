@@ -174,16 +174,28 @@ def _learnability_value(report: LearnabilityReport) -> dict[str, Any]:
 
 
 def _learnability_summary(reports: Sequence[LearnabilityReport]) -> dict[str, Any]:
-    """Project the newest verdict so a caller can gate without walking events."""
+    """Project the newest verdict so a caller can gate without walking events.
+
+    Both branches publish the same key set. An absent verdict renders every
+    measurement as ``null`` under ``reported=False`` rather than omitting the
+    keys: "nothing was measured" must be readable without a ``KeyError``, and
+    a key set that shrinks with ``reported`` is the shape drift ADR-0043
+    exists to remove.
+    """
 
     if not reports:
         return {
             "schema_version": LEARNABILITY_BUDGET_SCHEMA_VERSION,
             "reported": False,
+            "verdict_count": None,
             "status": None,
             "state_action_cells": None,
+            "distinct_cells_visited": None,
             "coverage_ratio": None,
             "projected_steps_to_k_visits": None,
+            "steps_per_second": None,
+            "budget_steps": None,
+            "min_coverage": None,
         }
     latest = reports[-1]
     return {
