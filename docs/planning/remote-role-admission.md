@@ -1,15 +1,22 @@
 # Optional authenticated cluster distribution: remote role admission
 
-- Status: **Proposed — design only.** Nothing here is implemented, and nothing here is
-  authorized to be implemented by this document alone. It requires a human design
-  review before any code is written.
-- Proposed contract name: `glr.remote-admission.v1` (unassigned; reserved by this proposal)
-- Date: 2026-09-19
+> **Accepted proposal record — not normative.** The design review closed on 2026-09-28
+> and this contract was promoted to
+> [ADR-0045: Admit remote roles with scoped capabilities, epoch-scoped fences, and coordinator-owned checkpoints](../decisions/0045-remote-role-admission.md).
+> **ADR-0045 is the normative record.** This document is kept as the original proposal
+> and its review history and is no longer maintained; where the two differ, ADR-0045 wins.
+
+- Status: **Accepted as a contract; not implemented.** The eight open questions were
+  answered by the design review on 2026-09-28 and are recorded under "Design review
+  rulings" below. Phase 1 may begin; no distributed code may be written before the
+  Phase 1 conformance suite is green in CI.
+- Contract name: `glr.remote-admission.v1` (assigned by ADR-0045)
+- Date: 2026-09-19; accepted 2026-09-28
 - Related: issue #116, ADR-0001, ADR-0020, ADR-0027 (which names this contract its stage
   4 and remote conformance its stage 5), ADR-0030, ADR-0032, ADR-0036, ADR-0041 (whose
   §D9 delegates cluster integration to a separate contract shaped exactly like this
-  one), and the roadmap entry "Add authenticated multi-machine coordination around the
-  implemented local agent control plane".
+  one), ADR-0045 (this contract, as accepted), and the roadmap entry "Add authenticated
+  multi-machine coordination around the implemented local agent control plane".
 
 ## Why this is a separate proposal
 
@@ -81,23 +88,39 @@ Two participants, defined by what they own rather than by what they are:
 - **Worker** — a process that admits itself to a run, receives one scoped capability,
   executes it, and returns results.
 
-At most one coordinator per run. A "cluster" is one coordinator plus zero or more
-workers; nothing in this contract requires a scheduler between them, and the deployment
-chooses how a worker finds its coordinator.
+**One coordinator per run, not per trial** — confirmed by the design review. The
+coordinator is the run's single writer; a per-trial coordinator would need a
+leader-election story per trial and would leave `coordinator_epoch` ambiguous for the
+ordered identifiers in 2.4. A "cluster" is one coordinator plus zero or more workers;
+nothing in this contract requires a scheduler between them, and the deployment chooses how
+a worker finds its coordinator.
 
 A **capability** is an enumerated, deny-by-default grant, scoped by
 `(project, environment_id, trial_id, package_digest, policy_digest, max_in_flight,
-max_payload_bytes, max_duration)`. The candidate set is deliberately small:
-`collect:unroll`, `evaluate:episode`, `read:policy`, `propose:checkpoint`. Note what is
-absent — see open question 1.
+max_payload_bytes, max_duration)`. **Every v1 capability is trial-scoped.** The v1 set is
+deliberately small and closed:
+
+- `collect:unroll` — run one unroll and return its result.
+- `evaluate:episode` — run one evaluation episode and return its result.
+- `propose:checkpoint` — write checkpoint bytes to **per-lease staging only** and return
+  their digest. It never writes to the run's checkpoint location; see 2.9.
+
+**Why v1 has no `read:policy`.** The policy a worker executes against is already
+delivered through the pinned package bound at admission and through `policy_digest`
+(ADR-0027's offline source-package path). A separate read capability therefore grants no
+capability that admission does not already convey, while adding a second authorization
+story and a read-amplification surface with no caller that needs it. `read:policy` is
+deferred, not forbidden: it re-enters only with a concrete caller that the pinned package
+cannot serve.
 
 **Why there is no remote learner role.** ADR-0041 §D9 asks for "authenticated learner
-and actor roles". This proposal authenticates the **actor** side only and keeps the
+and actor roles". This contract authenticates the **actor** side only and keeps the
 learner behind the coordinator on one machine, because the coordinator is already the
 single writer for the optimizer and the policy version counter. Admitting a remote
 learner would turn policy publication into a distributed decision and would need a
-second single-writer story that nothing here has earned. It is a deliberate v1 boundary,
-not an oversight — see open question 7.
+second single-writer story that nothing here has earned. The design review confirmed this
+as v1's explicit answer to ADR-0041 §D9: **v1 admits the actor role; a remote learner
+capability is deferred, not designed away.**
 
 ### 2.2 Admission
 
@@ -141,22 +164,35 @@ and refuses with `ADMISSION_DIGEST_MISMATCH`: a digest that varies with the pack
 CLI version would reject two workers running byte-identical source, which is exactly the
 question ADR-0041 §D4 wants the identifier to answer. Until that migration lands,
 `package_digest` is whatever `glr.source-package.v1` emits, and mismatch is expected to
-over-reject across CLI versions. Tracked as open question 8.
+over-reject across CLI versions. **Decided: this contract follows §D4 and inherits its
+migration decision.** Over-rejecting across CLI versions fails closed, which is the safe
+direction, so it is accepted as the migration-period behaviour rather than worked around.
+What is not accepted is pinning today's ADR-0027 computation into the contract or into a
+test: implementations must obtain `package_digest` through an **injected identity
+function** so that the D4 migration changes one seam instead of rewriting the conformance
+suite. See Part 4, Phase 1.
 
 ### 2.3 Fencing tokens
 
-`fence` is a strictly monotonic integer per `(run_id, resource)`, issued by the
-coordinator and carried by every subsequent mutation. The coordinator records
-`max_fence_seen` per resource and rejects any mutation whose `fence` is lower with
-`FENCE_STALE`, changing no state and incrementing a counter.
+`fence` is a strictly monotonic integer scoped by `(run_id, coordinator_epoch, resource)`,
+issued by the coordinator and carried by every subsequent mutation. The coordinator keeps
+`max_fence_seen` per scope **in memory** and rejects any mutation whose `fence` is lower
+with `FENCE_STALE`, changing no state and incrementing a counter.
 
-Two rules keep the token usable:
+**`coordinator_epoch`** names one coordinator incarnation for a run. It increments on every
+coordinator start or restart, and a new epoch allocates fences **from zero**.
+
+Three rules keep the token usable:
 
 - **Renewal preserves the fence.** A worker that renews before expiry keeps working with
   the same `fence`, so a renewal never invalidates its own in-flight attempts.
-- **Re-admission issues a strictly greater fence.** Any grant after an expiry, a
-  conflict, or a coordinator restart is greater than every fence previously issued for
-  that resource.
+- **Re-admission issues a strictly greater fence.** Any grant after an expiry or a
+  conflict is greater than every fence previously issued for that scope.
+- **A fence from an earlier epoch is `EPOCH_STALE`.** A restart therefore needs no
+  persisted `max_fence_seen`: monotonicity across restarts comes from the epoch, not from
+  a durable counter, so a design that is deliberately free of persistence dependencies
+  stays that way. Rejecting an older epoch outright is also the safe answer, because a
+  restarted coordinator cannot know what its previous incarnation admitted.
 
 What fencing buys, and what it does not: it protects **coordinator-side state** from a
 worker that has lost its lease and does not know it. It does **not** protect
@@ -184,8 +220,13 @@ Ingestion rules:
    Two different results for one attempt is a bug or an attack, never a merge decision.
 3. Order of application is decided by the coordinator from `attempt_seq`, never by
    arrival order at the socket.
-4. A result arriving with an expired lease or a stale fence is `UNOWNED`: recorded as a
-   metric, never applied.
+4. A result arriving with an expired lease, a stale fence, or a superseded epoch is
+   `UNOWNED`: recorded as a metric, never applied.
+5. Ingest records the **lease state it observed** — `live`, `expired`, or `superseded` —
+   alongside the outcome and the digest. **An expiry never rolls back an update that was
+   already ingested.** Ingestion is committed at ingest, so a partition wall appears as a
+   metric rather than as a silent rewrite of optimizer history, and the recorded lease
+   state is what makes that wall auditable after the fact.
 
 ### 2.5 Backpressure: reject, never silently drop
 
@@ -248,6 +289,22 @@ loses its reason fails closed instead of landing as an unexplained failure.
 | `STALE` | Result accepted but `observed_policy_version` lags beyond the cutoff. | No, and counted. |
 | `UNOWNED` | Arrived without a live lease or with a stale fence. | No, and counted. |
 
+**Two budgets, because `ORPHANED` is not a training outcome.** Counting `ORPHANED` against
+the run's training budget lets one network fault end the run; not counting it anywhere
+leaves a silent worker leak with no bound. Both are unacceptable, so the two budgets are
+separate:
+
+- **`attempt_budget` (training).** Counts `SUCCEEDED`, `FAILED`, and `CANCELLED` only.
+  `ORPHANED` never reached the optimizer, so it is not charged here. Exhausting this budget
+  ends attempt allocation exactly as it does today.
+- **`orphan_budget` (orchestration).** A separate bounded count and rate over `ORPHANED`
+  outcomes. Exhausting it **stops admitting new workers and raises a run-level alarm**, and
+  **does not terminate the run**. Ending a run is a project or human decision; a breached
+  orchestration budget is evidence for that decision, not a substitute for it.
+
+Both are counted per run and reported as metrics, so a run that is burning through its
+orphan budget is visible before either limit is reached.
+
 **These are attempt-level outcomes, not episode terminations.** `termination.py` →
 `TerminationReason` is episode-level and is deliberately **not** reused here. In
 particular `ENV_INDETERMINATE` ("the environment consequence of an action is unknown, so
@@ -264,15 +321,28 @@ results are recorded as `STALE` metrics rather than discarded — recorded eithe
 
 ### 2.9 Checkpoint ownership
 
+The run's checkpoint location has **exactly one writer on one machine: the coordinator**.
+The no-replace plus `fsync` plus `os.replace` behaviour in `checkpoint.py` is a property of
+one local filesystem; it does not survive being moved across machines, and pretending
+otherwise turns "exactly one proposal wins" into a distributed negotiation. The write path
+therefore splits in two:
+
+- **Worker: staging only.** A worker holding `propose:checkpoint` writes its bytes to a
+  **per-lease staging area** and returns `checkpoint_sha256`. Staging is addressed per lease,
+  is not the run's checkpoint location, and is never resolved as one by any code path.
+- **Coordinator: the only promote.** Promotion verifies the staged bytes against the
+  returned digest and performs the single no-replace write into the run's checkpoint
+  location. "Exactly one proposal wins" is then decided where no-replace actually holds —
+  locally, on the coordinator.
+
 - At most one live lease may hold a checkpoint-writing capability for a given
   `(trial_id, generation)`.
-- A worker may **propose** a `checkpoint_sha256`. Only the coordinator **promotes**.
-- Promotion requires a live lease, `fence >= max_fence_seen` for that generation, and
-  the no-replace write semantics already used by `checkpoint.py` and ADR-0027. Exactly
-  one proposal wins; the loser receives `PROMOTE_CONFLICT` and its bytes are retained
-  for inspection, never referenced as the run's checkpoint.
-- A checkpoint produced under a lease that has since expired is **never promoted**. It
-  may be kept for inspection, labelled as unowned.
+- Promotion requires a live lease, an in-epoch `fence >= max_fence_seen` for that
+  generation, and the no-replace write semantics already used by `checkpoint.py` and
+  ADR-0027. Exactly one proposal wins; the loser receives `PROMOTE_CONFLICT` and its
+  staging bytes are retained for inspection.
+- Staged bytes whose lease expires before promotion are labelled **unowned**, retained for
+  inspection, and **never promoted and never referenced as the run's checkpoint**.
 
 ### 2.10 Trust boundary
 
@@ -284,8 +354,14 @@ results are recorded as `STALE` metrics rather than discarded — recorded eithe
 - **Blast radius, not immunity.** Scoped capabilities, expiring leases, monotonic
   fences, deduplicated ingestion, and unique checkpoint ownership limit what a
   compromised or misbehaving worker can do. They do not make one safe.
-- **No observation data in ingest logs.** Following `ActorQueueMetrics`, the coordinator
-  records digests, counters, and state transitions — never observations or game content.
+- **Ingest logs carry digests, counters, state transitions, and observed lease state —
+  never observation data.** Following `ActorQueueMetrics`, the coordinator records digests,
+  counters, and state transitions, plus the lease state observed at ingest (2.4 rule 5). It
+  never records observations or game content.
+- **Ingest-log retention is bounded by the run.** Ingest records live and die with the run
+  they belong to: there is no cross-run ingest log and no retention window that outlives the
+  run. A deployment that needs a longer audit trail exports from these records on its own
+  terms; GLR does not retain them on its behalf.
 
 ## Part 3 — Conformance checklist for a future implementation
 
@@ -299,7 +375,7 @@ this proposal's additions.
 | --- | --- | --- |
 | 1 | **Duplicate delivery** — one result, same `attempt_id` and `result_digest`, delivered twice. | The second ingest is a no-op returning the first outcome. Optimizer updates: exactly 1. |
 | 2 | **Conflicting delivery** — same `attempt_id`, different `result_digest`. | `INGEST_CONFLICT`; no optimizer update; both payloads retained for inspection. |
-| 3 | **Stale ownership** — mutation carrying `fence < max_fence_seen`. | `FENCE_STALE`; state unchanged; counter incremented. |
+| 3 | **Stale ownership** — mutation carrying `fence < max_fence_seen` inside the current epoch, and a mutation carrying a fence from an earlier `coordinator_epoch`. | `FENCE_STALE` in the in-epoch case and `EPOCH_STALE` in the cross-epoch case; state unchanged in both; the matching counter incremented. |
 | 4 | **Lease expiry** — worker stops heartbeating with attempts in flight. | Lease expires on the coordinator; in-flight attempts become `ORPHANED`; no automatic retry; the next grant has a strictly greater `fence`. |
 | 5 | **Late result after expiry** — result arrives carrying an expired lease's fence. | `UNOWNED`; recorded as a metric; never applied. |
 | 6 | **Policy mismatch** — `observed_policy_version` lag exceeds the cutoff. | `STALE`; never applied; counted, and the worker is told to stop. |
@@ -311,7 +387,9 @@ this proposal's additions.
 | 12 | **Clock skew** — worker monotonic-vs-wall-clock offset of ±1 hour. | Duration-based leases still behave; no premature expiry, no extended window. |
 | 13 | **Package hygiene** — export a selection containing credential- or secret-shaped paths. | Rejected at export; no credential material in the archive. |
 | 14 | **No replay of unknown outcomes** — an `ORPHANED` attempt exists. | The environment is not re-driven for it automatically; a retry is a new `attempt_seq` created by the project or a human. |
-| 15 | **Determinism** — the whole suite runs in one process with an injected clock and fault injection. | Tests 1–12 pass without a socket, so the concurrency invariants are provable in ordinary CI. |
+| 15 | **Determinism** — the whole suite runs in one process with an injected clock and fault injection. | Tests 1–12, 16, and 17 pass without a socket, so the concurrency invariants are provable in ordinary CI. |
+| 16 | **Orphan budget breach** — `ORPHANED` outcomes exceed `orphan_budget`. | Admission of new workers stops and a run-level alarm is raised. The run is **not** terminated, and `attempt_budget` is untouched by the `ORPHANED` count. |
+| 17 | **Staging is not a checkpoint** — a worker stages checkpoint bytes and its lease then expires. | The run's checkpoint location is unchanged, the staged bytes are labelled unowned and retained for inspection, and no code path resolves them as the run's checkpoint. |
 
 Test 15 is the reason this proposal is not simply "unprovable in CI". The *concurrency
 contract* is designed to be provable in-process; only the *authentication and transport*
@@ -321,14 +399,14 @@ layers need real infrastructure, and only those layers' claims stay out of CI's 
 
 | Phase | Content | Gate |
 | --- | --- | --- |
-| 0 | This document: contract, state taxonomy, conformance checklist. No code. | Human design review. Merged as documentation only. |
-| 1 | In-process reference harness with an injected clock and fault injection, implementing the coordinator decision logic against the existing `BoundedActorQueue`. No transport, no authentication. | Conformance tests 1–12 green in CI. |
+| 0 | This document: contract, state taxonomy, conformance checklist. No code. | Human design review. **Closed 2026-09-28**; promoted to [ADR-0045](../decisions/0045-remote-role-admission.md). |
+| 1 | In-process reference harness with an injected clock and fault injection, implementing the coordinator decision logic against the existing `BoundedActorQueue`. No transport, no authentication. `package_digest` is obtained through an **injected identity function**, never a copy of the ADR-0027 computation the harness happens to run against today. | Conformance tests 1–12, 16, and 17 green in CI. |
 | 2 | Optional, feature-gated adapter crate (default off). Deployment-owned authentication. No change to the core queue, attempt, or store contracts. | The Phase 1 suite runs unchanged against the adapter. |
 | 3 | Attended multi-machine conformance run over tests 1–8 and 13, with published results. | Results published **before** any claim of authenticated multi-machine execution. |
 
-On acceptance this document should be promoted to a numbered ADR, and only then may
-Phase 1 begin. (`0041` is already assigned to portable training packages, so promotion
-takes the next free number.)
+This document was accepted on 2026-09-28 and promoted to
+[ADR-0045](../decisions/0045-remote-role-admission.md), which is the normative record.
+Phase 1 may begin now; it was not permitted to begin before the promotion landed.
 
 ## Explicitly not claimed
 
@@ -345,33 +423,22 @@ takes the next free number.)
 - Agreement between machine clocks. Leases are durations.
 - Safety against a compromised worker credential, or against a malicious coordinator.
 
-## Open questions for reviewers
+## Design review rulings (2026-09-28)
 
-1. **Is `propose:checkpoint` enough, or should checkpoint writing be coordinator-only
-   with workers returning digests?** The proposal leans toward workers never writing a
-   checkpoint at all, so that promotion has one writer on one machine.
-2. **Do `ORPHANED` attempts count against a run's attempt budget and termination
-   policy?** If they do, a network fault can end a run; if they do not, a silent worker
-   leak is unbounded.
-3. **One coordinator per run, or per trial?** The proposal assumes per run, single
-   writer, which keeps the fence monotonic without a leader-election story.
-4. **Should an expired lease invalidate optimizer updates from attempts that were
-   ingested but whose rollout has not yet been committed?** The proposal says no —
-   ingestion is committed at ingest — which makes a partition wall visible as a metric
-   rather than silently rolled back.
-5. **Minimum viable capability set.** Is `read:policy` needed in v1, and is it scoped
-   per trial?
-6. **Ingest-log retention and content.** The proposal records digests, counters, and
-   transitions only. Confirm that no deployment needs observation data there.
-7. **Should a remote learner role be admitted at all?** ADR-0041 §D9 asks for
-   authenticated learner *and* actor roles; 2.1 admits the actor side only and keeps the
-   learner behind the coordinator. Confirm that v1 boundary, or name the remote-learner
-   capability it should grow.
-8. **`package_digest` and the ADR-0041 §D4 migration.** This contract requires the
-   version-independent identity (selection + inventory, `tool_version` excluded). ADR-0027
-   as shipped still hashes `tool_version`, and ADR-0041 leaves the migration mechanism
-   open. Confirm that the remote-admission contract should follow §D4 and inherit its
-   migration decision, rather than pinning today's ADR-0027 computation.
+All eight open questions were answered by the design review. The rulings are normative in
+[ADR-0045](../decisions/0045-remote-role-admission.md); this table records the decision and
+where it landed there.
+
+| # | Question | Ruling | ADR-0045 |
+| --- | --- | --- | --- |
+| 1 | Checkpoint writing | **Coordinator-only persistence.** The run's checkpoint location has one writer on one machine; `propose:checkpoint` survives but is narrowed to "write per-lease staging, return the digest". | D10 |
+| 2 | Does `ORPHANED` count against the budget? | **Two budgets.** Not in `attempt_budget` (training); counted in a separate bounded `orphan_budget` (orchestration) whose breach stops admission and alarms without terminating the run. | D9 |
+| 3 | One coordinator per run or per trial? | **Per run** (confirmed), with fencing scoped to `(run_id, coordinator_epoch, resource)`; a fence from an earlier epoch is `EPOCH_STALE`. | D2, D4 |
+| 4 | Does an expired lease roll back ingested updates? | **No rollback** (confirmed); ingest records the lease state it observed so the partition wall is auditable. | D5 |
+| 5 | Minimum capability set | **v1 drops `read:policy`.** `collect:unroll` + `evaluate:episode` + `propose:checkpoint`, all trial-scoped. | D2 |
+| 6 | Ingest-log content and retention | Digests, counters, state transitions, and observed lease state; no observation data. **Retention bounded by the run.** | D11 |
+| 7 | Remote learner role | **v1 actor only** (confirmed) — the explicit scope answer to ADR-0041 §D9. | D2 |
+| 8 | `package_digest` and the ADR-0041 §D4 migration | **Follow §D4** and inherit its migration decision; Phase 1 must read identity through an injected identity function. | D3, Phased delivery |
 
 ## Acceptance
 
@@ -382,5 +449,5 @@ takes the next free number.)
   rather than the mechanism.
 - The limits of the local queue and attempt primitives are stated explicitly rather than
   left for an implementer to discover (Part 1, third column).
-- Human design review is required. **This proposal is not merged by an agent, and no
-  implementation begins before review.**
+- Human design review is required. **Closed 2026-09-28** — see "Design review rulings";
+  the accepted contract is [ADR-0045](../decisions/0045-remote-role-admission.md).
