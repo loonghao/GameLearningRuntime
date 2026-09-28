@@ -201,7 +201,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned vx toolchain
-        uses: loonghao/vx@b2c1ce558af4b516261f34a27eb0576a9bec45f1 # vx-v0.9.31
+        uses: loonghao/vx@3bcef20521ac4836e5e56da55c09af90f320c564 # vx-v0.9.33
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
