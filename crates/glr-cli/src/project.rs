@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -99,6 +99,33 @@ pub struct RuntimeConfig {
     pub argv: Vec<String>,
     #[serde(default)]
     pub readiness: Option<RuntimeReadinessConfig>,
+    /// Environment the runtime role receives, on top of the project table.
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+}
+
+/// A role command plus the environment that role receives.
+///
+/// The table is optional and defaults to empty, so a role that declares none
+/// inherits the project-wide table unchanged.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoleCommandConfig {
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+}
+
+impl RoleCommandConfig {
+    pub fn command(&self) -> ProjectCommand {
+        ProjectCommand {
+            argv: self.argv.clone(),
+        }
+    }
+
+    fn validate(&self, label: &str) -> Result<()> {
+        self.command().validate(label)
+    }
 }
 
 impl RuntimeConfig {
@@ -445,12 +472,15 @@ struct ProjectFile {
     data_dir: String,
     bridge_path: String,
     runtime: RuntimeConfig,
-    trainer: ProjectCommand,
-    player: ProjectCommand,
-    researcher: Option<ProjectCommand>,
-    planner: Option<ProjectCommand>,
-    evaluator: Option<ProjectCommand>,
+    trainer: RoleCommandConfig,
+    player: RoleCommandConfig,
+    researcher: Option<RoleCommandConfig>,
+    planner: Option<RoleCommandConfig>,
+    evaluator: Option<RoleCommandConfig>,
     capture: Option<CaptureConfig>,
+    /// Environment every declared role receives. A role table wins key by key.
+    #[serde(default)]
+    environment: BTreeMap<String, String>,
     progress: Option<ProgressConfig>,
     #[serde(default)]
     lifecycle: Option<LifecycleConfig>,
@@ -490,6 +520,10 @@ pub struct Project {
     pub capture: Option<CaptureConfig>,
     pub progress: Option<ProgressConfig>,
     pub lifecycle: Option<LifecycleConfig>,
+    /// Environment every declared role receives.
+    pub environment: BTreeMap<String, String>,
+    /// Per-role tables that override the project-wide table key by key.
+    pub role_environments: BTreeMap<String, BTreeMap<String, String>>,
     /// The declared `entry-point-v1` capability, when the project opts in.
     pub entry_point: Option<crate::entry_point::EntryPointConfig>,
     /// Automatic window recording; defaults to the documented contract values.
@@ -497,6 +531,21 @@ pub struct Project {
     /// Corrections applied while sanitizing `recording`.
     pub recording_warnings: Vec<String>,
     pub run_context: Option<crate::run_context::RunContext>,
+}
+
+impl Project {
+    /// Declared environment one role receives; the role table wins key by key.
+    ///
+    /// `None` names no role and therefore declares nothing: a caller-supplied
+    /// program is not a project role and never borrows the project's declared
+    /// environment.
+    #[must_use]
+    pub fn declared_environment(&self, role: Option<&str>) -> BTreeMap<String, String> {
+        let Some(role) = role else {
+            return BTreeMap::new();
+        };
+        crate::role_environment::merge_tables(&self.environment, self.role_environments.get(role))
+    }
 }
 
 pub fn find_project(start: &Path) -> Result<PathBuf> {
@@ -579,6 +628,29 @@ pub fn load_project(requested: &Path) -> Result<Project> {
     validate_identifier(&value.environment_id, "project.environment_id")?;
     validate_identifier(&value.environment_family, "project.environment_family")?;
     validate_text(&value.protocol_version, "project.protocol_version")?;
+    crate::role_environment::validate_table(&value.environment, "project.environment")?;
+    let mut declared_role_environments: BTreeMap<String, &BTreeMap<String, String>> =
+        BTreeMap::new();
+    declared_role_environments.insert("runtime".into(), &value.runtime.environment);
+    declared_role_environments.insert("trainer".into(), &value.trainer.environment);
+    declared_role_environments.insert("player".into(), &value.player.environment);
+    for (name, role) in [
+        ("researcher", value.researcher.as_ref()),
+        ("planner", value.planner.as_ref()),
+        ("evaluator", value.evaluator.as_ref()),
+    ] {
+        if let Some(role) = role {
+            declared_role_environments.insert(name.into(), &role.environment);
+        }
+    }
+    for (name, table) in &declared_role_environments {
+        crate::role_environment::validate_table(table, &format!("project.{name}.environment"))?;
+    }
+    let role_environments: BTreeMap<String, BTreeMap<String, String>> = declared_role_environments
+        .iter()
+        .filter(|(_, table)| !table.is_empty())
+        .map(|(name, table)| (name.clone(), (*table).clone()))
+        .collect();
     value.runtime.validate()?;
     value.trainer.validate("project.trainer")?;
     value.player.validate("project.player")?;
@@ -600,10 +672,12 @@ pub fn load_project(requested: &Path) -> Result<Project> {
     if let Some(lifecycle) = &value.lifecycle {
         lifecycle.validate(&root, value.evaluator.is_some())?;
         let runtime_command = value.runtime.command();
+        let trainer_command = value.trainer.command();
+        let player_command = value.player.command();
         let roles = [
             ("runtime", &runtime_command),
-            ("trainer", &value.trainer),
-            ("player", &value.player),
+            ("trainer", &trainer_command),
+            ("player", &player_command),
         ];
         for (index, (left_name, left)) in roles.iter().enumerate() {
             for (right_name, right) in roles.iter().skip(index + 1) {
@@ -660,12 +734,14 @@ pub fn load_project(requested: &Path) -> Result<Project> {
         bridge_path,
         runtime: value.runtime.command(),
         runtime_readiness: value.runtime.readiness,
-        trainer: value.trainer,
-        player: value.player,
-        researcher: value.researcher,
-        planner: value.planner,
-        evaluator: value.evaluator,
+        trainer: value.trainer.command(),
+        player: value.player.command(),
+        researcher: value.researcher.as_ref().map(RoleCommandConfig::command),
+        planner: value.planner.as_ref().map(RoleCommandConfig::command),
+        evaluator: value.evaluator.as_ref().map(RoleCommandConfig::command),
         capture: value.capture,
+        environment: value.environment,
+        role_environments,
         progress: value.progress,
         lifecycle: value.lifecycle,
         entry_point: value.entry_point,

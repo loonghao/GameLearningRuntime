@@ -273,6 +273,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
             ProjectRoleInvocation {
                 command: &project.runtime,
                 kind: "runtime",
+                role: "runtime",
                 output_command: "runtime.start",
                 as_json: cli.json,
                 bundle: None,
@@ -360,6 +361,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
                 ProjectRoleInvocation {
                     command: &project.player,
                     kind: "playback",
+                    role: "player",
                     output_command: "play",
                     as_json: cli.json,
                     bundle: Some(&bundle),
@@ -562,6 +564,16 @@ fn observation_source(
     })
 }
 
+/// Resolve the environment one role receives and report it for the run record.
+///
+/// Fails closed when a declared variable cannot resolve, so a run is refused
+/// instead of starting a role that is missing inputs the manifest promised.
+fn require_role_environment(project: &Project, role: &str) -> Result<Value> {
+    let resolved =
+        crate::role_environment::require(&project.declared_environment(Some(role)), role)?;
+    Ok(resolved.to_value())
+}
+
 fn doctor(project: &Project, as_json: bool) -> Result<i32> {
     let roles = [
         ("runtime", Some(&project.runtime)),
@@ -579,9 +591,25 @@ fn doctor(project: &Project, as_json: bool) -> Result<i32> {
         if configured && !available {
             ready = false;
         }
-        reports.push(
-            json!({"role": name, "configured": configured, "executable_available": available}),
-        );
+        // An unconfigured role never runs, so only a configured role's
+        // unresolved variables can stop a run.
+        if configured {
+            let resolved = crate::role_environment::resolve(
+                &project.declared_environment(Some(name)),
+                Some(name),
+            );
+            ready &= resolved.ready();
+            reports.push(json!({
+                "role": name,
+                "configured": configured,
+                "executable_available": available,
+                "environment": resolved.to_value(),
+            }));
+        } else {
+            reports.push(
+                json!({"role": name, "configured": configured, "executable_available": available}),
+            );
+        }
     }
     if let Some(capture) = &project.capture {
         let available = executable_available(project, &capture.command());
@@ -802,6 +830,7 @@ fn run_host(
     };
     let outcome = run_command(CommandInvocation {
         command: &hosted,
+        role: None,
         project,
         run_id: &run.run_id,
         run_dir: &run_dir,
@@ -900,6 +929,7 @@ fn run_training(
         "training",
         json!({
             "environment_family": project.environment_family,
+            "role_environment": require_role_environment(project, "trainer")?,
             "lifecycle": lifecycle,
             "dashboard_job_id": std::env::var("GLR_DASHBOARD_JOB_ID").ok(),
             "run_context": crate::run_context::metadata(project)?,
@@ -932,6 +962,7 @@ fn run_training(
     }
     let spawned = spawn_command(CommandInvocation {
         command: &project.trainer,
+        role: Some("trainer"),
         project,
         run_id: &run.run_id,
         run_dir: &run_dir,
@@ -1017,6 +1048,8 @@ fn run_training(
 struct ProjectRoleInvocation<'a> {
     command: &'a ProjectCommand,
     kind: &'a str,
+    /// Role whose declared environment the run receives.
+    role: &'a str,
     output_command: &'a str,
     as_json: bool,
     bundle: Option<&'a Path>,
@@ -1062,6 +1095,7 @@ fn execute_project_role(
         }
         let exit_code = run_command(CommandInvocation {
             command: invocation.command,
+            role: Some(invocation.role),
             project,
             run_id,
             run_dir,
@@ -1130,6 +1164,12 @@ fn run_project_role(
         Value::String(project.environment_family.clone()),
     );
     combined_metadata.insert("run_context".into(), crate::run_context::metadata(project)?);
+    // Resolved before the run row exists, so a variable that cannot resolve
+    // refuses the run instead of launching a role that is missing its inputs.
+    combined_metadata.insert(
+        "role_environment".into(),
+        require_role_environment(project, invocation.role)?,
+    );
     combined_metadata.insert(
         "lifecycle".into(),
         project
@@ -1241,6 +1281,12 @@ fn run_goal(
         "goal",
         json!({
             "environment_family": project.environment_family,
+            "role_environment": {
+                "researcher": require_role_environment(project, "researcher")?,
+                "planner": require_role_environment(project, "planner")?,
+                "trainer": require_role_environment(project, "trainer")?,
+                "evaluator": require_role_environment(project, "evaluator")?,
+            },
             "goal_id": goal.goal_id,
             "dashboard_job_id": std::env::var("GLR_DASHBOARD_JOB_ID").ok(),
             "objective": goal.objective,
@@ -1918,6 +1964,7 @@ fn run_goal_role(
     let log = role_dir.join(format!("{role}.log"));
     let exit_code = run_command(CommandInvocation {
         command,
+        role: Some(role),
         project,
         run_id,
         run_dir: role_dir,
@@ -1947,6 +1994,7 @@ fn run_trainer_role(
     let log = role_dir.join("trainer.log");
     let exit_code = run_command(CommandInvocation {
         command,
+        role: Some("trainer"),
         project,
         run_id,
         run_dir: role_dir,
