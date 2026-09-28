@@ -44,18 +44,22 @@ package and the destination tree — never about training:
 | --- | --- |
 | `package.valid` | The archive verified offline: identity, inventory, sizes and digests. |
 | `materialization` | Every declared file is present and intact, and nothing undeclared is present. |
-| `local_overrides` | Recipient-local files matching `*.local.*` or `*.local`, reported and never merged. |
+| `local_overrides` | Recipient-local files matching `*.local.*` or `*.local` in any path component, reported and never merged. |
 | `artifacts.run_store` | A denied cache, output or run-store path is present in the destination. |
 | `dependency_setup` | `declared` or `missing`; `performed` is always `false`. |
 | `prerequisites` | Declared role and task programs that must already exist; never fetched. |
 | `axes.training`, `axes.live_acceptance`, `axes.policy_quality` | Always `not-evaluated`. |
 | `claims.training_succeeded` | Always `false`. |
 
-**Local overrides.** `*.local.*` and `*.local` paths are refused by the export
-allowlist, so a package never carries them. In the materialized destination the
-conformance scan reports them under `local_overrides.present_in_destination` and
-ignores them; it never merges them into the project (ADR-0021). Supplying them is
-a separate, explicit recipient action.
+**Local overrides.** The patterns `*.local.*` and `*.local` match **per path
+component**, not on the whole path string, and the export gate and the
+conformance scan share one predicate. `glr-project.local.json` and
+a directory component ending in `.local` — for example `a.local/b.json` or
+`a.local/sub/b.json` — are refused by the export allowlist, so a package never
+carries them. In the materialized destination the conformance scan reports them
+under `local_overrides.present_in_destination` and ignores them; it never merges
+them into the project (ADR-0021). Supplying them is a separate, explicit
+recipient action.
 
 **Missing prerequisites.** An unavailable role or task program is a blocker with
 a `remediation` string, not permission to download a game, install a provider SDK

@@ -33,6 +33,8 @@ This document describes future work, not current capability.
   the portable `glr.model-bundle.v1` core.
 - Add authenticated multi-machine coordination around the implemented local
   agent control plane without turning project roles into remote script endpoints.
+  The contract is [ADR-0045](../decisions/0045-remote-role-admission.md); the accepted
+  proposal record is [remote role admission](remote-role-admission.md).
 - Add dataset-catalog projections that bind selected capture ranges to approved
   demonstration provenance and exact transition bytes.
 - Extend the implemented per-run HTML report with cross-run comparison,
