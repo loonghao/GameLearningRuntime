@@ -28,7 +28,9 @@ GAME_LAUNCH_SCHEMA_VERSION = "glr.game-launch.v1"
 GAME_INSTANCES_SCHEMA_VERSION = "glr.game-instances.v1"
 LAUNCH_OUTPUT_SCHEMA_VERSION = "glr.launch.v1"
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
-_ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: Shape one environment variable name must match. Shared with the declared
+#: per-role environment so both contracts reject the same names.
+ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PLACEHOLDERS = frozenset(
     {"project_root", "run_dir", "instance_id", "instance_index", "instance_dir"}
 )
@@ -218,7 +220,7 @@ class GameLaunchConfig:
         for key, value in self.environment.items():
             if (
                 not isinstance(key, str)
-                or _ENVIRONMENT_KEY.fullmatch(key) is None
+                or ENVIRONMENT_KEY.fullmatch(key) is None
                 or not isinstance(value, str)
                 or any(ord(character) < 32 for character in value)
             ):

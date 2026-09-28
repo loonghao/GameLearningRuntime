@@ -16,8 +16,9 @@ glr --json update --check
 ```
 
 `doctor` verifies the strict project file, bridge path, data directory, and
-configured executable roles. It does not prove a live bridge handshake or game
-acceptance.
+configured executable roles. It also resolves each configured role's declared
+`environment` table and exits non-zero when a declared variable cannot be
+resolved. It does not prove a live bridge handshake or game acceptance.
 
 Only after an explicit user update request, apply the exact-target release:
 
@@ -81,8 +82,12 @@ new projects should use the equivalent TOML layout below.
   "protocol_version": "1.0",
   "data_dir": ".glr",
   "bridge_path": "bridge",
+  "environment": {"RENDER_DEVICE": "cpu", "DATASET_ROOT": "${LOCAL_DATA_CACHE}/v1"},
   "runtime": {"argv": ["python", "tools/runtime.py", "{bridge_path}"]},
-  "trainer": {"argv": ["python", "tools/train.py"]},
+  "trainer": {
+    "argv": ["python", "tools/train.py"],
+    "environment": {"RENDER_DEVICE": "cuda"}
+  },
   "player": {"argv": ["python", "tools/play.py", "{bundle}"]},
   "researcher": {"argv": ["python", "tools/research.py", "{research_path}"]},
   "planner": {"argv": ["python", "tools/plan.py", "{trial_path}"]},
@@ -108,6 +113,12 @@ new projects should use the equivalent TOML layout below.
   }
 }
 ```
+
+The optional `environment` table declares what a role receives. A literal passes
+through unchanged; `${NAME}` is interpolated from the process environment; a
+missing reference fails the run before the role starts. A role table overrides
+the project table key by key. The real process environment outranks both, and
+`GLR_*` keys are rejected at load time because the CLI owns that namespace.
 
 `lifecycle.configs` gives each project input exactly one owner. `doctor` rejects
 missing files, schema drift, duplicate owners, shared paths with conflicting

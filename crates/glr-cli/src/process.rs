@@ -167,6 +167,7 @@ fn configure_command(
     run_dir: &Path,
     bundle: Option<&Path>,
     extra: &HashMap<String, PathBuf>,
+    role: Option<&str>,
 ) -> Result<Command> {
     configure_command_with_argv(
         command,
@@ -176,6 +177,7 @@ fn configure_command(
         bundle,
         extra,
         ArgumentMode::ExpandPlaceholders,
+        role,
     )
 }
 
@@ -207,6 +209,7 @@ fn configure_command_with_argv(
     bundle: Option<&Path>,
     extra: &HashMap<String, PathBuf>,
     mode: ArgumentMode,
+    role: Option<&str>,
 ) -> Result<Command> {
     if let Some(context) = &project.run_context {
         context.verify(&project.root)?;
@@ -265,11 +268,19 @@ fn configure_command_with_argv(
     for (key, value) in extra {
         process.env(format!("GLR_{}", key.to_ascii_uppercase()), value);
     }
+    if let Some(role) = role {
+        let declared =
+            crate::role_environment::require(&project.declared_environment(Some(role)), role)?;
+        declared.apply(&mut process);
+    }
     Ok(process)
 }
 
 pub struct CommandInvocation<'a> {
     pub command: &'a ProjectCommand,
+    /// Role whose declared environment this child receives; `None` for a
+    /// program the manifest does not own.
+    pub role: Option<&'a str>,
     pub project: &'a Project,
     pub run_id: &'a str,
     pub run_dir: &'a Path,
@@ -333,6 +344,7 @@ pub fn spawn_command(invocation: CommandInvocation<'_>) -> Result<RunningChild> 
         invocation.bundle,
         invocation.extra,
         invocation.arguments,
+        invocation.role,
     )?;
     let child = process
         .stdin(Stdio::null())
@@ -387,7 +399,19 @@ pub fn start_capture(project: &Project, run_id: &str, run_dir: &Path) -> Result<
     let log_mirror = LogMirror::start(&log_path);
     let stderr = log.try_clone()?;
     let command = capture.command();
-    let mut process = configure_command(&command, project, run_id, run_dir, None, &HashMap::new())?;
+    // The recorder is project-owned rather than caller-supplied, so it receives
+    // the project-wide table exactly as the Python entry point gives it to
+    // `capture`: no role table exists for it, and an unresolvable variable
+    // refuses the run.
+    let mut process = configure_command(
+        &command,
+        project,
+        run_id,
+        run_dir,
+        None,
+        &HashMap::new(),
+        Some("capture"),
+    )?;
     process
         .env("GLR_CAPTURE_SESSION_ID", &receipt.session_id)
         .env("GLR_CAPTURE_RECEIPT", &receipt_path);

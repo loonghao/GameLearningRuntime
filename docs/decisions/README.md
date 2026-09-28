@@ -47,7 +47,11 @@
 - [ADR-0042: Pin one entry point per project](0042-pin-one-entry-point-per-project.md)
 - [ADR-0043: One `glr.cli-output.v1` key is one shape](0043-one-cli-output-key-is-one-shape.md)
 - [ADR-0044: Bound negative shaping with optional budgets](0044-bound-negative-shaping-budgets.md)
+- [ADR-0045: Admit remote roles with scoped capabilities, epoch-scoped fences, and coordinator-owned checkpoints](0045-remote-role-admission.md)
+- [ADR-0046: Let a project declare the environment its roles receive](0046-declare-the-environment-a-role-receives.md)
 
 Accepted ADRs describe implemented architecture. Its staged delivery plan for
 issue #116 is [the phased plan](../planning/training-package-phases.md). Proposed future designs belong
-in `docs/planning` until accepted and built.
+in `docs/planning` until accepted and built. ADR-0045 is the one deliberate exception: it
+is accepted as the contract for `glr.remote-admission.v1` at Phase 0, before any code,
+so that implementation cannot outrun its own acceptance criteria.
