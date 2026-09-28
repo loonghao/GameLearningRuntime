@@ -66,6 +66,7 @@ from game_learning_runtime.readiness import (
     readiness_from_mapping,
     run_readiness_window,
 )
+from game_learning_runtime.role_environment import RoleEnvironment, resolve_environment
 from game_learning_runtime.run_store import (
     RUN_STORE_SCHEMA_VERSION,
     ArtifactRecord,
@@ -97,6 +98,13 @@ _LOGGER = logging.getLogger("game_learning_runtime.cli")
 
 #: Run kinds mapped to the event namespace their lifecycle hooks publish.
 ROLE_EVENT_PREFIX: Mapping[str, str] = {"runtime": "runtime", "playback": "play"}
+
+#: Run kinds mapped to the role whose declared environment the run receives.
+ROLE_BY_RUN_KIND: Mapping[str, str] = {
+    "runtime": "runtime",
+    "playback": "player",
+    "training": "trainer",
+}
 
 #: Canonical upstream identity enforced by `glr fork-gate`.
 CANONICAL_ORIGIN_URL = "https://github.com/loonghao/GameLearningRuntime.git"
@@ -472,15 +480,21 @@ def _doctor(project: GLRProject, *, as_json: bool) -> int:
     ):
         configured = command is not None
         available = command is not None and _command_available(project, command)
-        roles.append(
-            {
-                "role": role,
-                "required": required,
-                "configured": configured,
-                "executable": (None if command is None else command.argv[0]),
-                "available": available,
-            }
-        )
+        entry: dict[str, object] = {
+            "role": role,
+            "required": required,
+            "configured": configured,
+            "executable": (None if command is None else command.argv[0]),
+            "available": available,
+        }
+        if configured:
+            # An unconfigured role never runs, so only a configured role's
+            # unresolved variables can stop a run.
+            resolved = _declared_role_environment(project, role)
+            entry["environment"] = resolved.to_mapping()
+            if not resolved.ready:
+                required_ready = False
+        roles.append(entry)
         if required and not available:
             required_ready = False
     game = project.game
@@ -536,6 +550,26 @@ def _command_context(
     }
 
 
+def _declared_role_environment(project: GLRProject, role: str | None) -> RoleEnvironment:
+    """Resolve the environment the manifest declares for one role."""
+
+    return resolve_environment(project.declared_environment(role), environ=os.environ, role=role)
+
+
+def _require_declared_environment(project: GLRProject, role: str) -> RoleEnvironment:
+    """Fail closed, before anything starts, when a declared variable cannot be resolved.
+
+    A run must not launch a game or a trainer and then discover that a variable
+    its role was promised does not exist, so the declared environment is
+    resolved once up front and the refusal names the variable.
+    """
+
+    resolved = _declared_role_environment(project, role)
+    if not resolved.ready:
+        raise ContractViolation(resolved.refusal())
+    return resolved
+
+
 def _process_environment(
     project: GLRProject,
     *,
@@ -543,6 +577,7 @@ def _process_environment(
     run_dir: Path,
     bundle: Path | None = None,
     extra: dict[str, str | Path] | None = None,
+    role: str | None = None,
 ) -> dict[str, str]:
     environment = os.environ.copy()
     environment.pop("GLR_PROJECT_MANIFEST", None)
@@ -570,6 +605,13 @@ def _process_environment(
         environment["GLR_MODEL_BUNDLE"] = str(bundle)
     for key, value in (extra or {}).items():
         environment[f"GLR_{key.upper()}"] = str(value)
+    resolved = _declared_role_environment(project, role)
+    if not resolved.ready:
+        raise ContractViolation(resolved.refusal())
+    for name, value in resolved.process_environment().items():
+        # The real process environment outranks the declared table, so an
+        # operator override is never shadowed by the manifest.
+        environment.setdefault(name, value)
     return environment
 
 
@@ -583,12 +625,13 @@ def _run_command(
     bundle: Path | None = None,
     extra: dict[str, str | Path] | None = None,
     timeout_seconds: float | None = None,
+    role: str | None = None,
 ) -> int:
     argv = command.expand(
         **_command_context(project, run_id=run_id, run_dir=run_dir, bundle=bundle, extra=extra)
     )
     environment = _process_environment(
-        project, run_id=run_id, run_dir=run_dir, bundle=bundle, extra=extra
+        project, run_id=run_id, run_dir=run_dir, bundle=bundle, extra=extra, role=role
     )
     with log_path.open("w", encoding="utf-8", newline="\n") as log:
         process = subprocess.Popen(
@@ -650,7 +693,9 @@ def _start_capture(
                 **_command_context(project, run_id=run_id, run_dir=run_dir)
             ),
             cwd=project.root,
-            env=_process_environment(project, run_id=run_id, run_dir=run_dir, extra=extra),
+            env=_process_environment(
+                project, run_id=run_id, run_dir=run_dir, extra=extra, role="capture"
+            ),
             stdin=(subprocess.PIPE if project.capture.stop == "stdin-q" else subprocess.DEVNULL),
             stdout=log_stream,
             stderr=subprocess.STDOUT,
@@ -736,6 +781,7 @@ def _run_training(
     capture_enabled: bool,
     min_coverage: float | None = None,
 ) -> int:
+    declared_environment = _require_declared_environment(project, "trainer")
     store = _store(project)
     run = store.create_run(
         environment_id=project.environment_id,
@@ -743,6 +789,7 @@ def _run_training(
         kind="training",
         metadata={
             "environment_family": project.environment_family,
+            "role_environment": declared_environment.to_mapping(),
             "status_scope": "process_execution",
             "learning_status": "unverified",
             "improvement_status": "unverified",
@@ -816,6 +863,7 @@ def _run_training(
             run_dir=run_dir,
             log_path=trainer_log,
             extra=game_extra,
+            role="trainer",
         )
     except KeyboardInterrupt as error:
         interrupted = error
@@ -1031,12 +1079,18 @@ def _run_project_role(
     metadata: dict[str, Any] | None = None,
     readiness: RuntimeReadinessConfig | None = None,
 ) -> int:
+    role = ROLE_BY_RUN_KIND.get(kind, kind)
+    declared_environment = _require_declared_environment(project, role)
     store = _store(project)
     run = store.create_run(
         environment_id=project.environment_id,
         protocol_version=project.protocol_version,
         kind=kind,
-        metadata={"environment_family": project.environment_family, **(metadata or {})},
+        metadata={
+            "environment_family": project.environment_family,
+            "role_environment": declared_environment.to_mapping(),
+            **(metadata or {}),
+        },
     )
     run_dir = project.data_dir / "runs" / run.run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -1072,6 +1126,7 @@ def _run_project_role(
             log_path=log_path,
             bundle=bundle,
             extra=extra,
+            role=role,
         )
 
     def probe(attempt: int) -> ReadinessAttempt:
@@ -1226,6 +1281,7 @@ def _run_goal_role(
         log_path=log_path,
         extra=context,
         timeout_seconds=_remaining_seconds(deadline),
+        role=role,
     )
     if exit_code != 0:
         raise ContractViolation(f"goal {role} command failed with exit code {exit_code}")
@@ -1305,6 +1361,10 @@ def _run_goal(project: GLRProject, *, goal_path: Path, as_json: bool, capture_en
     goal = AgentGoal.from_mapping(_read_json_mapping(goal_path, label="agent goal"))
     if goal.environment_family != project.environment_family:
         raise ContractViolation("goal environment_family does not match the current GLR project")
+    declared_environments = {
+        role: _require_declared_environment(project, role)
+        for role in ("researcher", "planner", "trainer", "evaluator")
+    }
 
     store = _store(project)
     run = store.create_run(
@@ -1315,6 +1375,9 @@ def _run_goal(project: GLRProject, *, goal_path: Path, as_json: bool, capture_en
             "environment_family": project.environment_family,
             "goal_id": goal.goal_id,
             "objective": goal.objective,
+            "role_environment": {
+                role: resolved.to_mapping() for role, resolved in declared_environments.items()
+            },
         },
     )
     run_dir = project.data_dir / "runs" / run.run_id

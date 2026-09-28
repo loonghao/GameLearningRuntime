@@ -21,6 +21,7 @@ mod project;
 mod readiness;
 mod recording;
 mod report;
+mod role_environment;
 mod run_context;
 mod store;
 mod task;

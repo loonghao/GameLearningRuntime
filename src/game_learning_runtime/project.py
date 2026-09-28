@@ -15,6 +15,7 @@ from typing import Any, Literal
 from game_learning_runtime.capture_liveness import ContentLivenessConfig
 from game_learning_runtime.game_launcher import GameLaunchConfig
 from game_learning_runtime.hooks import HookConfig
+from game_learning_runtime.role_environment import merge_declarations, parse_environment_table
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -24,6 +25,17 @@ else:
 PROJECT_SCHEMA_VERSION = "glr.project.v1"
 PROJECT_FILE_NAME = "glr-project.toml"
 PROJECT_FILE_NAMES = (PROJECT_FILE_NAME, "glr-project.json")
+
+#: Roles that may declare their own ``environment`` table. The project-wide
+#: table applies to these roles and is overridden key by key.
+ROLE_ENVIRONMENT_ROLES: tuple[str, ...] = (
+    "runtime",
+    "trainer",
+    "player",
+    "researcher",
+    "planner",
+    "evaluator",
+)
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _PLACEHOLDERS = frozenset(
     {
@@ -375,6 +387,22 @@ class GLRProject:
     manifest_path: Path | None = None
     extensions: Mapping[str, Path] = field(default_factory=lambda: MappingProxyType({}))
     hooks: HookConfig = field(default_factory=HookConfig)
+    environment: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    role_environments: Mapping[str, Mapping[str, str]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    def declared_environment(self, role: str | None) -> Mapping[str, str]:
+        """Declared environment one role receives: the role table wins over the project table.
+
+        ``None`` names no role and therefore declares nothing: a caller-supplied
+        program is not a project role and never borrows the project's declared
+        environment.
+        """
+
+        if role is None:
+            return MappingProxyType({})
+        return merge_declarations(self.environment, self.role_environments.get(role))
 
 
 def find_project(start: str | Path = ".") -> Path:
@@ -420,6 +448,31 @@ def resolve_game_directory(root: str | Path, configured: str) -> Path:
     if not resolved.is_dir():
         raise FileNotFoundError("configured game.directory does not exist or is not a directory")
     return resolved
+
+
+def _role_command(
+    value: object, *, path: str, extra_allowed: frozenset[str] = frozenset()
+) -> tuple[ProjectCommand, Mapping[str, str]]:
+    """Split one role table into the command to run and the environment it receives."""
+
+    mapping = _mapping(value, path=path)
+    _reject_unknown(
+        mapping,
+        allowed=frozenset({"argv", "environment"}) | extra_allowed,
+        path=path,
+        required=frozenset({"argv"}),
+    )
+    command = ProjectCommand.from_mapping({"argv": mapping["argv"]}, path=path)
+    environment = parse_environment_table(mapping.get("environment"), path=f"{path}.environment")
+    return command, environment
+
+
+def _optional_role(value: object, *, path: str) -> tuple[ProjectCommand | None, Mapping[str, str]]:
+    """Split an optional role table, reporting no command and no environment when absent."""
+
+    if value is None:
+        return None, MappingProxyType({})
+    return _role_command(value, path=path)
 
 
 def _extensions(root: Path, value: object) -> Mapping[str, Path]:
@@ -481,6 +534,7 @@ def load_project(path: str | Path = ".") -> GLRProject:
                 "game",
                 "extensions",
                 "hooks",
+                "environment",
             }
         ),
         path="project",
@@ -513,10 +567,37 @@ def load_project(path: str | Path = ".") -> GLRProject:
         path="project.data_dir",
     )
     runtime_value = _mapping(value["runtime"], path="project.runtime")
+    runtime, runtime_environment = _role_command(
+        runtime_value, path="project.runtime", extra_allowed=frozenset({"readiness"})
+    )
+    trainer, trainer_environment = _role_command(value["trainer"], path="project.trainer")
+    player, player_environment = _role_command(value["player"], path="project.player")
+    researcher, researcher_environment = _optional_role(
+        value.get("researcher"), path="project.researcher"
+    )
+    planner, planner_environment = _optional_role(value.get("planner"), path="project.planner")
+    evaluator, evaluator_environment = _optional_role(
+        value.get("evaluator"), path="project.evaluator"
+    )
     return GLRProject(
         root=root,
         manifest_path=config_path,
         extensions=_extensions(root, value.get("extensions", {})),
+        environment=parse_environment_table(value.get("environment"), path="project.environment"),
+        role_environments=MappingProxyType(
+            {
+                name: table
+                for name, table in (
+                    ("runtime", runtime_environment),
+                    ("trainer", trainer_environment),
+                    ("player", player_environment),
+                    ("researcher", researcher_environment),
+                    ("planner", planner_environment),
+                    ("evaluator", evaluator_environment),
+                )
+                if table
+            }
+        ),
         environment_id=_identifier(value["environment_id"], path="project.environment_id"),
         environment_family=_identifier(
             value["environment_family"], path="project.environment_family"
@@ -524,10 +605,7 @@ def load_project(path: str | Path = ".") -> GLRProject:
         protocol_version=_text(value["protocol_version"], path="project.protocol_version"),
         data_dir=data_dir,
         bridge_path=bridge_path,
-        runtime=ProjectCommand.from_mapping(
-            {key: item for key, item in runtime_value.items() if key != "readiness"},
-            path="project.runtime",
-        ),
+        runtime=runtime,
         runtime_readiness=(
             None
             if runtime_value.get("readiness") is None
@@ -535,35 +613,11 @@ def load_project(path: str | Path = ".") -> GLRProject:
                 _mapping(runtime_value["readiness"], path="project.runtime.readiness")
             )
         ),
-        trainer=ProjectCommand.from_mapping(
-            _mapping(value["trainer"], path="project.trainer"), path="project.trainer"
-        ),
-        player=ProjectCommand.from_mapping(
-            _mapping(value["player"], path="project.player"), path="project.player"
-        ),
-        researcher=(
-            None
-            if value.get("researcher") is None
-            else ProjectCommand.from_mapping(
-                _mapping(value["researcher"], path="project.researcher"),
-                path="project.researcher",
-            )
-        ),
-        planner=(
-            None
-            if value.get("planner") is None
-            else ProjectCommand.from_mapping(
-                _mapping(value["planner"], path="project.planner"), path="project.planner"
-            )
-        ),
-        evaluator=(
-            None
-            if value.get("evaluator") is None
-            else ProjectCommand.from_mapping(
-                _mapping(value["evaluator"], path="project.evaluator"),
-                path="project.evaluator",
-            )
-        ),
+        trainer=trainer,
+        player=player,
+        researcher=researcher,
+        planner=planner,
+        evaluator=evaluator,
         capture=(
             None
             if value.get("capture") is None
