@@ -716,6 +716,7 @@ runbook](docs/runbooks/release.md).
 - [Supervision and watchdog](docs/guides/supervision-watchdog.md)
 - [Anti-fork gate](docs/guides/fork-gate.md)
 - [Pin one entry point per project](docs/guides/entry-point.md)
+- [Declare the environment a role receives](docs/guides/declared-role-environment.md)
 - [Benchmark baseline](docs/benchmarks/2026-08-31-data-plane-baseline.md)
 - [Roadmap](docs/planning/roadmap.md) and [architecture decisions](docs/decisions/README.md)
 
