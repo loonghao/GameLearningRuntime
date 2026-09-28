@@ -95,7 +95,9 @@ pub fn validate_table(table: &BTreeMap<String, String>, label: &str) -> Result<(
                 "{label} cannot declare {name:?}: the {RESERVED_PREFIX}* namespace belongs to the CLI"
             )));
         }
-        if raw.chars().any(char::is_control) {
+        // C0 only, matching `game.environment` and the Python side: `is_control`
+        // would also reject U+007F-U+009F, which the other two validators accept.
+        if raw.chars().any(|character| (character as u32) < 32) {
             return Err(Error::Invalid(format!(
                 "{label}.{name} must be a printable string"
             )));
@@ -451,6 +453,20 @@ mod tests {
 
         let control = table(&[("MODE", "value\nwith\tcontrol")]);
         assert!(validate_table(&control, "project.environment").is_err());
+        let unit_separator = table(&[("MODE", "value\u{1f}sep")]);
+        assert!(validate_table(&unit_separator, "project.environment").is_err());
+    }
+
+    #[test]
+    fn control_characters_are_rejected_from_c0_only() {
+        // C0 is rejected; DEL and C1 are accepted, matching `game.environment`
+        // and the Python side. A wider predicate here would reject a
+        // declaration the other entry point accepts.
+        assert!(validate_table(&table(&[("MODE", "a\nb")]), "project.environment").is_err());
+        validate_table(&table(&[("MODE", "a\u{7f}b")]), "project.environment")
+            .expect("DEL is outside C0 and must load");
+        validate_table(&table(&[("MODE", "a\u{85}b")]), "project.environment")
+            .expect("C1 is outside C0 and must load");
     }
 
     #[test]

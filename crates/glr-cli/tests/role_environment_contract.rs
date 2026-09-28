@@ -102,6 +102,22 @@ fn role<'a>(output: &'a Value, name: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("doctor reported no {name} role"))
 }
 
+/// Records the declared environment the capture recorder actually received.
+#[test]
+#[ignore]
+fn capture_environment_probe_child() {
+    let run_dir = PathBuf::from(std::env::var_os("GLR_RUN_DIR").expect("GLR_RUN_DIR"));
+    let observed = json!({
+        "SYNTHETIC_MODE": std::env::var("SYNTHETIC_MODE").ok(),
+        "SYNTHETIC_DATASET": std::env::var("SYNTHETIC_DATASET").ok(),
+    });
+    fs::write(
+        run_dir.join("capture-environment-observed.json"),
+        serde_json::to_vec_pretty(&observed).unwrap(),
+    )
+    .unwrap();
+}
+
 /// Records the declared environment the runtime role actually received.
 #[test]
 #[ignore]
@@ -262,6 +278,43 @@ fn the_manifest_rejects_a_reserved_glr_key_before_any_process_starts() {
         stderr.contains("GLR_RUN_ID"),
         "the refusal must name the reserved key: {stderr}"
     );
+}
+
+#[test]
+fn the_capture_recorder_receives_the_project_wide_table() {
+    let project = create_project();
+    let probe = std::env::current_exe()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    write_manifest(project.path(), |value| {
+        value["environment"] = json!({"SYNTHETIC_MODE": "synthetic"});
+        value["runtime"]["environment"] = json!({"SYNTHETIC_MODE": "runtime"});
+        value["capture"] = json!({
+            "argv": [probe, "--ignored", "--exact", "capture_environment_probe_child"],
+            "required": false,
+            "stop": "terminate",
+            "video_file": "capture.mp4",
+            "index_file": "capture-index.jsonl",
+            "codec": "h264",
+            "frame_rate": 12,
+            "width": 640,
+            "height": 360
+        });
+    });
+
+    let trained = success(&run(project.path(), &["train"]));
+    let run_id = trained["data"]["run_id"].as_str().unwrap();
+    let path = project
+        .path()
+        .join(".glr/runs")
+        .join(run_id)
+        .join("capture-environment-observed.json");
+    let observed: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+
+    // The recorder is not a manifest role, so it gets the project-wide table and
+    // not the runtime override. Both entry points behave this way.
+    assert_eq!(observed["SYNTHETIC_MODE"], "synthetic");
 }
 
 #[test]

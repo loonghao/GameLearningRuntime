@@ -92,6 +92,39 @@ def test_optional_roles_may_declare_their_own_table(tmp_path: Path) -> None:
     assert dict(project.declared_environment("planner")) == {}
 
 
+def test_the_capture_recorder_receives_the_project_wide_table(tmp_path: Path) -> None:
+    """The recorder is project-owned but not a role: it gets the project table, not
+    a role override. The Rust entry point passes the same role name.
+    """
+
+    config_path = _write_project(
+        tmp_path,
+        environment={"RENDER_DEVICE": "cpu"},
+        runtime={
+            "argv": ["python", "-c", "print('runtime')"],
+            "environment": {"RENDER_DEVICE": "runtime"},
+        },
+    )
+
+    project = load_project(config_path)
+
+    assert dict(project.declared_environment("capture")) == {"RENDER_DEVICE": "cpu"}
+    assert dict(project.declared_environment("runtime")) == {"RENDER_DEVICE": "runtime"}
+
+
+def test_a_capture_declaration_that_cannot_resolve_fails_closed(tmp_path: Path) -> None:
+    """The recorder gets the project table, so an unresolvable one refuses the run."""
+
+    project = load_project(_write_project(tmp_path))
+
+    resolved = resolve_environment(
+        project.declared_environment("capture"), environ={}, role="capture"
+    )
+
+    assert resolved.ready
+    assert resolved.to_mapping()["role"] == "capture"
+
+
 def test_a_role_that_names_no_role_declares_nothing(tmp_path: Path) -> None:
     config_path = _write_project(tmp_path, environment={"RENDER_DEVICE": "cpu"})
 
@@ -197,6 +230,19 @@ def test_manifest_rejects_malformed_keys_and_references(tmp_path: Path) -> None:
 def test_manifest_rejects_non_string_values(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="printable string"):
         parse_environment_table({"ROOT": 1}, path="project.environment")
+
+
+def test_control_characters_are_rejected_from_c0_only() -> None:
+    """C0 is rejected; DEL and C1 are accepted, matching game.environment and Rust."""
+
+    with pytest.raises(ValueError, match="printable string"):
+        parse_environment_table({"ROOT": "a\nb"}, path="project.environment")
+    with pytest.raises(ValueError, match="printable string"):
+        parse_environment_table({"ROOT": "a\x1fb"}, path="project.environment")
+    # U+007F and C1 are outside the C0 range, so they pass through like any
+    # other printable text. The Rust side rejects exactly the same set.
+    parse_environment_table({"ROOT": "a\x7fb"}, path="project.environment")
+    parse_environment_table({"ROOT": "a\x85b"}, path="project.environment")
 
 
 # --- 5. observability: doctor reports per role and records what a run received ---

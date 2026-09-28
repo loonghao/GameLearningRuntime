@@ -399,6 +399,10 @@ pub fn start_capture(project: &Project, run_id: &str, run_dir: &Path) -> Result<
     let log_mirror = LogMirror::start(&log_path);
     let stderr = log.try_clone()?;
     let command = capture.command();
+    // The recorder is project-owned rather than caller-supplied, so it receives
+    // the project-wide table exactly as the Python entry point gives it to
+    // `capture`: no role table exists for it, and an unresolvable variable
+    // refuses the run.
     let mut process = configure_command(
         &command,
         project,
@@ -406,7 +410,7 @@ pub fn start_capture(project: &Project, run_id: &str, run_dir: &Path) -> Result<
         run_dir,
         None,
         &HashMap::new(),
-        None,
+        Some("capture"),
     )?;
     process
         .env("GLR_CAPTURE_SESSION_ID", &receipt.session_id)
