@@ -276,14 +276,19 @@ in-memory queue after exit, and cross-process ownership and policy publication
 coordination remain future work. Unknown in-flight action outcomes are never
 replayed merely because a transport reconnected.
 
-The proposal that answers this list is
-[`docs/planning/remote-role-admission.md`](../planning/remote-role-admission.md)
-(`glr.remote-admission.v1`; design only, not yet accepted). Its §2.1–2.10 specify the
-roles, admission claims, fencing, ingestion, reconciliation, state taxonomy, checkpoint
-ownership, and trust boundary named above, and its Part 3 carries the conformance
-checklist. Two cross-references worth keeping in view: it takes `package_digest` from
-§D4 above (and so inherits this ADR's open question 2 on the D4 migration), and it
-admits the actor role only, deferring remote learner admission — see its open question 7.
+The contract that answers this list is
+[ADR-0045: Admit remote roles with scoped capabilities, epoch-scoped fences, and
+coordinator-owned checkpoints](0045-remote-role-admission.md)
+(`glr.remote-admission.v1`; accepted 2026-09-28 at Phase 0, no code yet). Its D2–D11
+specify the roles, admission claims, fencing, ingestion, reconciliation, state taxonomy,
+checkpoint ownership, and trust boundary named above, and its conformance checklist
+carries the tests. Two cross-references worth keeping in view: it takes `package_digest`
+from §D4 above (and so inherits this ADR's open question 2 on the D4 migration, which it
+answers by following §D4 and reading identity through an injected identity function), and
+it answers this section's "learner and actor roles" as **actor-only in v1**, deferring
+remote learner admission rather than designing it away. The accepted contract supersedes
+[the original proposal record](../planning/remote-role-admission.md), which is retained
+for its baseline survey and review history.
 
 ## Non-functional requirements
 
