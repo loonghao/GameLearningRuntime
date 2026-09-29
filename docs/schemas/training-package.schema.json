@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "glr.training-package.v1",
+  "title": "GLR training package envelope",
+  "description": "Group-scoped, non-executing portable training package (ADR-0041). `glr.source-package.v1` remains the source-only profile; this envelope adds optional model, dataset, knowledge and report groups, each deny-by-default.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "selection",
+    "tool_version",
+    "content_sha256",
+    "entries"
+  ],
+  "properties": {
+    "selection": {
+      "$ref": "training-package-selection.schema.json"
+    },
+    "tool_version": {
+      "type": "string"
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "size_bytes",
+          "sha256",
+          "group",
+          "role",
+          "compression"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "group": {
+            "$ref": "#/$defs/group"
+          },
+          "role": {
+            "$ref": "#/$defs/role"
+          },
+          "compression": {
+            "enum": [
+              "stored",
+              "deflated"
+            ]
+          },
+          "compressed_size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Required for a deflated entry, absent for a stored one. Verified against the archive that carries the entry; excluded from the content identity, so a dry run and the export it previews agree."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "group": {
+      "type": "string",
+      "enum": [
+        "source",
+        "model",
+        "dataset",
+        "knowledge",
+        "report"
+      ]
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "project-manifest",
+        "dependency-lock",
+        "source-file",
+        "model-manifest",
+        "model-input",
+        "model-artifact",
+        "dataset-manifest",
+        "dataset-payload",
+        "knowledge-snapshot",
+        "aggregate-report"
+      ]
+    }
+  }
+}

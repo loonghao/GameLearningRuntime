@@ -15,6 +15,7 @@ mod media;
 mod observation;
 mod observe;
 mod package;
+mod package_groups;
 mod plugin;
 mod process;
 mod project;

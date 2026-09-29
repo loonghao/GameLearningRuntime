@@ -2,9 +2,82 @@
 
 ## Status
 
-Proposed for design review. This record decides contracts and boundaries; it does
-not implement them. Command verbs and schema identifiers below are **candidates
-for review**, not settled names — see *Open questions for review*.
+Accepted for design review. M0 (this record and the phased plan), M1, M2, M3
+and M5 are complete; **M4 — optional model, dataset, knowledge and report
+groups — is implemented** by the change that records the decisions below.
+
+Names, schema identifiers and the limit table were **candidates** when this
+record was written. M4 settles the ones it implements: see
+*Decisions settled by M4*. The open questions that remain are deliberately
+unresolved and do not block M4.
+
+## Decisions settled by M4
+
+1. **Envelope name.** `glr.training-package.v1` for the group-scoped profile.
+   `glr.source-package.v1` (ADR-0027) is unchanged and stays a supported
+   profile, not a legacy format: its selection, entries, wire shape and content
+   identity are byte-for-byte what ADR-0027 shipped. The two are distinguished
+   by `selection.schema_version`, which remains a top-level field in both. An
+   unknown schema version is refused at parse time.
+2. **Group vocabulary.** Five groups: `source`, `model`, `dataset`,
+   `knowledge`, `report`. `redistributable` from the original table is
+   **deferred**, not dropped: the four implemented groups cover every payload
+   issue #116 names, and a sixth admission predicate with its own per-file
+   license record needs its own review and its own negative corpus. The
+   vocabulary stays closed, so adding it later is an additive schema change.
+   Open question 3 is therefore half-answered: `report` is a distinct group;
+   `redistributable` is still open.
+3. **Every group-scoped package declares `source`.** The project manifest and
+   dependency lock bind the environment and protocol a package is valid for, so
+   a payload-only package would have nothing to bind them to. A `source`-only
+   group-scoped package satisfies every ADR-0027 obligation unchanged.
+4. **Group ownership is a path root.** `models/`, `data/`, `knowledge/` and
+   `reports/` belong to their group; every other path is `source`. A path under
+   an undeclared group's root is a refusal, which is what makes deny-by-default
+   mechanical rather than a matter of policy interpretation. The `dataset` root
+   is `data/` rather than `datasets/`: the latter is already a denied
+   cache/output root in the export allowlist.
+5. **Limit table** (replaces the candidate table in D5):
+
+   | Group | Max files | Max per file | Max group bytes | Compression |
+   | --- | --- | --- | --- |
+   | `source` | 1,024 | 16 MiB | 128 MiB | `Stored` |
+   | `model` | 64 | 1 GiB | 4 GiB | `Deflated` |
+   | `dataset` | 512 | 1 GiB | 4 GiB | `Deflated` |
+   | `knowledge` | 256 | 64 MiB | 256 MiB | `Deflated` |
+   | `report` | 64 | 16 MiB | 64 MiB | `Deflated` |
+
+   Two ceilings sit above the per-group caps and are the real enforcement
+   points: **1,024 files** and **4 GiB** expanded per package. The file ceiling
+   equals the archive member gate, so a package can never contain more files
+   than an archive may carry — which is why `dataset` is 512 and not the 4,096
+   originally proposed. The package ceiling, not the sum of the group caps, is
+   what a recipient pays for.
+6. **Knowledge freshness** (open question 5): a snapshot is validated at both
+   export and import, against the wall clock and a **declared** `max_age_days`
+   that the knowledge group must carry. Without a declared budget nothing is
+   reviewable, so the export is refused; a snapshot stamped in the future is
+   refused too. Freshness is therefore a property of the verification moment,
+   which is the point: a package that was valid last quarter may legitimately
+   be refused today.
+7. **M4 ordering** (open question 6): `model`, `dataset`, `knowledge` and
+   `report` landed together behind one envelope and separate admission
+   predicates. Shipping `model` first would have built the authorization gate
+   for `dataset` last, where it is cheapest to omit.
+8. **Roles** are declared per file by the exporter and cross-checked against a
+   derived role (`project-manifest`, `dependency-lock`, `source-file`,
+   `model-manifest`, `model-input`, `model-artifact`, `dataset-manifest`,
+   `dataset-payload`, `knowledge-snapshot`, `aggregate-report`). A declared role
+   that disagrees with the path is a refusal: a role is an assertion someone
+   must make, not a label GLR infers.
+9. **Content identity excludes `compressed_size_bytes`.** A dry run hashes
+   bytes but never compresses them, so the compressed size does not exist when
+   a plan is computed. Excluding that one transport field from the hash keeps a
+   dry run and the export it previews on the same identifier; the compressed
+   size is still verified against the archive that carries the entry.
+
+Open question 2 (the D4 migration) is unaffected by M4: the source-only identity
+computation is unchanged, so no consumer of `glr.source-package.v1` migrates.
 
 Related: issue #116, ADR-0005, ADR-0010, ADR-0013, ADR-0014, ADR-0015, ADR-0017,
 ADR-0020, ADR-0021, ADR-0024, ADR-0027, ADR-0031, ADR-0033, and
@@ -78,9 +151,11 @@ because they change the contract, not just the code:
 ### D1. One envelope, declared entry groups; source-only stays a profile
 
 A package declares `entry_groups`: a non-empty subset of a **closed** vocabulary
-— `source`, `model`, `dataset`, `knowledge`, `report`, `redistributable`. Every
-path belongs to exactly one declared group. A path whose group is not declared is
-a refusal, not a warning.
+— `source`, `model`, `dataset`, `knowledge`, `report`. Every path belongs to
+exactly one declared group, by package-root directory (`models/`, `data/`,
+`knowledge/`, `reports/`; everything else is `source`). A path whose group is not
+declared is a refusal, not a warning. Every group-scoped package declares
+`source`.
 
 A package that declares only `source` is a **source-only package** and must
 satisfy every ADR-0027 obligation unchanged. This ADR does not relax ADR-0027.
@@ -120,12 +195,14 @@ everything except `source`.
 
 | Group | Default | Admission predicate | Additional gate |
 | --- | --- | --- | --- |
-| `source` | allowed | existing extension allowlist + denied roots (`package.rs:92-121`) | exactly one project manifest and at least one lock file |
-| `model` | denied | weight/config/metrics extensions only | must verify as `glr.model-bundle.v1` (ADR-0010) |
-| `dataset` | denied | separate reviewed allowlist | redistribution authorization + demonstration provenance (ADR-0013) |
-| `knowledge` | denied | snapshot files only | freshness-aware snapshot validation (ADR-0014) |
-| `report` | denied | aggregate outputs only | no raw logs, recordings, or trajectories |
-| `redistributable` | denied | explicit per-file license + authorization | provenance and license recorded per file |
+| `source` | allowed | existing extension allowlist + denied roots | exactly one project manifest and at least one lock file |
+| `model` | denied | weight/config/metrics extensions only; no deserializer-only format (`pkl`, `pickle`, `joblib`, `npy`, `npz`, `dill`) | must verify as `glr.model-bundle.v1` (ADR-0010), and every model file must be declared by that bundle |
+| `dataset` | denied | separate reviewed allowlist naming each path | redistribution authorization + demonstration provenance binding every payload (ADR-0013) |
+| `knowledge` | denied | snapshot files only | freshness-aware snapshot validation against a declared `max_age_days` (ADR-0014) |
+| `report` | denied | aggregate outputs only (`json`, `md`, `csv`) | no raw logs, recordings, or trajectories, by extension *and* by path component |
+
+`redistributable` — explicit per-file license plus authorization — is deferred
+from the implemented vocabulary (see *Decisions settled by M4*, item 2).
 
 Every included file declares a `role` from a closed, group-scoped vocabulary
 (for example `project-manifest`, `dependency-lock`, `role-source`, `weights`,
@@ -165,29 +242,25 @@ schema revision or a parallel identity field with a documented transition.
 ### D5. Per-group limits, and archive-bomb defense for compressed groups
 
 Limits stay per group, so the source-only profile keeps today's exact numbers and
-today's behavior. Candidate bounds for review:
-
-| Group | Max files | Max per file | Max group bytes |
-| --- | --- | --- | --- |
-| `source` | 1,024 | 16 MiB | 128 MiB |
-| `model` | 64 | 1 GiB | 4 GiB |
-| `dataset` | 4,096 | 1 GiB | 4 GiB |
-| `knowledge` | 256 | 64 MiB | 256 MiB |
-| `report` | 64 | 16 MiB | 64 MiB |
-| `redistributable` | 256 | 256 MiB | 1 GiB |
-
-A package also has one hard ceiling across all groups. The ceiling, not the
-sum of the per-group caps, is the enforcement point.
+today's behavior. The settled bounds are in *Decisions settled by M4*, item 5:
+1,024 files and 4 GiB expanded per package are the two ceilings that actually
+apply, above the per-group caps.
 
 The `source` group stays uncompressed (`Stored`): determinism and the absence of
-expansion amplification are worth more than size there. Binary groups may be
-compressed, but then each manifest entry must declare both compressed and
-expanded sizes, and import must enforce:
+expansion amplification are worth more than size there. Binary groups are
+compressed, and each manifest entry declares both compressed and expanded sizes
+(`compressed_size_bytes` is absent for a stored entry). Both export and import
+enforce:
 
-- a per-entry and per-group expansion ratio cap (candidate: 200:1);
+- a per-entry expansion ratio cap of **200:1**, checked on the declared sizes at
+  import and on the sizes the encoder actually produced at export, so an
+  archive bomb is refused before it leaves the sender as well as before it is
+  expanded by the recipient;
 - the expanded cap **before** any expanded byte is written, using a running
-  counter rather than the declared header;
-- a streaming inspector, so a multi-GiB package is never buffered whole.
+  counter rather than the declared header, per file, per group and per package;
+- a streaming inspector and a streaming materializer, so a multi-GiB package is
+  never buffered whole — only a declared manifest or snapshot is materialized at
+  all, and only under an 8 MiB inspection cap.
 
 Every entry is still checked against its declared size and digest.
 
@@ -392,21 +465,41 @@ attestation, and neither is a claim about policy quality (ADR-0027).
 
 ## Open questions for review
 
-1. **Names.** Final command verbs and schema identifiers are deliberately
-   unresolved. Candidates in this record: `glr.training-package.v1` for the
-   envelope, `entry_groups` / `role` / `content_revision` /
-   `ruleset_fingerprint` / `redistribution_authorization` for fields, and
-   `plan` / `export` / `inspect` / `validate` / `import` / `setup` for stages.
+M4 answered 1, 4, 5 and 6 and half of 3; see *Decisions settled by M4*. What
+remains open:
+
+1. **Command verbs and the two advisory identity fields.**
+   `plan` / `export` / `inspect` / `import` / `conformance` are the stages that
+   exist. `validate` and `setup` from the original candidate list are still
+   unnamed work, and `content_revision` / `ruleset_fingerprint` (D2) are still
+   unimplemented: they are advisory and recorded-only, so nothing in M4 depends
+   on them.
 2. **D4 migration.** New source-only schema revision, or a parallel identity
-   field with a documented transition?
-3. **Group vocabulary.** Are `report` and `redistributable` distinct groups, or
-   should `report` be derived output excluded from packages entirely?
-4. **Limit numbers.** The per-group table in D5 needs a decision against real
-   model and dataset sizes.
-5. **Knowledge freshness.** Should `knowledge` snapshots be revalidated at
-   import, or only recorded and validated at setup?
-6. **M4 ordering.** Should `model` land before `dataset`, or together behind one
-   authorization gate?
+   field with a documented transition? Unchanged by M4: the source-only identity
+   computation is untouched, so no existing consumer migrates.
+3. **Group vocabulary.** `report` is settled as a distinct group.
+   `redistributable` — explicit per-file license plus authorization — is still
+   open, and deferred until a payload needs it.
+4. **Limit numbers.** Settled for M4 (item 5 above) and still open to revision
+   against real model and dataset sizes: the numbers live in one table in
+   `crate::package_groups`, and the corpus mirrors them, so changing them is one
+   reviewed commit and a matching corpus update.
+5. **Knowledge freshness.** Settled: validated at both export and import.
+   Whether a *stale-but-declared* snapshot may also be revalidated at setup is
+   the remaining half, and setup does not exist yet.
+6. **M4 ordering.** Settled: all four groups landed together.
+
+## Wire schemas
+
+- [`docs/schemas/source-package.schema.json`](../schemas/source-package.schema.json) and
+  [`source-package-selection.schema.json`](../schemas/source-package-selection.schema.json) —
+  `glr.source-package.v1`, unchanged by M4.
+- [`docs/schemas/training-package.schema.json`](../schemas/training-package.schema.json) and
+  [`training-package-selection.schema.json`](../schemas/training-package-selection.schema.json) —
+  `glr.training-package.v1`, the group-scoped profile M4 adds.
+- [`docs/schemas/package-audit.schema.json`](../schemas/package-audit.schema.json) —
+  `glr.package-audit.v1`, the aggregate audit receipt that names every admitted
+  non-source file.
 
 ## References
 

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "glr.package-audit.v1",
+  "title": "GLR package audit receipt",
+  "description": "Aggregate audit receipt for one package. It names every admitted non-source file, the group it belongs to, the role it declares, and the contract or allowlist that admitted it (ADR-0041 D3, M4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "groups",
+    "entries"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "glr.package-audit.v1"
+    },
+    "groups": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "declared",
+          "file_count",
+          "bytes",
+          "admission",
+          "checks"
+        ],
+        "properties": {
+          "declared": {
+            "const": true
+          },
+          "file_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "admission": {
+            "const": "verified"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "entries": {
+      "description": "One record per admitted non-source file. Source files are inventory, not a redistribution decision.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "group",
+          "role",
+          "size_bytes",
+          "sha256",
+          "admitted_by"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "group": {
+            "enum": [
+              "model",
+              "dataset",
+              "knowledge",
+              "report"
+            ]
+          },
+          "role": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "admitted_by": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "authorization": {
+      "$ref": "training-package-selection.schema.json#/$defs/redistribution_authorization"
+    },
+    "dataset_allowlist": {
+      "$ref": "training-package-selection.schema.json#/$defs/dataset_allowlist"
+    }
+  }
+}
