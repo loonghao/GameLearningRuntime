@@ -42,7 +42,7 @@ Two constraints shaped the design:
   adapter contract is testable with no browser installed and no network.
 
 This keeps a browser dependency at the edge and makes the adapter unit-testable,
-which is what let the 62 tests in `tests/test_web_game_*.py` cover the contract
+which is what let the 73 tests in `tests/test_web_game_*.py` cover the contract
 without a Chromium download.
 
 ### 2. Two adapters, because there are two genuinely different situations
@@ -75,10 +75,19 @@ result would reproduce.
 
 ### 4. Terminated and truncated are disjoint, and the budget counts adapter steps
 
-A crash is the page's verdict (`terminated`). Running out of step budget is the
-harness cutting an episode short (`truncated`). Exhausting the budget is never
-also a termination, even when the player was about to crash: the crash was never
-observed, so reporting it would invent a fact the page did not report.
+The contract requires the two flags to be disjoint, but the underlying facts are
+not. A player can crash on the very step that exhausts the budget, and the page
+does report `alive: false` for it, so both conditions hold at once. The adapter
+therefore resolves them by **precedence, not by observation**: when both are
+true, `truncated` wins and `terminated` is suppressed.
+
+Truncation wins because the budget cap is what actually stopped the episode, and
+because it is the flag the learner acts on. A truncated transition keeps the
+bootstrap value in the advantage recursion; a terminated one does not. Reporting
+a termination on that step would tell the learner the trajectory ended in a real
+crash and would suppress the bootstrap, when the truth is that the harness simply
+stopped asking. Either flag alone would be defensible; what matters is that it is
+one rule applied identically on every step, and that callers can rely on it.
 
 The budget counts adapter steps, not page ticks. An adapter configured with
 `frames_per_step=2` advances the page twice per action, and comparing the page's
@@ -135,7 +144,8 @@ than as features.
 
 * The web path is validated by evidence, not by assertion: a before/after
   comparison from a real training run (see below).
-* The adapter contract is covered by 62 tests that need no browser.
+* The adapter contract is covered by 73 tests that need no browser
+  (`test_web_game_bridge.py` 36 + `test_web_game_environments.py` 37).
 * Browser automation is one optional import away, and its absence produces an
   actionable error rather than an `ImportError` at package import.
 

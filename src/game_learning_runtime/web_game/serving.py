@@ -11,11 +11,9 @@ directory, so it exposes the bundled assets and nothing else.
 
 from __future__ import annotations
 
-import contextlib
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from socket import AF_INET, socket
 from typing import Any
 
 from game_learning_runtime.errors import ContractViolation
@@ -101,11 +99,3 @@ def bundled_assets_dir() -> Path:
     """Return the directory holding the runtime's bundled web-game pages."""
 
     return Path(__file__).resolve().parent / "assets"
-
-
-def reserve_loopback_port() -> int:
-    """Bind port 0 once and return the ephemeral port the OS assigned."""
-
-    with contextlib.closing(socket(AF_INET)) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])

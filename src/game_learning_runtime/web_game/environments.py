@@ -278,17 +278,59 @@ class _DodgeEnvironmentBase(GameEnvironment):
             raise ContractViolation(f"choice {index} is outside the declared action space")
         return index
 
+    def _decode_features(self, payload: Mapping[str, Any]) -> tuple[float, ...]:
+        """Decode one observation payload into a feature tuple.
+
+        This lives on the shared base on purpose. Both adapters accept the same
+        state payload, so they must accept the same feature encodings and raise
+        the same error for the same malformed input. Decoding it twice is how
+        the two paths drift: a downstream integrator who wrote the documented
+        array form would have been accepted by one adapter and rejected by the
+        other, with a bare ``ValueError`` instead of a typed refusal.
+
+        Both a JSON array and a JSON object are accepted, because both are
+        natural for a page to emit and neither is ambiguous. Values are checked
+        with :func:`require_number` so a non-numeric entry is a
+        ``ContractViolation`` rather than a ``TypeError`` from deep in NumPy.
+        """
+
+        features = payload.get("features")
+        if isinstance(features, Mapping):
+            values = tuple(
+                require_number(value, path=f"state.features.{key}")
+                for key, value in features.items()
+            )
+        elif isinstance(features, (list, tuple)):
+            values = tuple(
+                require_number(value, path=f"state.features[{index}]")
+                for index, value in enumerate(features)
+            )
+        else:
+            raise ContractViolation("state.features must be a list or an object")
+        if len(values) != self._feature_count:
+            raise ContractViolation(
+                f"state.features has {len(values)} entries; expected {self._feature_count}"
+            )
+        return values
+
     def _timestep(self) -> TimeStep:
         state = self._last
         if state is None:  # pragma: no cover - reset always sets it first
             raise ContractViolation("step requires reset first")
-        # Terminated and truncated are disjoint by contract, and they mean
-        # different things: a crash is the game's verdict (terminated), while
-        # running out of step budget is the harness cutting the episode short
-        # (truncated). Exhausting the budget is never a termination, even when
-        # the player would have crashed on the step that used the last of it --
-        # the crash was never observed, so claiming it would invent a fact the
-        # page did not report.
+        # Terminated and truncated are disjoint by contract, but the underlying
+        # facts are not: a player can crash on the very step that exhausts the
+        # budget, and the page does report `alive: false`. Both are true, so the
+        # adapter resolves them by precedence rather than by pretending one did
+        # not happen.
+        #
+        # Truncation wins, because the budget cap is what stopped the episode
+        # and it is the signal the learner acts on: a truncated transition keeps
+        # the bootstrap value in the advantage recursion, while a terminated one
+        # does not. Reporting a termination here would tell the learner the
+        # trajectory ended in a real crash and suppress the bootstrap, when in
+        # fact the harness simply stopped asking. Either flag alone would be
+        # defensible; what matters is that the choice is one rule, applied
+        # identically on every step.
         #
         # The budget counts adapter steps, not page ticks: a page advanced by
         # `frames_per_step` ticks per action would otherwise burn its budget in
@@ -337,10 +379,19 @@ class InstrumentedWebGameEnvironment(_DodgeEnvironmentBase):
     window.__glr = {
       ready: true,
       reset(seed) { /* start a fresh episode */ },
-      state() { return {features: [...], alive: bool, score: number, steps: number}; },
+      // `features` may be an array or an object; both are decoded the same way.
+      state() {
+        return {
+          features: [0.1, -0.2, 0.3, 0.4],   // or {player_x: 0.1, ...}
+          alive: true, score: 12, steps: 12
+        };
+      },
       step(actionIndex) { /* apply the action and advance the world */ }
     };
     ```
+
+    `alive`, `score`, and `steps` are optional and default to `true`, `0`, and
+    `0`; `features` is required and must hold exactly `feature_count` numbers.
 
     Because the adapter owns the hook, the observation is structured state
     rather than pixels, which is what makes a short training run learn.
@@ -396,16 +447,8 @@ class InstrumentedWebGameEnvironment(_DodgeEnvironmentBase):
             self._bridge.evaluate(f"{self._hook}.state()"),
             path=f"{self._hook}.state()",
         )
-        features = tuple(
-            float(value)
-            for value in require_mapping(payload.get("features"), path="state.features").values()
-        )
-        if len(features) != self._feature_count:
-            raise ContractViolation(
-                f"state.features has {len(features)} entries; expected {self._feature_count}"
-            )
         return InstrumentedStepResult(
-            features=features,
+            features=self._decode_features(payload),
             alive=require_bool(payload.get("alive", True), path="state.alive"),
             score=require_number(payload.get("score", 0.0), path="state.score"),
             steps=int(require_number(payload.get("steps", 0), path="state.steps")),
@@ -478,26 +521,6 @@ class BlackBoxWebGameEnvironment(_DodgeEnvironmentBase):
             score=require_number(payload.get("score", 0.0), path="state.score"),
             steps=int(require_number(payload.get("steps", 0), path="state.steps")),
         )
-
-    def _decode_features(self, payload: Mapping[str, Any]) -> tuple[float, ...]:
-        features = payload.get("features")
-        if isinstance(features, Mapping):
-            values = tuple(
-                require_number(value, path=f"state.features.{key}")
-                for key, value in features.items()
-            )
-        elif isinstance(features, (list, tuple)):
-            values = tuple(
-                require_number(value, path=f"state.features[{index}]")
-                for index, value in enumerate(features)
-            )
-        else:
-            raise ContractViolation("state.features must be a list or an object")
-        if len(values) != self._feature_count:
-            raise ContractViolation(
-                f"state.features has {len(values)} entries; expected {self._feature_count}"
-            )
-        return values
 
 
 def dodge_page_spec(url: str, *, hook: str = "window.__glr") -> PageSpec:

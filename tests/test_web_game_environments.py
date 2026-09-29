@@ -406,6 +406,83 @@ def test_adapters_reject_a_non_positive_step_budget() -> None:
         BlackBoxWebGameEnvironment(bridge, state_expression="x", max_steps=0)
 
 
+# --- cross-path parity ------------------------------------------------------
+# The two adapters decode the same state payload. They must not drift: a page
+# author who follows the documented hook and emits `features` as an array must
+# get the same behaviour through either adapter, and a malformed payload must
+# raise the same typed error from both.
+
+
+def _instrumented_for_payload(state: Any) -> InstrumentedWebGameEnvironment:
+    return InstrumentedWebGameEnvironment(ScriptedBrowserBridge(lambda _expression: state))
+
+
+def _blackbox_for_payload(state: Any) -> BlackBoxWebGameEnvironment:
+    return BlackBoxWebGameEnvironment(
+        ScriptedBrowserBridge(lambda _expression: state), state_expression="window.state"
+    )
+
+
+@pytest.mark.parametrize(
+    "features",
+    [
+        pytest.param([0.1, 0.2, 0.3, 0.4], id="array"),
+        pytest.param((0.1, 0.2, 0.3, 0.4), id="tuple"),
+        pytest.param(
+            {"player_x": 0.1, "threat_dx": 0.2, "threat_dy": 0.3, "neighbor_dx": 0.4},
+            id="object",
+        ),
+    ],
+)
+def test_both_paths_decode_the_same_payload_identically(features: Any) -> None:
+    state = {"features": features, "alive": True, "score": 5.0, "steps": 5}
+    instrumented = _instrumented_for_payload(state).reset(seed=0)
+    blackbox = _blackbox_for_payload(state).reset()
+    assert instrumented.observation["features"].tolist() == pytest.approx(
+        blackbox.observation["features"].tolist()
+    )
+    assert float(instrumented.reward[0]) == pytest.approx(float(blackbox.reward[0]))
+
+
+def test_both_paths_reject_a_scalar_features_payload_alike() -> None:
+    state = {"features": 1.5, "alive": True, "score": 0.0, "steps": 0}
+    with pytest.raises(ContractViolation, match="features must be a list or an object"):
+        _instrumented_for_payload(state).reset(seed=0)
+    with pytest.raises(ContractViolation, match="features must be a list or an object"):
+        _blackbox_for_payload(state).reset()
+
+
+def test_both_paths_reject_a_non_numeric_feature_alike() -> None:
+    state = {"features": [0.1, "high", 0.3, 0.4], "alive": True, "score": 0.0, "steps": 0}
+    for environment in (
+        _instrumented_for_payload(state),
+        _blackbox_for_payload(state),
+    ):
+        with pytest.raises(ContractViolation, match="must be a number"):
+            environment.reset(seed=0)
+
+
+def test_both_paths_reject_a_wrong_feature_count_alike() -> None:
+    state = {"features": [0.1, 0.2], "alive": True, "score": 0.0, "steps": 0}
+    for environment in (
+        _instrumented_for_payload(state),
+        _blackbox_for_payload(state),
+    ):
+        with pytest.raises(ContractViolation, match="expected 4"):
+            environment.reset(seed=0)
+
+
+def test_both_paths_reject_a_boolean_feature_alike() -> None:
+    # A bool is an int to Python but is never a feature value a page meant.
+    state = {"features": [True, 0.2, 0.3, 0.4], "alive": True, "score": 0.0, "steps": 0}
+    for environment in (
+        _instrumented_for_payload(state),
+        _blackbox_for_payload(state),
+    ):
+        with pytest.raises(ContractViolation, match="must be a number"):
+            environment.reset(seed=0)
+
+
 def test_a_timestep_carries_the_score_through_info() -> None:
     environment = _make_environment(crash_at_step=99)
     environment.reset(seed=0)
