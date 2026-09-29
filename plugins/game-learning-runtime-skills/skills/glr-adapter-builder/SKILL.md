@@ -285,6 +285,13 @@ acceptance.
 
 ## Package training evidence for reproduction
 
+A bundle and a package are different artifacts with different claims. A
+`glr.model-bundle.v1` carries one trained stage and is verified by `play`; a
+portable package carries an explicitly selected project — source, and optionally
+the deny-by-default `model`, `dataset`, `knowledge` and `report` groups — and is
+moved with `glr package plan/export/inspect/import/conformance`. Neither one
+proves model quality, and neither one authorizes setup or execution.
+
 Run `vx run train` to exercise the generated deterministic synthetic BC smoke
 test, then `vx run reproduce` to verify its `glr.model-bundle.v1` manifest.
 Replace the smoke trainer with PPO, IMPALA, BC, or another learner outside the
@@ -300,6 +307,13 @@ runtime adapter, while continuing to bundle:
 A verified bundle proves artifact integrity and captures a reproduction
 environment. It does not prove equivalent hardware behavior, a live runtime
 integration, or model quality.
+
+A model group joins a package only as `models/**` behind a verified
+`glr.model-bundle.v1` manifest that names every weight, input and artifact by
+size and digest, for the same `environment_id` and `protocol_version`. A dataset
+group joins only under a reviewed allowlist, a recorded redistribution
+authorization, and a `glr.demonstration-artifact.v1` manifest binding every
+payload.
 
 ## Rust decision gate
 
@@ -324,6 +338,15 @@ Before any boss or elite combat action, start and verify the configured recordin
 For source redistribution, follow the sibling [package workflow](../glr-cli/references/packages.md).
 Keep game binaries, machine bindings, private data and dependency installation out
 of source import; validate the adapter separately after recipient setup.
+
+Report the four axes separately and never collapse them: **package validity**
+(the archive verifies offline), **local reproduction** (`package conformance`
+finds the declared files materialized with the locks present), **remote or live
+execution** (an authorized step this package does not perform), and **model
+quality** (never attested by a checksum). A passing conformance check with a
+missing prerequisite is a valid, completely materialized package whose
+reproduction is blocked — say both halves. Recipient-local `*.local.*` and
+`*.local` files stay out of the package and are never merged by GLR.
 
 Before configuring or running recorded training, read the sibling
 [GLR CLI recording contract](../glr-cli/SKILL.md#recording-and-training-data).

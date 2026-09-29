@@ -102,6 +102,30 @@ short version: library logic goes in `src/game_learning_runtime/`, automation
 goes in `tools/<domain>/` and must be registered, and there is no `scripts/`
 directory.
 
+## Hand a project to another machine
+
+`glr doctor` proves this checkout is runnable here. It says nothing about
+whether the project travels. For that, use the offline package workflow:
+
+```bash
+glr --project . --json package plan    --manifest selection.json
+glr --project . --json package export  --manifest selection.json --output source.zip
+# recipient, offline:
+glr --json package inspect source.zip
+glr --json package import source.zip --destination NEW_DIRECTORY \
+  --expected-environment ENVIRONMENT_ID --expected-contract SHA256
+glr --project NEW_DIRECTORY --json package conformance source.zip
+```
+
+No subcommand executes, installs, downloads, or deserializes. `import` refuses a
+destination that already exists, and `conformance` exits `0` when the synthetic
+check passes and `4` when reproduction is blocked. Read
+[the portable training package ADR](../decisions/0041-portable-training-packages.md)
+and the staged plan at `docs/planning/training-package-phases.md` for the two
+profiles, the deny-by-default `model` / `dataset` / `knowledge` / `report`
+groups, and the four results a package report must keep separate: package
+validity, local reproduction, remote execution, and model quality.
+
 ## Scheduled and unattended runs
 
 Unattended training uses the same entry points with explicit exit codes:
