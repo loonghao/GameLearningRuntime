@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<!--
+  GLR Orbital Dodge -- a minimal self-authored Three.js game used to validate
+  that the GameLearningRuntime contract can drive a browser game and learn it.
+
+  License: MIT (same as the GameLearningRuntime repository, which authors this
+  file). Bundled dependency: three.js r180, MIT,
+  https://unpkg.com/three@0.180.0/build/three.module.min.js (vendored as
+  assets/three.module.min.js).
+
+  Simulation contract: the world only advances when `step()` is called. The
+  render loop draws whatever the world currently is, so a learner can step the
+  game at its own pace without racing a requestAnimationFrame clock. This is the
+  single property that makes headless reinforcement learning on a browser game
+  reproducible.
+
+  Serve this directory over HTTP (see
+  `game_learning_runtime.web_game.serving`) rather than opening it as a file://
+  URL: ES module imports are blocked from a file:// origin, and the import map
+  needs a real origin to resolve "three".
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>GLR Orbital Dodge</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #05060c;
+        color: #cfe3ff;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        overflow: hidden;
+      }
+      #stage {
+        position: absolute;
+        inset: 0;
+      }
+      #hud {
+        position: absolute;
+        top: 12px;
+        left: 14px;
+        font-size: 13px;
+        line-height: 1.6;
+        pointer-events: none;
+        text-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
+      }
+      #hud b {
+        color: #8fd3ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="hud">
+      <div>GLR Orbital Dodge</div>
+      <div>steps <b id="steps">0</b> &middot; score <b id="score">0</b> &middot; status
+        <b id="status">alive</b></div>
+      <div>arrows / space: move &middot; R: reset</div>
+    </div>
+
+    <script type="importmap">
+      { "imports": { "three": "./three.module.min.js" } }
+    </script>
+
+    <script type="module">
+      // The simulation below is independent of three.js, so a page that cannot
+      // resolve the renderer (offline mirror, file:// origin, import-map miss)
+      // still exposes a working `__glr` hook: the game becomes headless instead
+      // of broken. Serve the directory over HTTP to get the picture back.
+      let THREE = null;
+      try {
+        THREE = await import("three");
+      } catch (error) {
+        console.warn("three.js unavailable; running headless:", error);
+      }
+
+      // ---- Deterministic simulation -------------------------------------------
+      // Pure state, seeded RNG, no DOM and no three.js. Everything the learner
+      // needs to be reproducible lives here.
+
+      const WORLD = {
+        halfWidth: 4.0,
+        halfHeight: 3.0,
+        playerY: -2.2,
+        playerRadius: 0.42,
+        hazardRadius: 0.38,
+        spawnY: 3.0,
+        despawnY: -3.2,
+        playerSpeed: 0.22,
+        hazardSpeed: 0.16,
+        spawnEvery: 12,
+        maxHazards: 6,
+      };
+
+      function makeRng(seed) {
+        // mulberry32: small, fast, and identical across engines.
+        let state = (seed >>> 0) || 0x9e3779b9;
+        return function next() {
+          state = (state + 0x6d2b79f5) >>> 0;
+          let t = state;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      function createWorld(seed) {
+        return {
+          rng: makeRng(seed),
+          playerX: 0,
+          hazards: [],
+          steps: 0,
+          score: 0,
+          alive: true,
+        };
+      }
+
+      function spawnHazard(world) {
+        if (world.hazards.length >= WORLD.maxHazards) return;
+        const x = (world.rng() * 2 - 1) * WORLD.halfWidth;
+        world.hazards.push({ x, y: WORLD.spawnY });
+      }
+
+      // Advance exactly one simulation tick. action: 0 = left, 1 = hold, 2 = right.
+      function stepWorld(world, action) {
+        if (!world.alive) return world;
+        const move = action === 0 ? -WORLD.playerSpeed : action === 2 ? WORLD.playerSpeed : 0;
+        world.playerX = Math.max(
+          -WORLD.halfWidth,
+          Math.min(WORLD.halfWidth, world.playerX + move),
+        );
+        for (const hazard of world.hazards) hazard.y -= WORLD.hazardSpeed;
+        world.hazards = world.hazards.filter((hazard) => hazard.y > WORLD.despawnY);
+        if (world.steps % WORLD.spawnEvery === 0) spawnHazard(world);
+        world.steps += 1;
+        world.score = world.steps;
+        const hit = world.hazards.some(
+          (hazard) =>
+            Math.abs(hazard.y - WORLD.playerY) < WORLD.playerRadius + WORLD.hazardRadius * 0.75 &&
+            Math.abs(hazard.x - world.playerX) < WORLD.playerRadius + WORLD.hazardRadius,
+        );
+        if (hit) world.alive = false;
+        return world;
+      }
+
+      // ---- Observation --------------------------------------------------------
+      // Four normalized features in [-1, 1], ordered to match the GLR contract:
+      // player_x, threat_dx, threat_dy, neighbor_dx. `threat` is the hazard the
+      // player will meet next; `neighbor` is the one after it, which is what
+      // stops the learner from dodging straight into a second hazard.
+
+      function orderedThreats(world) {
+        return world.hazards
+          .filter((hazard) => hazard.y > WORLD.despawnY)
+          .sort((a, b) => a.y - b.y);
+      }
+
+      function observe(world) {
+        const threats = orderedThreats(world);
+        const nearest = threats[0];
+        const second = threats[1];
+        const dx = nearest ? nearest.x - world.playerX : 0;
+        const dy = nearest ? nearest.y - WORLD.playerY : WORLD.halfHeight * 2;
+        const ndx = second ? second.x - world.playerX : dx;
+        return {
+          player_x: world.playerX / WORLD.halfWidth,
+          threat_dx: dx / (WORLD.halfWidth * 2),
+          threat_dy: dy / (WORLD.halfHeight * 2),
+          neighbor_dx: ndx / (WORLD.halfWidth * 2),
+        };
+      }
+
+      // ---- Rendering ----------------------------------------------------------
+      // Presentation only. The renderer never mutates the simulation, so a
+      // headless run and a visible run produce identical trajectories.
+
+      const hud = {
+        steps: document.getElementById("steps"),
+        score: document.getElementById("score"),
+        status: document.getElementById("status"),
+      };
+
+      // Presentation is optional. Without three.js every draw call is a no-op
+      // and the module still publishes the hook, so automation never depends on
+      // the CDN or on a WebGL context being available.
+      const view = THREE ? createView() : null;
+
+      function createView() {
+        const stage = document.getElementById("stage");
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x05060c);
+        const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 100);
+        camera.position.set(0, 0, 8.4);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        stage.appendChild(renderer.domElement);
+
+        scene.add(new THREE.AmbientLight(0x6688cc, 1.1));
+        const key = new THREE.DirectionalLight(0xffffff, 1.5);
+        key.position.set(3, 6, 5);
+        scene.add(key);
+
+        const playerMesh = new THREE.Mesh(
+          new THREE.ConeGeometry(WORLD.playerRadius, 1.0, 4),
+          new THREE.MeshStandardMaterial({
+            color: 0x63e6ff,
+            emissive: 0x11465c,
+            flatShading: true,
+          }),
+        );
+        playerMesh.rotation.x = Math.PI;
+        scene.add(playerMesh);
+
+        const hazardGeometry = new THREE.IcosahedronGeometry(WORLD.hazardRadius, 0);
+        const hazardMaterial = new THREE.MeshStandardMaterial({
+          color: 0xff6b81,
+          emissive: 0x4a1220,
+          flatShading: true,
+        });
+        const hazardPool = Array.from({ length: WORLD.maxHazards }, () => {
+          const mesh = new THREE.Mesh(hazardGeometry, hazardMaterial);
+          mesh.visible = false;
+          scene.add(mesh);
+          return mesh;
+        });
+
+        const grid = new THREE.GridHelper(24, 24, 0x1b2a4a, 0x101a2e);
+        grid.rotation.x = Math.PI / 2;
+        grid.position.z = -2.5;
+        scene.add(grid);
+
+        function resize() {
+          const width = window.innerWidth;
+          const height = window.innerHeight;
+          renderer.setSize(width, height);
+          camera.aspect = width / Math.max(1, height);
+          camera.updateProjectionMatrix();
+        }
+        window.addEventListener("resize", resize);
+        resize();
+
+        return function draw(world) {
+          playerMesh.position.set(world.playerX, WORLD.playerY, 0);
+          const threats = orderedThreats(world);
+          hazardPool.forEach((mesh, index) => {
+            const hazard = threats[index];
+            mesh.visible = Boolean(hazard);
+            if (hazard) mesh.position.set(hazard.x, hazard.y, 0);
+          });
+          renderer.render(scene, camera);
+        };
+      }
+
+      function render(world) {
+        hud.steps.textContent = String(world.steps);
+        hud.score.textContent = String(world.score);
+        hud.status.textContent = world.alive ? "alive" : "crashed";
+        if (view) view(world);
+      }
+
+      function frame() {
+        render(world);
+        requestAnimationFrame(frame);
+      }
+
+      // ---- GLR instrumentation hook -------------------------------------------
+      // The contract the adapter calls. `ready` tells the adapter the page is
+      // live, `reset` starts a deterministic episode, `step` advances the world,
+      // and `state` returns the observation plus the episode facts.
+
+      let world = createWorld(0);
+
+      window.__glr = {
+        ready: true,
+        world: () => world,
+        reset(seed) {
+          world = createWorld(seed >>> 0);
+          render(world);
+          return true;
+        },
+        step(action) {
+          stepWorld(world, action);
+          return world.alive;
+        },
+        state() {
+          const features = observe(world);
+          return {
+            features,
+            alive: world.alive,
+            score: world.score,
+            steps: world.steps,
+          };
+        },
+      };
+
+      // ---- Keyboard control ---------------------------------------------------
+      // The black-box adapter path: real key events, indistinguishable from a
+      // human player. Space is a no-op move, so the page stays playable while
+      // keeping the three-action contract.
+
+      function keyToAction(key) {
+        if (key === "ArrowLeft" || key === "a" || key === "A") return 0;
+        if (key === "ArrowRight" || key === "d" || key === "D") return 2;
+        return 1;
+      }
+
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "r" || event.key === "R") {
+          window.__glr.reset(0);
+          return;
+        }
+        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " "].includes(event.key)) {
+          event.preventDefault();
+          stepWorld(world, keyToAction(event.key));
+        }
+      });
+
+      render(world);
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>
