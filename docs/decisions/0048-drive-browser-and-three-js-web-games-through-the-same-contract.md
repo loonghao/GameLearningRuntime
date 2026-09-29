@@ -42,7 +42,7 @@ Two constraints shaped the design:
   adapter contract is testable with no browser installed and no network.
 
 This keeps a browser dependency at the edge and makes the adapter unit-testable,
-which is what let the 73 tests in `tests/test_web_game_*.py` cover the contract
+which is what let the 80 tests in `tests/test_web_game_*.py` cover the contract
 without a Chromium download.
 
 ### 2. Two adapters, because there are two genuinely different situations
@@ -144,8 +144,10 @@ than as features.
 
 * The web path is validated by evidence, not by assertion: a before/after
   comparison from a real training run (see below).
-* The adapter contract is covered by 73 tests that need no browser
-  (`test_web_game_bridge.py` 36 + `test_web_game_environments.py` 37).
+* The adapter contract is covered by 80 tests that need no browser
+  (`test_web_game_bridge.py` 36 + `test_web_game_environments.py` 44).
+  Seven of those are differential tests that feed one payload to both adapters
+  and assert identical results, so the two paths cannot silently drift apart.
 * Browser automation is one optional import away, and its absence produces an
   actionable error rather than an `ImportError` at package import.
 
