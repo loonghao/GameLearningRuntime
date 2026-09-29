@@ -70,7 +70,14 @@ authorized live-game acceptance.
 
 For imported projects, use the sibling [package workflow](../glr-cli/references/packages.md).
 Record package validity separately from dependency readiness, synthetic conformance,
-live acceptance and model quality. Import does not execute a QA check.
+live acceptance and model quality. Import does not execute a QA check, and
+`package conformance` is not a QA result: it verifies the envelope, the
+materialized tree, the declared locks and the prerequisites, and reports
+`training`, `live_acceptance` and `policy_quality` as `not-evaluated`. Exit `0`
+means the synthetic conformance check passed; `4` means reproduction is blocked
+and `blockers` names the axis. A blocked reproduction is still a valid, fully
+materialized package — report both halves rather than one verdict. A `model`
+group admitted into a package proves artifact identity, not policy quality.
 
 Before configuring or running recorded training, read the sibling
 [GLR CLI recording contract](../glr-cli/SKILL.md#recording-and-training-data).

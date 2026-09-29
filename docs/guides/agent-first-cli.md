@@ -214,6 +214,15 @@ reproducible. See [Extend GLR with declarative VX
 tasks](declarative-tasks.md). A task exit is orchestration evidence, not live
 game or learning acceptance.
 
+`doctor` proves this checkout is runnable here; it says nothing about whether
+the project travels. To hand a project to another machine, use the offline
+package workflow — `glr package plan` / `export` / `inspect` / `import` /
+`conformance`. None of them executes, installs, downloads, or deserializes, and
+`conformance` reports package validity, materialization, declared locks and
+prerequisites as separate axes, with exit `0` for a passing synthetic check and
+`4` for a blocked reproduction. See
+[ADR-0041](../decisions/0041-portable-training-packages.md).
+
 `train` starts the recorder before the trainer and stops it afterward. A complete capture contains:
 
 - a small H.264 MP4 for human review;

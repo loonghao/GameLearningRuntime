@@ -28,6 +28,24 @@
 启用质量门禁”的顺序迁移。不要把测试文件数量、源码目录内通过测试，或能够启动训练，
 当作整个项目已合规的证据。真实游戏验收单独记录。
 
+## 交付与移植：包工作流
+
+本地 wheel 通过 `vx run package-check` 只证明“这个包能装、能导入、能跑测试”，
+不证明项目可移植。跨机器交接走离线包工作流：
+`glr package plan` → `export` → `inspect` → `import` → `conformance`。
+
+四个结果必须分开报告，不能合成一个结论：**包有效性**（归档离线校验通过）、
+**本地复现**（`conformance` 看到声明文件已完整落盘且锁文件在列）、
+**远端执行**（授权后的独立步骤，包本身不做）、**模型质量**（任何校验和都不能证明）。
+`import` 拒绝已存在的目标目录；`conformance` 退出 `0` 表示合成复现检查通过，
+`4` 表示复现被阻塞并由 `blockers` 指出是哪一条轴。缺前置依赖时，包依然有效且完整落盘，
+要同时说出这两半。
+
+接收方本地的 `*.local.*` 与 `*.local` 文件不进包，GLR 也从不合并它们。
+`model`、`dataset`、`knowledge`、`report` 四组默认拒绝，各自需要模型 bundle 校验、
+评审过的 allowlist 加再分发授权、新鲜度预算、或聚合输出证明。详见
+[portable training package ADR](../decisions/0041-portable-training-packages.md)。
+
 ## Agent 升级与代码、数据迁移
 
 模块职责见 [Module boundaries](../../.agents/skills/glr-adapter-builder/references/module-boundaries.md)，

@@ -129,7 +129,8 @@ guarantees.
 `crates/glr-cli/src/package_groups.rs` and the M4 negative corpus in
 `crates/glr-cli/tests/package_group_contract.rs`. ADR-0041 records the naming,
 vocabulary, limit-table and freshness decisions this milestone settled. M6 —
-skills and documentation alignment for the new groups — is still open.
+skills and documentation alignment for the new groups — is implemented; see the
+M6 section below.
 
 **Exit criteria.**
 
@@ -181,16 +182,26 @@ reference production deployment.
 
 **Depends on.** M1..M5 as each lands; M6 is the closing gate.
 
+**Status.** Implemented. The `glr-cli` package reference covers both the
+`glr.source-package.v1` and `glr.training-package.v1` profiles — the five
+commands, the group table and per-group admission proofs, the
+`glr.package-audit.v1` and `glr.package-conformance.v1` receipts, the refusal
+categories, and exit codes `0` / `4`. The `glr-cli`, `glr-adapter-builder` and
+`glr-qa` skills each state the privacy and trust gates, recipient-local override
+handling, and the four results a package report keeps separate. The onboarding
+and downstream-quality guides link the workflow. With M6 complete, every M0–M6
+milestone of issue #116 is done.
+
 **Exit criteria.**
 
-- [ ] `glr-cli`, adapter-builder, and QA skills describe the same commands,
+- [x] `glr-cli`, adapter-builder, and QA skills describe the same commands,
       receipts, and error categories the CLI implements.
-- [ ] Skills state the privacy and trust gates, local-override handling, and the
+- [x] Skills state the privacy and trust gates, local-override handling, and the
       distinction between package validity, local reproduction, remote
       execution, and model quality.
-- [ ] Doctor, onboarding, and downstream-quality guides link the package
+- [x] Doctor, onboarding, and downstream-quality guides link the package
       workflow.
-- [ ] Documentation uses only synthetic examples.
+- [x] Documentation uses only synthetic examples.
 
 **Explicitly not claimed.** Adoption by installed clients, live acceptance, or
 learning quality.

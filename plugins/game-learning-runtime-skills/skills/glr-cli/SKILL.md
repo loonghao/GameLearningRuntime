@@ -155,8 +155,17 @@ states. Knowledge-file presence is not a trigger or a hit; a hit is not learning
 
 ## Portable project handoff
 
-For offline source handoff, follow [source packages](references/packages.md).
-Package validation never authorizes setup, role execution, or cluster deployment.
+For offline handoff, follow [packages](references/packages.md). It covers both
+the source-only profile (`glr.source-package.v1`) and the group-scoped profile
+(`glr.training-package.v1`), which adds the deny-by-default `model`, `dataset`,
+`knowledge` and `report` groups behind per-group admission proofs.
+
+The workflow is `plan` → `export` → `inspect` → `import` → `conformance`, and
+none of them executes, installs, downloads or deserializes. Import refuses an
+existing destination. Report package validity, dependency setup, synthetic
+reproduction, live acceptance and model quality as separate results: a valid
+package is never a successful training run, and a checksum proves integrity,
+not publisher trust.
 
 New projects use a single `glr-project.toml`. Before migration, verify the
 installed CLI and Python SDK support TOML; unreleased source changes do not
@@ -251,8 +260,10 @@ legacy JSONL, FFmpeg output, cursor readback and backup boundaries.
   archive inspection. Source project packaging remains `package export/import`;
   include exported preset JSON explicitly in the source selection. After a
   recipient imports into a new directory, `package conformance ARCHIVE` reports
-  package validity, materialization, ignored local overrides and prerequisites as
-  separate axes; it never installs, resolves or trains, and it never reports a
-  package as training success.
+  package validity, materialization, ignored local overrides, declared locks and
+  prerequisites as separate axes, and carries the `glr.package-audit.v1` receipt
+  naming every admitted non-source file. It never installs, resolves or trains,
+  and it never reports a package as training success. Exit `0` means the
+  synthetic conformance check passed; `4` means reproduction is blocked.
 - A crashed Dashboard can leave an unverified job and active child. Inspect and
   reconcile, never resubmit automatically or treat process exit as learning success.

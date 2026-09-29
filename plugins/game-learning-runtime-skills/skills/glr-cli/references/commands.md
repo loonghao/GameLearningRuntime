@@ -302,7 +302,20 @@ glr --project . --json knowledge export --output .glr/exports/knowledge/spatial-
 glr --project . --json knowledge import --input .glr/exports/knowledge/spatial-knowledge.json
 glr --project . --json play --bundle .glr/exports/model-bundles/model-bundle
 glr --project . --json report build run-0123456789abcdef
+glr --project . --json package plan --manifest selection.json
+glr --project . --json package export --manifest selection.json --output source.zip
+glr --json package inspect source.zip
+glr --json package import source.zip --destination NEW_DIRECTORY --expected-environment ENVIRONMENT_ID --expected-contract SHA256
+glr --project NEW_DIRECTORY --json package conformance source.zip
 ```
+
+`package` is the offline handoff lane: `plan` (dry run) → `export` →
+`inspect` → `import` → `conformance`. No subcommand executes, installs,
+downloads, or deserializes, and `import` refuses a destination that already
+exists. Read [packages.md](packages.md) for both selection profiles, the
+deny-by-default `model` / `dataset` / `knowledge` / `report` groups, the
+`glr.package-audit.v1` receipt, the refusal categories, and the exit codes
+(`0` pass, `4` blocked).
 
 Use `.glr/runs/<run-id>/` for run evidence and `.glr/exports/` for durable model,
 loader-package, and knowledge exports. `knowledge export` rejects destinations
