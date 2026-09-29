@@ -11,6 +11,13 @@ The comparison is the point of the tool. "It connects" and "it steps" are not
 evidence that the framework can make an agent play well, so this tool measures
 a random policy and the trained policy on the same seeds and reports both.
 
+Seeding is explicit end to end. ``--seed`` pins the policy RNGs *and* the game
+world: every ``reset()`` sinks a per-episode seed derived from it, because an
+adapter that reseeds itself when the caller passes no seed would otherwise give
+every episode a different world and the comparison would measure the sampling
+instead of the learning. Two runs with the same seed therefore produce
+byte-identical reports; without per-episode seeding they do not.
+
 Usage:
 
 ```bash
@@ -40,6 +47,45 @@ from game_learning_runtime.web_game.environments import DODGE_ACTIONS
 from game_learning_runtime.web_game.serving import LocalPageServer, bundled_assets_dir
 
 PAGE_NAME = "orbital_dodge.html"
+
+# Evaluation episodes draw their world seeds from a reserved range so the worlds
+# a policy is scored on are never worlds it trained on. A 120k-step run completes
+# a few thousand training episodes; the offset keeps the two ranges disjoint.
+EVALUATION_SEED_OFFSET = 1_000_000
+
+# Frozen record of the run this tool produced before the seed was sunk into every
+# reset. It travels in the report so a later reader can see exactly what the
+# per-episode seeding changed instead of having to re-run an old commit.
+BEFORE_SEED_SINKING: dict[str, Any] = {
+    "produced_by": "tools/providers/validate_web_rl.py at main 5291135",
+    "world_seed": "none: every reset() drew a fresh uuid4() world seed",
+    "config": {
+        "train_steps": 120_000,
+        "evaluation_episodes": 30,
+        "max_steps": 256,
+        "unroll_length": 128,
+        "seed": 7,
+    },
+    "baseline_random_policy": {
+        "episodes": 30.0,
+        "mean_steps": 65.83333333333333,
+        "std_steps": 41.90153802533851,
+        "mean_reward": 0.7331998183391988,
+        "best_reward": 4.702166482806206,
+    },
+    "trained_policy": {
+        "episodes": 30.0,
+        "mean_steps": 103.86666666666666,
+        "std_steps": 76.38836444264416,
+        "mean_reward": 2.309140901329617,
+        "best_reward": 9.420000003650784,
+    },
+    "improvement": {
+        "mean_steps_ratio": 1.5777215189873417,
+        "mean_reward_ratio": 3.1494019005080327,
+    },
+    "policy_updates": 7500,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,18 +362,35 @@ def _as_timestep(transition: Transition) -> TimeStep:
     )
 
 
+def episode_seed(base: int, episode_index: int) -> int:
+    """Return the world seed for one episode of a seeded validation run.
+
+    Episode ``i`` is reset with ``base + i``. Passing the seed on is what makes a
+    run reproducible: an adapter that reseeds itself when the caller passes no
+    seed would replay a different world on every episode, so the same command
+    would report different numbers twice.
+    """
+
+    return base + episode_index
+
+
 def evaluate(
     environment: GameEnvironment,
     policy: Callable[[TimeStep], dict[str, Any]],
     *,
     episodes: int,
     max_steps: int,
+    seed: int,
 ) -> list[EpisodeResult]:
-    """Run whole episodes and report length, return, and in-game score."""
+    """Run whole episodes and report length, return, and in-game score.
+
+    ``seed`` is the world seed of episode zero; the random and the trained policy
+    are evaluated with the same seed so they play the same worlds.
+    """
 
     results: list[EpisodeResult] = []
-    for _ in range(episodes):
-        timestep = environment.reset()
+    for index in range(episodes):
+        timestep = environment.reset(seed=episode_seed(seed, index))
         total_reward = 0.0
         steps = 0
         score = 0.0
@@ -375,11 +438,15 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
             del timestep
             return {"choice": rng.integers(0, len(DODGE_ACTIONS), size=1, dtype=np.int64)}
 
+        # Both policies are scored on the same held-out worlds, so the
+        # difference between them is the policy and not the sample.
+        evaluation_seed = config.seed + EVALUATION_SEED_OFFSET
         baseline = evaluate(
             environment,
             random_policy,
             episodes=config.evaluation_episodes,
             max_steps=config.max_steps,
+            seed=evaluation_seed,
         )
 
         curve: list[dict[str, object]] = []
@@ -387,8 +454,9 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
         last_metrics: dict[str, float] = {}
         probe_interval = max(1, config.train_steps // 50)
         window_episodes: list[int] = []
+        completed_episodes = 0
         trainer.start_batch()
-        timestep = environment.reset()
+        timestep = environment.reset(seed=episode_seed(config.seed, completed_episodes))
         while collected < config.train_steps:
             decision = trainer.act(timestep)
             action = {"choice": decision["choice"]}
@@ -415,7 +483,8 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
                 window_episodes.append(int(timestep.info.get("web_steps", 0)))
                 if len(window_episodes) > 50:
                     window_episodes.pop(0)
-                timestep = environment.reset()
+                completed_episodes += 1
+                timestep = environment.reset(seed=episode_seed(config.seed, completed_episodes))
             if collected % config.unroll_length == 0:
                 last_metrics = trainer.update()
                 trainer.start_batch()
@@ -436,6 +505,7 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
             lambda ts: trainer.act(ts, deterministic=True),
             episodes=config.evaluation_episodes,
             max_steps=config.max_steps,
+            seed=evaluation_seed,
         )
         curve.append(
             {
@@ -450,6 +520,20 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
         return {
             "environment_id": environment.spec.environment_id,
             "config": asdict(config),
+            "seeding": {
+                "base_seed": config.seed,
+                "world_seed": "per episode, sunk into GameEnvironment.reset(seed=...)",
+                "training_episode_seed": "base_seed + completed-episode index",
+                "training_episodes": float(completed_episodes),
+                "evaluation_episode_seed": (
+                    f"base_seed + {EVALUATION_SEED_OFFSET} + episode index"
+                ),
+                "evaluation_seeds": [
+                    episode_seed(evaluation_seed, index)
+                    for index in range(config.evaluation_episodes)
+                ],
+                "evaluation_worlds": "held out from training and shared by both policies",
+            },
             "baseline_random_policy": baseline_summary,
             "trained_policy": trained_summary,
             "improvement": {
@@ -465,6 +549,7 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
             },
             "curve": curve,
             "policy_updates": trainer.updates,
+            "history": {"before_seed_sinking": BEFORE_SEED_SINKING},
         }
     finally:
         environment.close()

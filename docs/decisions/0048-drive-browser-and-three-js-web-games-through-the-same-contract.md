@@ -183,26 +183,38 @@ environment and reports both, because "it connects" and "it steps" are not
 evidence that the framework can make an agent play well.
 
 Environment `web.dodge-instrumented-v1`, 120,000 environment steps, 7,500 policy
-updates, seed 7. 30 evaluation episodes per policy:
+updates, seed 7. 30 evaluation episodes per policy, scored on worlds held out of
+the 1,080 training episodes:
 
 | Metric | Random policy | Trained PPO | Change |
 |---|---|---|---|
-| Mean steps survived | 65.8 | 103.9 | **1.58x** |
-| Mean episode return | 0.73 | 2.31 | **3.15x** |
-| Best episode return | 4.70 | 9.42 | 2.00x |
+| Mean steps survived | 62.7 | 115.3 | **1.84x** |
+| Mean episode return | 0.62 | 2.83 | 4.59x (single sample) |
+| Best episode return | 3.68 | 9.36 | 2.55x (single sample) |
 
 Mean steps and mean score are the same number because the bundled page scores
 one point per survived step.
 
+**The survival ratio is the claim; the return ratio is one sample.** The random
+baseline return sits near zero (0.33-0.73 across the replications below, about
++/-0.3 SEM at 30 episodes), so a ratio over that denominator moves between 3.15x
+and 9.60x on sampling noise alone. Steps survived carries the same numerator
+variance over a baseline an order of magnitude larger, and it replicates: five
+independent re-runs of this command returned **1.58x - 2.51x**, and the seeded
+run above returned **1.84x**. Read the return figures as one draw from that
+spread, not as a constant.
+
 The training curve confirms the improvement is learning rather than a lucky
 evaluation sample. It is a rolling window of 50 completed episodes sampled every
-2,400 environment steps; averaging the first five and last five checkpoints:
+2,400 environment steps; averaging the first five and last five checkpoints of
+the run above:
 
 ```
-first 5 checkpoints (~12k steps):  70.1 mean steps
-last  5 checkpoints (~120k steps): 122.4 mean steps
+first 5 checkpoints (~12k steps):  81.4 mean steps
+last  5 checkpoints (~120k steps): 113.2 mean steps
 ```
 
+Both are single rolling-window samples from one run, not reproducible constants.
 The window matters more than the checkpoint count. Two probe episodes would have
 been a coin flip: the page seeds each episode independently, so single-episode
 samples swing between 30 and 209 steps and say nothing about the policy.
@@ -218,3 +230,20 @@ pip install '.[torch]' playwright
 playwright install chromium
 python tools/providers/validate_web_rl.py --output artifacts/web-rl-validation.json
 ```
+
+`--seed` pins the policy RNGs **and** the game world. Every `reset()` sinks an
+explicit per-episode seed: `seed + episode index` for training episodes, and
+`seed + 1000000 + episode index` for the evaluation set, which is held out so a
+policy is never scored on a world it trained on. The same seed therefore
+reproduces the same run bit for bit: two 120,000-step runs at seed 7 produced
+identical reports
+(`sha256 704ad442d8784bfa830cc7068e386d7232efc9d53f4f855c2e7131f487a7d8e0`).
+
+That was not always true. Until the seed was sunk into every reset, `config.seed`
+pinned the policy only and the page drew a fresh `uuid4()` world per reset, so
+the same command reported different numbers twice: two identical 2,000-step runs
+disagreed by 1.78x against 3.39x on survival. The report keeps both readings --
+a `seeding` block describing the seeds it used, and `history.before_seed_sinking`,
+a frozen record of the run produced before the fix --
+and `tests/test_validate_web_rl.py` pins the sinking itself. That test needs
+neither a browser nor torch.
