@@ -124,6 +124,13 @@ guarantees.
 
 **Depends on.** M3 (so reproduction is proven before payloads are added).
 
+**Status.** Implemented. `glr.training-package.v1` adds `model`, `dataset`,
+`knowledge` and `report` groups to the envelope; group policy lives in
+`crates/glr-cli/src/package_groups.rs` and the M4 negative corpus in
+`crates/glr-cli/tests/package_group_contract.rs`. ADR-0041 records the naming,
+vocabulary, limit-table and freshness decisions this milestone settled. M6 —
+skills and documentation alignment for the new groups — is still open.
+
 **Exit criteria.**
 
 - [ ] Each new group is deny-by-default and refuses when its group is not

@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "glr.training-package-selection.v1",
+  "title": "GLR training package selection",
+  "description": "Exporter-declared selection for a group-scoped package. Every file names one group and one group-scoped role; a path whose group is not declared is refused, not warned about (ADR-0041 D1, D3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "package_version",
+    "required_glr",
+    "environment_id",
+    "protocol_version",
+    "contract_sha256",
+    "source_revision",
+    "redistribution_license",
+    "entry_groups",
+    "groups"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "glr.training-package.v1"
+    },
+    "package_version": {
+      "type": "string"
+    },
+    "required_glr": {
+      "type": "string"
+    },
+    "environment_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "protocol_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "contract_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "redistribution_license": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "entry_groups": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "source",
+          "model",
+          "dataset",
+          "knowledge",
+          "report"
+        ]
+      }
+    },
+    "groups": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/group_selection"
+        },
+        "model": {
+          "$ref": "#/$defs/group_selection"
+        },
+        "dataset": {
+          "$ref": "#/$defs/group_selection"
+        },
+        "knowledge": {
+          "$ref": "#/$defs/knowledge_group"
+        },
+        "report": {
+          "$ref": "#/$defs/group_selection"
+        }
+      }
+    },
+    "dataset_allowlist": {
+      "$ref": "#/$defs/dataset_allowlist"
+    },
+    "redistribution_authorization": {
+      "$ref": "#/$defs/redistribution_authorization"
+    }
+  },
+  "$defs": {
+    "group_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/group_file"
+          }
+        }
+      }
+    },
+    "knowledge_group": {
+      "title": "Knowledge group selection",
+      "description": "A knowledge snapshot is only admitted with a declared freshness budget, so staleness is a reviewable decision and not a silent default.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "max_age_days"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/group_file"
+          }
+        },
+        "max_age_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        }
+      }
+    },
+    "group_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "role"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "project-manifest",
+            "dependency-lock",
+            "source-file",
+            "model-manifest",
+            "model-input",
+            "model-artifact",
+            "dataset-manifest",
+            "dataset-payload",
+            "knowledge-snapshot",
+            "aggregate-report"
+          ]
+        }
+      }
+    },
+    "dataset_allowlist": {
+      "title": "Reviewed dataset allowlist",
+      "description": "Required by a dataset export. A dataset is never admitted because its extension is plausible: the reviewed list names the exact paths a reviewer approved (ADR-0041 D3).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "reviewed_by",
+        "review_date",
+        "entries"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "glr.dataset-allowlist.v1"
+        },
+        "reviewed_by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "review_date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        }
+      }
+    },
+    "redistribution_authorization": {
+      "title": "Recorded redistribution authorization",
+      "description": "Required by a dataset export: approver, scope, license and date are carried in the manifest and echoed in the audit receipt.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "approver",
+        "scope",
+        "license",
+        "date"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "glr.redistribution-authorization.v1"
+        },
+        "approver": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        }
+      }
+    }
+  }
+}

@@ -1,8 +1,16 @@
 //! Offline, explicit source-only packages. No role, installer, or hook execution.
+//!
+//! One envelope carries a project: the `glr.source-package.v1` source-only
+//! profile (ADR-0027) and the `glr.training-package.v1` group-scoped profile
+//! (ADR-0041), which adds optional `model`, `dataset`, `knowledge` and `report`
+//! groups behind per-group admission predicates. Group policy lives in
+//! [`crate::package_groups`]; this module owns the envelope, the archive and the
+//! streaming limits.
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
@@ -14,14 +22,22 @@ use crate::args::PackageCommand;
 use crate::commands::emit;
 use crate::error::{Error, Result};
 use crate::filesystem::promote;
+use crate::package_groups::{
+    Audit, AuditEntry, Content, DatasetAllowlist, Group, GroupAudit, GroupFile, GroupSelection,
+    INSPECTION_LIMIT, Identity, MAX_EXPANSION_RATIO, MAX_PACKAGE_BYTES, MAX_PACKAGE_FILES,
+    RedistributionAuthorization, admit, denied_component, group_of, validate_authorization,
+    validate_dataset_allowlist, verify,
+};
 use crate::process::executable_available;
 use crate::project::{Project, find_project, load_project};
 
 const SCHEMA: &str = "glr.source-package.v1";
+/// Group-scoped envelope (ADR-0041 D1).
+const TRAINING_SCHEMA: &str = "glr.training-package.v1";
 const CONFORMANCE_SCHEMA: &str = "glr.package-conformance.v1";
-const MAX_FILE: u64 = 16 * 1024 * 1024;
-const MAX_TOTAL: u64 = 128 * 1024 * 1024;
-const MAX_FILES: usize = 1024;
+/// Package-wide file ceiling. It equals the archive member gate, so a package
+/// can never contain more files than an archive may carry.
+const MAX_FILES: usize = MAX_PACKAGE_FILES;
 const MAX_DEPTH: usize = 16;
 const MANIFEST: &str = "glr-package.json";
 /// Exit code for a materialized package whose reproduction is blocked.
@@ -48,7 +64,11 @@ const RUN_STORE_FILE: &str = "runs.sqlite3";
 /// conformance scan ignores them in the destination and never merges them.
 const LOCAL_OVERRIDE_PATTERNS: &[&str] = &["*.local.*", "*.local"];
 
-fn is_local_override(name: &str) -> bool {
+/// Size of one streamed chunk while hashing or materializing: a multi-GiB group
+/// is never buffered whole.
+const CHUNK: usize = 1024 * 1024;
+
+pub(crate) fn is_local_override(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.contains(".local.") || lower.ends_with(".local")
 }
@@ -61,10 +81,19 @@ fn is_local_override_path(raw: &str) -> bool {
     raw.split('/').any(is_local_override)
 }
 
+/// Which profile a selection declares.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Schema {
+    /// `glr.source-package.v1`: one flat, source-only file list (ADR-0027).
+    Source,
+    /// `glr.training-package.v1`: declared entry groups (ADR-0041 D1).
+    Training,
+}
+
+/// `glr.source-package.v1` selection: a flat source file list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Selection {
-    schema_version: String,
+struct SourceSelection {
     package_version: String,
     required_glr: String,
     environment_id: String,
@@ -76,12 +105,184 @@ struct Selection {
     files: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// `glr.training-package.v1` selection: declared groups, each with its own
+/// files, roles, and admission records.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrainingSelection {
+    package_version: String,
+    required_glr: String,
+    environment_id: String,
+    protocol_version: String,
+    contract_sha256: String,
+    source_revision: String,
+    redistribution_license: String,
+    /// The declared groups. A path whose group is not declared is refused.
+    entry_groups: Vec<Group>,
+    /// One entry per declared group, each carrying its files and policy.
+    groups: BTreeMap<Group, GroupSelection>,
+    /// Required by — and only meaningful for — a `dataset` export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dataset_allowlist: Option<DatasetAllowlist>,
+    /// Required by — and only meaningful for — a `dataset` export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    redistribution_authorization: Option<RedistributionAuthorization>,
+}
+
+/// One selection, in one of the two profiles.
+///
+/// Internally tagged so both keep `schema_version` at the top level and the
+/// source-only wire shape is byte-for-byte what ADR-0027 shipped.
+///
+/// The variants differ in size because a group-scoped selection carries its
+/// per-group records; both are small, stack-allocated, and parsed at most once
+/// per command, so boxing would only add indirection.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "schema_version")]
+enum Selection {
+    #[serde(rename = "glr.source-package.v1")]
+    Source(SourceSelection),
+    #[serde(rename = "glr.training-package.v1")]
+    Training(TrainingSelection),
+}
+
+impl Selection {
+    fn schema(&self) -> Schema {
+        match self {
+            Self::Source(_) => Schema::Source,
+            Self::Training(_) => Schema::Training,
+        }
+    }
+
+    fn package_version(&self) -> &str {
+        match self {
+            Self::Source(selection) => &selection.package_version,
+            Self::Training(selection) => &selection.package_version,
+        }
+    }
+
+    fn required_glr(&self) -> &str {
+        match self {
+            Self::Source(selection) => &selection.required_glr,
+            Self::Training(selection) => &selection.required_glr,
+        }
+    }
+
+    fn environment_id(&self) -> &str {
+        match self {
+            Self::Source(selection) => &selection.environment_id,
+            Self::Training(selection) => &selection.environment_id,
+        }
+    }
+
+    fn protocol_version(&self) -> &str {
+        match self {
+            Self::Source(selection) => &selection.protocol_version,
+            Self::Training(selection) => &selection.protocol_version,
+        }
+    }
+
+    fn contract_sha256(&self) -> &str {
+        match self {
+            Self::Source(selection) => &selection.contract_sha256,
+            Self::Training(selection) => &selection.contract_sha256,
+        }
+    }
+
+    fn identity(&self) -> Identity<'_> {
+        Identity {
+            environment_id: self.environment_id(),
+            protocol_version: self.protocol_version(),
+        }
+    }
+}
+
+/// One inventory row.
+///
+/// A source-only entry carries `path`, `size_bytes` and `sha256` only, so the
+/// ADR-0027 wire shape is unchanged. A group-scoped entry adds its group, its
+/// role, and the compressed size a compressed group must declare (ADR-0041 D5).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
     path: String,
     size_bytes: u64,
     sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group: Option<Group>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    compression: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    compressed_size_bytes: Option<u64>,
+}
+
+/// The identity projection of one entry.
+///
+/// `compressed_size_bytes` is transport metadata: it is verified against the
+/// archive it travels in, so it stays out of the content identity. That keeps a
+/// dry run and the export it previews on the same identifier.
+#[derive(Debug, Serialize)]
+struct IdentityEntry<'a> {
+    path: &'a str,
+    size_bytes: u64,
+    sha256: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group: Option<Group>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compression: Option<&'a str>,
+}
+
+impl Entry {
+    fn identity(&self) -> IdentityEntry<'_> {
+        IdentityEntry {
+            path: &self.path,
+            size_bytes: self.size_bytes,
+            sha256: &self.sha256,
+            group: self.group,
+            role: self.role.as_deref(),
+            compression: self.compression.as_deref(),
+        }
+    }
+}
+
+/// One file as the envelope carries it: path, owning group, declared role.
+#[derive(Debug, Clone)]
+struct PlannedFile {
+    path: String,
+    group: Group,
+    role: String,
+}
+
+impl PlannedFile {
+    /// The wire form of this file, for the group verifiers.
+    fn as_group_file(&self) -> GroupFile {
+        GroupFile {
+            path: self.path.clone(),
+            role: self.role.clone(),
+        }
+    }
+}
+
+/// Canonical, profile-independent view of what a package carries.
+///
+/// The wire types are data transfer objects; everything downstream of
+/// `resolve()` works on this.
+#[derive(Debug, Clone)]
+struct Plan {
+    schema: Schema,
+    /// Every file, ordered by path.
+    files: Vec<PlannedFile>,
+    /// Files per group, in the same order.
+    groups: BTreeMap<Group, Vec<PlannedFile>>,
+    /// Declared freshness budget per group. Only `knowledge` declares one.
+    freshness: BTreeMap<Group, u32>,
+    dataset_allowlist: Option<DatasetAllowlist>,
+    authorization: Option<RedistributionAuthorization>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -93,7 +294,7 @@ struct Manifest {
     entries: Vec<Entry>,
 }
 
-fn refusal(message: &str) -> Error {
+fn refusal(message: impl std::fmt::Display) -> Error {
     Error::Contract(format!("source package: {message}"))
 }
 
@@ -129,24 +330,25 @@ fn portable(raw: &str) -> Result<()> {
     Ok(())
 }
 
+/// The role a source-group path has, derived the same way for every package.
+fn source_role(path: &str) -> &'static str {
+    let file = path.rsplit('/').next().unwrap_or_default();
+    if file == "glr-project.toml" || file == "glr-project.json" {
+        "project-manifest"
+    } else if file.ends_with(".lock") {
+        "dependency-lock"
+    } else {
+        "source-file"
+    }
+}
+
 fn source_path(raw: &str) -> Result<()> {
     portable(raw)?;
     let lower = raw.to_ascii_lowercase();
-    if lower.split('/').any(|part| {
-        part.starts_with('.')
-            || [
-                "target",
-                "node_modules",
-                "recordings",
-                "screenshots",
-                "logs",
-                "datasets",
-                "secrets",
-                "credentials",
-                "cache",
-            ]
-            .contains(&part)
-    }) || is_local_override_path(&lower)
+    if lower
+        .split('/')
+        .any(|part| part.starts_with('.') || denied_component(part))
+        || is_local_override_path(&lower)
         || lower == MANIFEST
         || ![
             "py", "rs", "toml", "json", "yaml", "yml", "md", "txt", "lock", "cs", "cpp", "h",
@@ -159,45 +361,68 @@ fn source_path(raw: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_selection(selection: &Selection) -> Result<()> {
-    if selection.schema_version != SCHEMA
-        || selection.files.is_empty()
-        || selection.files.len() > MAX_FILES
-    {
-        return Err(refusal("unsupported schema or file count"));
+/// Validates the shared identity fields every profile carries.
+impl Selection {
+    /// Parses one selection file, refusing an unknown profile fail-closed.
+    ///
+    /// The tag is read before the variant is built so an unknown
+    /// `schema_version` is a contract refusal with the same stable category as
+    /// every other gate, not a parser error.
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let value: Value = serde_json::from_slice(bytes)?;
+        match value.get("schema_version").and_then(Value::as_str) {
+            Some(SCHEMA) | Some(TRAINING_SCHEMA) => Ok(serde_json::from_value(value)?),
+            _ => Err(refusal("unsupported schema or file count")),
+        }
     }
-    Version::parse(&selection.package_version)?;
-    let required = VersionReq::parse(&selection.required_glr)?;
+}
+
+fn validate_common(selection: &Selection) -> Result<()> {
+    Version::parse(selection.package_version())?;
+    let required = VersionReq::parse(selection.required_glr())?;
     if !required.matches(&Version::parse(env!("CARGO_PKG_VERSION"))?) {
         return Err(refusal("incompatible GLR version"));
     }
-    for value in [
-        &selection.environment_id,
-        &selection.protocol_version,
-        &selection.source_revision,
-        &selection.redistribution_license,
-    ] {
-        if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
-            return Err(refusal("invalid provenance or environment identity"));
-        }
-    }
-    if selection.contract_sha256.len() != 64
+    if selection.contract_sha256().len() != 64
         || !selection
-            .contract_sha256
+            .contract_sha256()
             .bytes()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
     {
         return Err(refusal("contract fingerprint must be a lowercase SHA-256"));
     }
+    let provenance = match selection {
+        Selection::Source(selection) => [
+            &selection.environment_id,
+            &selection.protocol_version,
+            &selection.source_revision,
+            &selection.redistribution_license,
+        ],
+        Selection::Training(selection) => [
+            &selection.environment_id,
+            &selection.protocol_version,
+            &selection.source_revision,
+            &selection.redistribution_license,
+        ],
+    };
+    for value in provenance {
+        if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+            return Err(refusal("invalid provenance or environment identity"));
+        }
+    }
+    Ok(())
+}
+
+/// Refuses duplicate, case-colliding, and file-versus-directory paths.
+fn validate_paths(files: &[PlannedFile]) -> Result<()> {
     let mut names = BTreeSet::new();
     let mut prefixes = std::collections::BTreeMap::new();
-    for path in &selection.files {
-        source_path(path)?;
-        if !names.insert(path.to_ascii_lowercase()) {
+    for file in files {
+        if !names.insert(file.path.to_ascii_lowercase()) {
             return Err(refusal("duplicate or case-colliding file"));
         }
         let mut prefix = String::new();
-        for part in path.split('/') {
+        for part in file.path.split('/') {
             if !prefix.is_empty() {
                 prefix.push('/');
             }
@@ -208,15 +433,6 @@ fn validate_selection(selection: &Selection) -> Result<()> {
                 return Err(refusal("case-colliding directory"));
             }
         }
-    }
-    let manifests = ["glr-project.toml", "glr-project.json"]
-        .iter()
-        .filter(|name| names.contains(**name))
-        .count();
-    if manifests != 1 || !selection.files.iter().any(|path| path.ends_with(".lock")) {
-        return Err(refusal(
-            "exactly one project manifest and a dependency lock are required",
-        ));
     }
     for name in &names {
         if name
@@ -236,6 +452,195 @@ fn validate_selection(selection: &Selection) -> Result<()> {
     Ok(())
 }
 
+/// The ADR-0027 obligation a `source` group always carries: exactly one project
+/// manifest and at least one dependency lock.
+fn validate_source_group(files: &[GroupFile]) -> Result<()> {
+    let names: BTreeSet<&str> = files.iter().map(|file| file.path.as_str()).collect();
+    let manifests = ["glr-project.toml", "glr-project.json"]
+        .iter()
+        .filter(|name| names.contains(**name))
+        .count();
+    if manifests != 1 || !names.iter().any(|path| path.ends_with(".lock")) {
+        return Err(refusal(
+            "exactly one project manifest and a dependency lock are required",
+        ));
+    }
+    Ok(())
+}
+
+/// Resolves a wire selection into the canonical plan, refusing anything the
+/// profile, the group vocabulary, or a group's admission predicate rejects.
+fn resolve(selection: &Selection) -> Result<Plan> {
+    validate_common(selection)?;
+    let mut files: Vec<PlannedFile> = match selection {
+        Selection::Source(selection) => {
+            if selection.files.is_empty() || selection.files.len() > MAX_FILES {
+                return Err(refusal("unsupported schema or file count"));
+            }
+            for path in &selection.files {
+                source_path(path)?;
+            }
+            selection
+                .files
+                .iter()
+                .map(|path| PlannedFile {
+                    path: path.clone(),
+                    group: Group::Source,
+                    role: source_role(path).into(),
+                })
+                .collect()
+        }
+        Selection::Training(selection) => resolve_groups(selection)?,
+    };
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    validate_paths(&files)?;
+    // Every profile carries a project: the manifest and lock bind the
+    // environment and protocol the package is valid for (ADR-0027).
+    validate_source_group(
+        &files
+            .iter()
+            .filter(|file| file.group == Group::Source)
+            .map(PlannedFile::as_group_file)
+            .collect::<Vec<_>>(),
+    )?;
+    let mut groups: BTreeMap<Group, Vec<PlannedFile>> = BTreeMap::new();
+    for file in &files {
+        groups.entry(file.group).or_default().push(file.clone());
+    }
+    let mut freshness: BTreeMap<Group, u32> = BTreeMap::new();
+    if let Selection::Training(selection) = selection {
+        for (group, group_selection) in &selection.groups {
+            if let Some(days) = group_selection.max_age_days {
+                freshness.insert(*group, days);
+            }
+        }
+    }
+    Ok(Plan {
+        schema: selection.schema(),
+        files,
+        groups,
+        freshness,
+        dataset_allowlist: match selection {
+            Selection::Training(selection) => selection.dataset_allowlist.clone(),
+            Selection::Source(_) => None,
+        },
+        authorization: match selection {
+            Selection::Training(selection) => selection.redistribution_authorization.clone(),
+            Selection::Source(_) => None,
+        },
+    })
+}
+
+/// Resolves the group-scoped profile: declared groups, roles, per-group limits,
+/// and the authorization a `dataset` export needs.
+fn resolve_groups(selection: &TrainingSelection) -> Result<Vec<PlannedFile>> {
+    if selection.entry_groups.is_empty()
+        || selection.entry_groups.iter().collect::<BTreeSet<_>>().len()
+            != selection.entry_groups.len()
+    {
+        return Err(refusal("entry_groups must be a non-empty, unique set"));
+    }
+    let declared: BTreeSet<Group> = selection.entry_groups.iter().copied().collect();
+    if !declared.contains(&Group::Source) {
+        return Err(refusal(
+            "a group-scoped package declares the source group: it carries the project manifest and lock that bind environment and protocol identity",
+        ));
+    }
+    let mut files: Vec<PlannedFile> = Vec::new();
+    for (group, group_selection) in &selection.groups {
+        if !declared.contains(group) {
+            return Err(refusal(format!(
+                "{} files are present but the group is not declared",
+                group.as_str()
+            )));
+        }
+        if group_selection.files.is_empty() {
+            return Err(refusal(format!(
+                "the {} group declares no files",
+                group.as_str()
+            )));
+        }
+        if group_selection.files.len() > group.policy().max_files {
+            return Err(refusal(format!(
+                "the {} group declares {} files, over its {} limit",
+                group.as_str(),
+                group_selection.files.len(),
+                group.policy().max_files
+            )));
+        }
+        if group_selection.max_age_days.is_some() && *group != Group::Knowledge {
+            return Err(refusal(format!(
+                "max_age_days only applies to the knowledge group, not {}",
+                group.as_str()
+            )));
+        }
+        for file in &group_selection.files {
+            portable(&file.path)?;
+            if file.path == MANIFEST {
+                return Err(refusal("the package manifest is generated, never selected"));
+            }
+            if *group != group_of(&file.path, &declared)? {
+                return Err(refusal(format!(
+                    "{} does not belong to the {} group",
+                    file.path,
+                    group.as_str()
+                )));
+            }
+            admit(*group, &file.path)?;
+            if !group.valid_role(&file.role) {
+                return Err(refusal(format!(
+                    "{} declares role {:?}, which is not a {} role",
+                    file.path,
+                    file.role,
+                    group.as_str()
+                )));
+            }
+            if *group == Group::Source {
+                let derived = source_role(&file.path);
+                if derived != file.role {
+                    return Err(refusal(format!(
+                        "{} declares role {:?} but its path is a {derived}",
+                        file.path, file.role
+                    )));
+                }
+            }
+            files.push(PlannedFile {
+                path: file.path.clone(),
+                group: *group,
+                role: file.role.clone(),
+            });
+        }
+    }
+    if files.len() > MAX_FILES {
+        return Err(refusal("unsupported schema or file count"));
+    }
+    let source: Vec<GroupFile> = selection
+        .groups
+        .get(&Group::Source)
+        .map(|group| group.files.clone())
+        .unwrap_or_default();
+    validate_source_group(&source)?;
+    if declared.contains(&Group::Dataset) {
+        let dataset = selection
+            .groups
+            .get(&Group::Dataset)
+            .map(|group| group.files.as_slice())
+            .unwrap_or_default();
+        let allowlist = selection.dataset_allowlist.as_ref().ok_or_else(|| {
+            refusal("a dataset export needs a separately reviewed dataset allowlist")
+        })?;
+        validate_dataset_allowlist(allowlist, dataset)?;
+        let authorization = selection
+            .redistribution_authorization
+            .as_ref()
+            .ok_or_else(|| {
+                refusal("a dataset export needs a recorded redistribution authorization")
+            })?;
+        validate_authorization(authorization)?;
+    }
+    Ok(files)
+}
+
 fn no_links(path: &Path) -> Result<()> {
     for ancestor in path.ancestors() {
         let metadata = fs::symlink_metadata(ancestor)?;
@@ -253,7 +658,7 @@ fn no_links(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn read_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
+pub(crate) fn read_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
     no_links(path)?;
     // Reject non-regular and oversized entries before opening them. Opening a
     // directory fails with a platform-specific I/O error on Windows, while the
@@ -296,134 +701,500 @@ fn read_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// The expanded size and digest of a file, streamed in bounded chunks.
+///
+/// A 1 GiB weight is hashed without ever being buffered whole.
+fn hash_file(path: &Path, limit: u64) -> Result<(u64, String)> {
+    let file = open_bounded(path, limit)?;
+    hash_stream(file.take(limit + 1), limit)
+}
+
+/// The compressed size of every written member, read back from the archive.
+fn compressed_sizes(archive: &Path) -> Result<BTreeMap<String, u64>> {
+    let mut zip = ZipArchive::new(BufReader::new(File::open(archive)?))?;
+    let mut sizes = BTreeMap::new();
+    for index in 0..zip.len() {
+        let file = zip.by_index(index)?;
+        sizes.insert(file.name().to_owned(), file.compressed_size());
+    }
+    Ok(sizes)
+}
+
+/// Streams one source file into the archive, refusing anything past `limit`.
+fn copy_bounded(path: &Path, writer: &mut impl Write, limit: u64) -> Result<u64> {
+    let mut file = open_bounded(path, limit)?;
+    let mut buffer = vec![0_u8; CHUNK];
+    let mut total = 0_u64;
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > limit {
+            return Err(refusal("file exceeds size limit"));
+        }
+        writer.write_all(&buffer[..count])?;
+    }
+    Ok(total)
+}
+
+/// Opens a regular, unlinked, non-oversized file. Shared by the streaming and
+/// the buffered readers so both apply the identical gate.
+fn open_bounded(path: &Path, limit: u64) -> Result<File> {
+    read_file(path, limit)?;
+    File::open(path).map_err(Error::from)
+}
+
+/// Hashes a stream while counting its bytes, refusing anything past `limit`.
+fn hash_stream(mut reader: impl Read, limit: u64) -> Result<(u64, String)> {
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; CHUNK];
+    let mut total = 0_u64;
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        if total > limit {
+            return Err(refusal("file exceeds size limit"));
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok((total, format!("{:x}", digest.finalize())))
+}
+
 fn identity(manifest: &Manifest) -> Result<String> {
+    let entries: Vec<IdentityEntry> = manifest.entries.iter().map(Entry::identity).collect();
     Ok(digest(&serde_json::to_vec(&(
         &manifest.selection,
         &manifest.tool_version,
-        &manifest.entries,
+        &entries,
     ))?))
 }
 
-type Payload = Vec<(String, Vec<u8>)>;
-
-fn validate_project(selection: &Selection, payload: &Payload) -> Result<()> {
-    let (name, bytes) = payload
-        .iter()
-        .find(|(name, _)| name == "glr-project.toml" || name == "glr-project.json")
+fn validate_project(selection: &Selection, content: &Content) -> Result<()> {
+    let path = ["glr-project.json", "glr-project.toml"]
+        .into_iter()
+        .find(|name| content.declared(name).is_ok())
         .ok_or_else(|| refusal("missing project manifest"))?;
-    let value: Value = if name.ends_with(".json") {
-        serde_json::from_slice(bytes)?
+    let bytes = content.bytes(path, 1024 * 1024)?;
+    let value: Value = if path.ends_with(".json") {
+        serde_json::from_slice(&bytes)?
     } else {
         let text =
-            std::str::from_utf8(bytes).map_err(|_| refusal("project manifest must be UTF-8"))?;
+            std::str::from_utf8(&bytes).map_err(|_| refusal("project manifest must be UTF-8"))?;
         toml::from_str(text)?
     };
     if value["schema_version"] != "glr.project.v1"
-        || value["environment_id"] != selection.environment_id
-        || value["protocol_version"] != selection.protocol_version
+        || value["environment_id"] != selection.environment_id()
+        || value["protocol_version"] != selection.protocol_version()
     {
         return Err(refusal("project manifest identity does not match package"));
     }
     Ok(())
 }
 
-fn plan(root: &Path, selection_path: &Path) -> Result<(Manifest, Payload)> {
-    no_links(root)?;
-    let root = root.canonicalize()?;
-    let mut selection: Selection =
-        serde_json::from_slice(&read_file(selection_path, 1024 * 1024)?)?;
-    validate_selection(&selection)?;
-    selection.files.sort();
-    let mut entries = Vec::new();
-    let mut payload = Vec::new();
-    let mut total = 0;
-    for path in &selection.files {
-        let bytes = read_file(&root.join(path), MAX_FILE)?;
-        total += bytes.len() as u64;
-        if total > MAX_TOTAL {
+/// Bytes a group verifier needs, keyed by package path.
+///
+/// Capture is role-driven and bounded: only declared manifests and snapshots
+/// are materialized, and only under `INSPECTION_LIMIT`.
+fn capture_roles(file: &PlannedFile) -> bool {
+    matches!(
+        file.role.as_str(),
+        "project-manifest" | "model-manifest" | "knowledge-snapshot" | "dataset-manifest"
+    )
+}
+
+/// Per-group byte and file accounting while entries are planned or checked.
+#[derive(Debug, Default)]
+struct Tally {
+    group_bytes: BTreeMap<Group, u64>,
+    total: u64,
+}
+
+impl Tally {
+    /// Adds one expanded file, refusing past the per-group cap and the package
+    /// ceiling. A ceiling that is lower than the sum of the group caps is the
+    /// point of the rule: the package, not one group, is what a recipient pays for.
+    fn add(&mut self, group: Group, size: u64) -> Result<()> {
+        let policy = group.policy();
+        let group_bytes = self.group_bytes.entry(group).or_insert(0);
+        *group_bytes += size;
+        if *group_bytes > policy.max_group_bytes {
             return Err(refusal("expanded size limit exceeded"));
         }
-        entries.push(Entry {
-            path: path.clone(),
-            size_bytes: bytes.len() as u64,
-            sha256: digest(&bytes),
-        });
-        payload.push((path.clone(), bytes));
+        self.total += size;
+        if self.total > MAX_PACKAGE_BYTES {
+            return Err(refusal("package byte ceiling exceeded"));
+        }
+        Ok(())
     }
-    let mut manifest = Manifest {
+}
+
+/// Plans an export: the manifest the archive will carry and its audit receipt.
+///
+/// Files are hashed by streaming them, so a 1 GiB weight is measured without
+/// being buffered. Nothing is executed and nothing is compressed yet: a dry run
+/// and the export it previews share one content identity.
+fn plan(root: &Path, selection_path: &Path) -> Result<(Manifest, Audit)> {
+    no_links(root)?;
+    let root = root.canonicalize()?;
+    let selection = Selection::from_bytes(&read_file(selection_path, 1024 * 1024)?)?;
+    let plan = resolve(&selection)?;
+    let mut entries = Vec::new();
+    let mut declared: BTreeMap<String, (u64, String)> = BTreeMap::new();
+    let mut tally = Tally::default();
+    for file in &plan.files {
+        let policy = file.group.policy();
+        let (size, sha256) = hash_file(&root.join(&file.path), policy.max_file_bytes)?;
+        tally.add(file.group, size)?;
+        declared.insert(file.path.clone(), (size, sha256.clone()));
+        entries.push(Entry {
+            path: file.path.clone(),
+            size_bytes: size,
+            sha256,
+            group: group_field(plan.schema, file.group),
+            role: role_field(plan.schema, &file.role),
+            compression: compression_field(plan.schema, file.group),
+            compressed_size_bytes: None,
+        });
+    }
+    let manifest = Manifest {
         selection,
         tool_version: env!("CARGO_PKG_VERSION").into(),
         content_sha256: String::new(),
         entries,
     };
-    validate_project(&manifest.selection, &payload)?;
+    let audit = audit(&manifest, &plan, Content::for_tree(&root, &declared))?;
+    let mut manifest = manifest;
     manifest.content_sha256 = identity(&manifest)?;
-    Ok((manifest, payload))
+    Ok((manifest, audit))
 }
 
-fn inspect(archive: &Path) -> Result<(Manifest, Payload)> {
-    let bytes = read_file(archive, MAX_TOTAL)?;
-    let mut zip = ZipArchive::new(std::io::Cursor::new(bytes))?;
+/// Group and role are wire fields of the group-scoped profile only: a
+/// source-only entry keeps the ADR-0027 shape byte for byte.
+fn group_field(schema: Schema, group: Group) -> Option<Group> {
+    match schema {
+        Schema::Source => None,
+        Schema::Training => Some(group),
+    }
+}
+
+fn role_field(schema: Schema, role: &str) -> Option<String> {
+    match schema {
+        Schema::Source => None,
+        Schema::Training => Some(role.into()),
+    }
+}
+
+/// `source` stays uncompressed; binary groups are deflated (ADR-0041 D5).
+fn compression_field(schema: Schema, group: Group) -> Option<String> {
+    match schema {
+        Schema::Source => None,
+        Schema::Training if group.policy().compressed => Some("deflated".into()),
+        Schema::Training => Some("stored".into()),
+    }
+}
+
+/// Runs every group's admission predicate and builds the aggregate audit receipt.
+fn audit(manifest: &Manifest, plan: &Plan, content: Content) -> Result<Audit> {
+    validate_project(&manifest.selection, &content)?;
+    let now = SystemTime::now();
+    let mut groups: BTreeMap<String, GroupAudit> = BTreeMap::new();
+    let mut entries: Vec<AuditEntry> = Vec::new();
+    for (group, files) in &plan.groups {
+        let declared_files: Vec<GroupFile> = files.iter().map(PlannedFile::as_group_file).collect();
+        let max_age_days = plan.freshness.get(group).copied();
+        let (group_entries, checks) = verify(
+            *group,
+            &declared_files,
+            max_age_days,
+            &content,
+            &manifest.selection.identity(),
+            now,
+        )?;
+        let bytes = group_entries.iter().map(|entry| entry.size_bytes).sum();
+        groups.insert(
+            group.as_str().into(),
+            GroupAudit {
+                declared: true,
+                file_count: group_entries.len(),
+                bytes,
+                admission: "verified".into(),
+                checks,
+            },
+        );
+        entries.extend(group_entries);
+    }
+    // The receipt names every admitted non-source file; source files are
+    // covered by the inventory, not by a redistribution decision.
+    entries.retain(|entry| entry.group != Group::Source);
+    Ok(Audit {
+        groups,
+        entries,
+        authorization: plan.authorization.clone(),
+        dataset_allowlist: plan.dataset_allowlist.clone(),
+        ..Audit::default()
+    })
+}
+
+/// Writes every entry into a staging directory, streaming and verifying as it
+/// goes.
+///
+/// Import never deserializes: weights, checkpoints and trajectories are read as
+/// bytes, hashed, and written. The expanded caps are enforced by a running
+/// counter against the bytes actually read, so a header that understates an
+/// entry cannot buy more disk than the contract allows.
+fn materialize(archive: &Path, manifest: &Manifest, staging: &Path) -> Result<()> {
+    let mut zip = ZipArchive::new(BufReader::new(File::open(archive)?))?;
+    let mut tally = Tally::default();
+    let mut buffer = vec![0_u8; CHUNK];
+    for entry in &manifest.entries {
+        let group = group_of_entry(entry);
+        let policy = group.policy();
+        let target = staging.join(&entry.path);
+        fs::create_dir_all(
+            target
+                .parent()
+                .ok_or_else(|| refusal("missing file parent"))?,
+        )?;
+        let mut file = zip.by_name(&entry.path)?;
+        let mut written = 0_u64;
+        let mut digest = Sha256::new();
+        let mut output = File::create(&target)?;
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            // The cap is applied before the chunk is written, not after.
+            if written + count as u64 > policy.max_file_bytes {
+                return Err(refusal("file exceeds size limit"));
+            }
+            digest.update(&buffer[..count]);
+            output.write_all(&buffer[..count])?;
+            written += count as u64;
+        }
+        drop(output);
+        if written != entry.size_bytes || format!("{:x}", digest.finalize()) != entry.sha256 {
+            return Err(refusal("file digest or size mismatch"));
+        }
+        tally.add(group, written)?;
+    }
+    Ok(())
+}
+
+/// One fully verified archive: its manifest and its audit receipt.
+struct Inspected {
+    manifest: Manifest,
+    audit: Audit,
+}
+
+/// Validates an archive without buffering it.
+///
+/// The manifest is read first, its declared inventory is checked against every
+/// per-group limit and the package ceiling, and only then is each member
+/// streamed through a digest. A multi-GiB package costs one chunk of memory.
+///
+/// Nothing is deserialized: weights, checkpoints and trajectories are hashed,
+/// never loaded.
+fn inspect(archive: &Path) -> Result<Inspected> {
+    no_links(archive)?;
+    if fs::symlink_metadata(archive)?.len() > MAX_PACKAGE_BYTES {
+        return Err(refusal("archive size limit exceeded"));
+    }
+    let mut zip = ZipArchive::new(BufReader::new(File::open(archive)?))?;
     if zip.len() > MAX_FILES + 1 {
         return Err(refusal("archive file count exceeded"));
     }
-    let mut payload = std::collections::BTreeMap::new();
+    let mut encoded = Vec::new();
+    {
+        let file = zip
+            .by_name(MANIFEST)
+            .map_err(|_| refusal("missing package manifest"))?;
+        if file.size() > 1024 * 1024 {
+            return Err(refusal("manifest size limit exceeded"));
+        }
+        file.take(1024 * 1024 + 1).read_to_end(&mut encoded)?;
+    }
+    if encoded.len() > 1024 * 1024 {
+        return Err(refusal("manifest size limit exceeded"));
+    }
+    let manifest: Manifest = serde_json::from_slice(&encoded)?;
+    let plan = resolve(&manifest.selection)?;
+    Version::parse(&manifest.tool_version)?;
+    let declared: BTreeSet<_> = plan.files.iter().map(|file| file.path.as_str()).collect();
+    let indexed: BTreeSet<_> = manifest
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    if declared != indexed || indexed.len() != manifest.entries.len() {
+        return Err(refusal("selection and inventory disagree"));
+    }
+    tally_entries(&manifest)?;
+
     let mut names = BTreeSet::new();
-    let mut total = 0;
+    let mut verified: BTreeSet<String> = BTreeSet::new();
+    let mut captured: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut declared_sizes: BTreeMap<String, (u64, String)> = BTreeMap::new();
     for index in 0..zip.len() {
         let mut file = zip.by_index(index)?;
+        if file.name() == MANIFEST {
+            continue;
+        }
         portable(file.name())?;
         if file.is_dir()
             || file
                 .unix_mode()
                 .is_some_and(|mode| mode & 0o170000 != 0o100000)
-            || file.size() > MAX_FILE
             || !names.insert(file.name().to_ascii_lowercase())
         {
             return Err(refusal(
                 "archive has links, collisions, or oversized entries",
             ));
         }
-        total += file.size();
-        if total > MAX_TOTAL {
-            return Err(refusal("expanded size limit exceeded"));
+        let Some(entry) = declared_index(&manifest).get(file.name()).copied() else {
+            // An undeclared member leaves a declared file unmatched; the
+            // inventory check below reports that in the stable category.
+            continue;
+        };
+        let entry = &manifest.entries[entry];
+        let policy = group_of_entry(entry).policy();
+        if file.size() > policy.max_file_bytes {
+            return Err(refusal(
+                "archive has links, collisions, or oversized entries",
+            ));
         }
-        let name = file.name().to_owned();
-        let mut content = Vec::new();
-        (&mut file).take(MAX_FILE + 1).read_to_end(&mut content)?;
-        if content.len() as u64 != file.size() {
-            return Err(refusal("entry size mismatch"));
-        }
-        payload.insert(name, content);
-    }
-    let encoded = payload
-        .remove(MANIFEST)
-        .ok_or_else(|| refusal("missing package manifest"))?;
-    if encoded.len() > 1024 * 1024 {
-        return Err(refusal("manifest size limit exceeded"));
-    }
-    let manifest: Manifest = serde_json::from_slice(&encoded)?;
-    validate_selection(&manifest.selection)?;
-    Version::parse(&manifest.tool_version)?;
-    if manifest.content_sha256 != identity(&manifest)? || manifest.entries.len() != payload.len() {
-        return Err(refusal("package identity or inventory mismatch"));
-    }
-    let declared: BTreeSet<_> = manifest.selection.files.iter().collect();
-    let indexed: BTreeSet<_> = manifest.entries.iter().map(|entry| &entry.path).collect();
-    if declared != indexed || indexed.len() != manifest.entries.len() {
-        return Err(refusal("selection and inventory disagree"));
-    }
-    for entry in &manifest.entries {
-        let bytes = payload
-            .get(&entry.path)
-            .ok_or_else(|| refusal("missing selected file"))?;
-        if entry.sha256 != digest(bytes) || entry.size_bytes != bytes.len() as u64 {
+        check_compression(entry, file.compressed_size(), file.size())?;
+        // Only a declared manifest or snapshot is buffered, and only under
+        // `INSPECTION_LIMIT`; every payload is streamed through a digest.
+        let capture = plan
+            .files
+            .iter()
+            .any(|planned| planned.path == entry.path && capture_roles(planned))
+            && file.size() <= INSPECTION_LIMIT;
+        let (size, sha256, content) = if capture {
+            let mut content = Vec::new();
+            (&mut file)
+                .take(INSPECTION_LIMIT + 1)
+                .read_to_end(&mut content)?;
+            (content.len() as u64, digest(&content), Some(content))
+        } else {
+            let (size, sha256) = hash_stream(&mut file, policy.max_file_bytes)?;
+            (size, sha256, None)
+        };
+        if size != entry.size_bytes || sha256 != entry.sha256 {
             return Err(refusal("file digest or size mismatch"));
         }
+        if let Some(content) = content {
+            captured.insert(entry.path.clone(), content);
+        }
+        declared_sizes.insert(entry.path.clone(), (entry.size_bytes, entry.sha256.clone()));
+        verified.insert(entry.path.clone());
     }
-    let payload: Payload = payload.into_iter().collect();
-    validate_project(&manifest.selection, &payload)?;
-    Ok((manifest, payload))
+    for entry in &manifest.entries {
+        if !verified.contains(&entry.path) {
+            return Err(refusal("missing selected file"));
+        }
+    }
+    // Identity last: every structural gate has already refused the members it
+    // owns, so this is what catches an added, removed or renamed entry.
+    if manifest.content_sha256 != identity(&manifest)? || manifest.entries.len() + 1 != zip.len() {
+        return Err(refusal("package identity or inventory mismatch"));
+    }
+    let audit = audit(
+        &manifest,
+        &plan,
+        Content::for_archive(&captured, &declared_sizes),
+    )?;
+    Ok(Inspected { manifest, audit })
+}
+
+fn group_of_entry(entry: &Entry) -> Group {
+    entry.group.unwrap_or(Group::Source)
+}
+
+/// Index of the manifest inventory by path.
+fn declared_index(manifest: &Manifest) -> BTreeMap<String, usize> {
+    manifest
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.path.clone(), index))
+        .collect()
+}
+
+/// Checks the declared inventory against the per-group byte caps, the package
+/// ceiling, and the expansion ratio — before a single entry is expanded.
+fn tally_entries(manifest: &Manifest) -> Result<()> {
+    let mut tally = Tally::default();
+    for entry in &manifest.entries {
+        let group = group_of_entry(entry);
+        let policy = group.policy();
+        let compression = entry.compression.as_deref();
+        match (manifest.selection.schema(), compression) {
+            (Schema::Source, None) => {}
+            (Schema::Training, Some("stored")) if !policy.compressed => {}
+            (Schema::Training, Some("deflated")) if policy.compressed => {}
+            _ => {
+                return Err(refusal(format!(
+                    "{} declares compression {:?}, which the {} group does not allow",
+                    entry.path,
+                    compression,
+                    group.as_str()
+                )));
+            }
+        }
+        if let Some(compressed) = entry.compressed_size_bytes {
+            // A deflated member is never empty. Everything else about the
+            // compressed size is verified against the archive that carries it;
+            // the ratio cap is what bounds the expansion it can claim. A tiny
+            // file can legitimately deflate to slightly more than its own size.
+            if compressed == 0 {
+                return Err(refusal(format!(
+                    "{} declares an empty compressed size",
+                    entry.path
+                )));
+            }
+            check_ratio(entry, compressed)?;
+        }
+        tally.add(group, entry.size_bytes)?;
+    }
+    Ok(())
+}
+
+/// The declared compressed size must describe the archive it travels in.
+fn check_compression(entry: &Entry, compressed: u64, expanded: u64) -> Result<()> {
+    if expanded != entry.size_bytes {
+        return Err(refusal("file digest or size mismatch"));
+    }
+    if let Some(declared) = entry.compressed_size_bytes
+        && declared != compressed
+    {
+        return Err(refusal("entry size mismatch"));
+    }
+    check_ratio(entry, compressed)
+}
+
+/// Refuses an entry whose declared expansion exceeds the ratio cap.
+///
+/// Checked at export as well as at import: a package that would be an archive
+/// bomb for the recipient is refused before it leaves the sender.
+fn check_ratio(entry: &Entry, compressed: u64) -> Result<()> {
+    if compressed == 0 {
+        return Ok(());
+    }
+    let ratio = entry.size_bytes / compressed;
+    if ratio > MAX_EXPANSION_RATIO {
+        return Err(refusal(format!(
+            "{} expands {ratio}x, past the {MAX_EXPANSION_RATIO}:1 ratio cap",
+            entry.path
+        )));
+    }
+    Ok(())
 }
 
 fn absolute(path: &Path) -> Result<PathBuf> {
@@ -570,13 +1341,14 @@ fn conformance(project: &Path, command: &PackageCommand) -> Result<Value> {
         return Err(refusal("not a conformance command"));
     };
     let archive = absolute(archive)?;
-    let (manifest, _) = inspect(&archive)?;
+    let inspected = inspect(&archive)?;
+    let manifest = &inspected.manifest;
     if expected_environment
         .as_ref()
-        .is_some_and(|value| *value != manifest.selection.environment_id)
+        .is_some_and(|value| *value != manifest.selection.environment_id())
         || expected_contract
             .as_ref()
-            .is_some_and(|value| *value != manifest.selection.contract_sha256)
+            .is_some_and(|value| *value != manifest.selection.contract_sha256())
     {
         return Err(refusal("environment or contract fingerprint mismatch"));
     }
@@ -594,12 +1366,13 @@ fn conformance(project: &Path, command: &PackageCommand) -> Result<Value> {
     let mut mismatched = Vec::new();
     for entry in &manifest.entries {
         let size_matches = scan.files.get(&entry.path) == Some(&entry.size_bytes);
+        let limit = group_of_entry(entry).policy().max_file_bytes;
         let digest_matches = scan
             .files
             .contains_key(&entry.path)
-            .then(|| read_file(&root.join(&entry.path), MAX_FILE))
+            .then(|| hash_file(&root.join(&entry.path), limit))
             .transpose()?
-            .is_some_and(|bytes| digest(&bytes) == entry.sha256);
+            .is_some_and(|(_, sha256)| sha256 == entry.sha256);
         if size_matches && digest_matches {
             continue;
         }
@@ -620,8 +1393,8 @@ fn conformance(project: &Path, command: &PackageCommand) -> Result<Value> {
     let loaded = load_project(&manifest_path);
     let identity_matches = match &loaded {
         Ok(project) => {
-            project.environment_id == manifest.selection.environment_id
-                && project.protocol_version == manifest.selection.protocol_version
+            project.environment_id == manifest.selection.environment_id()
+                && project.protocol_version == manifest.selection.protocol_version()
         }
         // A project that cannot be loaded is reported as its own blocker, not
         // additionally as an identity mismatch.
@@ -632,9 +1405,9 @@ fn conformance(project: &Path, command: &PackageCommand) -> Result<Value> {
         Err(_) => Vec::new(),
     };
     let lock_files: Vec<&String> = manifest
-        .selection
-        .files
+        .entries
         .iter()
+        .map(|entry| &entry.path)
         .filter(|path| path.ends_with(".lock"))
         .collect();
 
@@ -738,13 +1511,15 @@ fn conformance(project: &Path, command: &PackageCommand) -> Result<Value> {
         "offline": true,
         "package": {
             "valid": package_valid,
-            "environment_id": manifest.selection.environment_id,
-            "protocol_version": manifest.selection.protocol_version,
-            "contract_sha256": manifest.selection.contract_sha256,
+            "environment_id": manifest.selection.environment_id(),
+            "protocol_version": manifest.selection.protocol_version(),
+            "contract_sha256": manifest.selection.contract_sha256(),
             "content_sha256": manifest.content_sha256,
-            "package_version": manifest.selection.package_version,
+            "package_version": manifest.selection.package_version(),
             "file_count": manifest.entries.len(),
+            "groups": inspected.audit.groups,
         },
+        "audit": inspected.audit,
         "materialization": {
             "status": if materialized { "complete" } else { "incomplete" },
             "missing": missing,
@@ -804,7 +1579,7 @@ pub(crate) fn execute(project: &Path, command: &PackageCommand, json: bool) -> R
             } else {
                 root.join(manifest)
             };
-            let (manifest, payload) = plan(root, &selection)?;
+            let (mut manifest, audit) = plan(root, &selection)?;
             if let PackageCommand::Export { output, .. } = command {
                 let output = absolute(output)?;
                 let parent = output
@@ -814,19 +1589,51 @@ pub(crate) fn execute(project: &Path, command: &PackageCommand, json: bool) -> R
                 let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
                 {
                     let mut writer = ZipWriter::new(temporary.as_file_mut());
+                    // Entries first: a compressed group declares both sizes,
+                    // and the compressed size only exists once the entry has
+                    // been written.
+                    for entry in &manifest.entries {
+                        let group = group_of_entry(entry);
+                        let options = SimpleFileOptions::default()
+                            .compression_method(if group.policy().compressed {
+                                zip::CompressionMethod::Deflated
+                            } else {
+                                zip::CompressionMethod::Stored
+                            })
+                            .unix_permissions(0o644);
+                        writer.start_file(&entry.path, options)?;
+                        copy_bounded(
+                            &root.join(&entry.path),
+                            &mut writer,
+                            group.policy().max_file_bytes,
+                        )?;
+                    }
+                    writer.finish()?;
+                }
+                temporary.as_file().sync_all()?;
+                // Read the sizes the encoder actually produced, then append the
+                // manifest that declares them.
+                let compressed_sizes = compressed_sizes(temporary.path())?;
+                for entry in &mut manifest.entries {
+                    let Some(compressed) = compressed_sizes.get(&entry.path).copied() else {
+                        return Err(refusal(format!("{} was not written", entry.path)));
+                    };
+                    check_ratio(entry, compressed)?;
+                    if entry.compression.is_some() {
+                        entry.compressed_size_bytes = Some(compressed);
+                    }
+                }
+                {
+                    let mut writer = ZipWriter::new_append(temporary.as_file())?;
                     let options = SimpleFileOptions::default()
                         .compression_method(zip::CompressionMethod::Stored)
                         .unix_permissions(0o644);
                     writer.start_file(MANIFEST, options)?;
                     writer.write_all(&serde_json::to_vec(&manifest)?)?;
-                    for (path, bytes) in payload {
-                        writer.start_file(path, options)?;
-                        writer.write_all(&bytes)?;
-                    }
                     writer.finish()?;
                 }
                 temporary.as_file().sync_all()?;
-                if temporary.as_file().metadata()?.len() > MAX_TOTAL {
+                if temporary.as_file().metadata()?.len() > MAX_PACKAGE_BYTES {
                     return Err(refusal("archive size limit exceeded"));
                 }
                 temporary
@@ -835,13 +1642,15 @@ pub(crate) fn execute(project: &Path, command: &PackageCommand, json: bool) -> R
             }
             emit(
                 "package",
-                &json!({"status": "verified-source-inventory", "manifest": manifest, "executed": false}),
+                &json!({"status": "verified-source-inventory", "manifest": manifest, "audit": audit, "executed": false}),
                 json,
             )?;
             Ok(0)
         }
         PackageCommand::Inspect { archive } | PackageCommand::Import { archive, .. } => {
-            let (manifest, payload) = inspect(&absolute(archive)?)?;
+            let archive = absolute(archive)?;
+            let inspected = inspect(&archive)?;
+            let manifest = inspected.manifest;
             if let PackageCommand::Import {
                 destination,
                 expected_environment,
@@ -849,8 +1658,8 @@ pub(crate) fn execute(project: &Path, command: &PackageCommand, json: bool) -> R
                 ..
             } = command
             {
-                if *expected_environment != manifest.selection.environment_id
-                    || *expected_contract != manifest.selection.contract_sha256
+                if *expected_environment != manifest.selection.environment_id()
+                    || *expected_contract != manifest.selection.contract_sha256()
                 {
                     return Err(refusal("environment or contract fingerprint mismatch"));
                 }
@@ -863,20 +1672,12 @@ pub(crate) fn execute(project: &Path, command: &PackageCommand, json: bool) -> R
                     .ok_or_else(|| refusal("missing destination parent"))?;
                 no_links(parent)?;
                 let staging = tempfile::tempdir_in(parent)?;
-                for (path, bytes) in payload {
-                    let target = staging.path().join(path);
-                    fs::create_dir_all(
-                        target
-                            .parent()
-                            .ok_or_else(|| refusal("missing file parent"))?,
-                    )?;
-                    fs::write(target, bytes)?;
-                }
+                materialize(&archive, &manifest, staging.path())?;
                 promote(staging.path(), &destination)?;
             }
             emit(
                 "package",
-                &json!({"status": "verified-source-package", "manifest": manifest, "executed": false, "training_ready": false}),
+                &json!({"status": "verified-source-package", "manifest": manifest, "audit": inspected.audit, "executed": false, "training_ready": false}),
                 json,
             )?;
             Ok(0)
@@ -910,8 +1711,7 @@ mod tests {
         let path = root.join("selection.json");
         fs::write(
             &path,
-            serde_json::to_vec(&Selection {
-                schema_version: SCHEMA.into(),
+            serde_json::to_vec(&Selection::Source(SourceSelection {
                 package_version: "1.0.0".into(),
                 required_glr: ">=0.18.0, <1.0.0".into(),
                 environment_id: "synthetic.package".into(),
@@ -924,7 +1724,7 @@ mod tests {
                     "train.py".into(),
                     "uv.lock".into(),
                 ],
-            })
+            }))
             .unwrap(),
         )
         .unwrap();
@@ -949,13 +1749,13 @@ mod tests {
             .unwrap();
         }
         assert_eq!(fs::read(&first).unwrap(), fs::read(&second).unwrap());
-        let (manifest, _) = inspect(&first).unwrap();
+        let manifest = inspect(&first).unwrap().manifest;
         let destination = root.path().join("imported");
         let command = PackageCommand::Import {
             archive: first,
             destination: destination.clone(),
             expected_environment: "synthetic.package".into(),
-            expected_contract: manifest.selection.contract_sha256,
+            expected_contract: manifest.selection.contract_sha256().into(),
         };
         assert_eq!(execute(root.path(), &command, false).unwrap(), 0);
         assert_eq!(
@@ -1002,8 +1802,7 @@ mod tests {
         let path = root.join("selection.json");
         fs::write(
             &path,
-            serde_json::to_vec(&Selection {
-                schema_version: SCHEMA.into(),
+            serde_json::to_vec(&Selection::Source(SourceSelection {
                 package_version: "1.0.0".into(),
                 required_glr: ">=0.18.0, <1.0.0".into(),
                 environment_id: "synthetic.package".into(),
@@ -1017,7 +1816,7 @@ mod tests {
                     "train.py".into(),
                     "uv.lock".into(),
                 ],
-            })
+            }))
             .unwrap(),
         )
         .unwrap();
@@ -1326,20 +2125,152 @@ mod tests {
             "foo./x.py",
         ] {
             let mut selection = source.clone();
-            selection.files.push(path.into());
-            assert!(validate_selection(&selection).is_err(), "{path}");
+            push_source_file(&mut selection, path);
+            assert!(resolve(&selection).is_err(), "{path}");
         }
         let mut selection = source.clone();
-        selection
-            .files
-            .extend(["Case/a.py".into(), "case/b.py".into()]);
-        assert!(validate_selection(&selection).is_err());
-        selection = source.clone();
-        selection.required_glr = ">=999.0.0".into();
-        assert!(validate_selection(&selection).is_err());
-        selection = source;
-        selection.schema_version = "future".into();
-        assert!(validate_selection(&selection).is_err());
+        push_source_file(&mut selection, "Case/a.py");
+        push_source_file(&mut selection, "case/b.py");
+        assert!(resolve(&selection).is_err());
+        let mut selection = source.clone();
+        match &mut selection {
+            Selection::Source(selection) => selection.required_glr = ">=999.0.0".into(),
+            Selection::Training(selection) => selection.required_glr = ">=999.0.0".into(),
+        }
+        assert!(resolve(&selection).is_err());
+        let unknown = serde_json::from_str::<Selection>(&format!(
+            "{{\"schema_version\":\"glr.source-package.v9\",\"package_version\":\"1.0.0\",             \"required_glr\":\">=0.18.0\",\"environment_id\":\"e\",\"protocol_version\":\"1.0\",             \"contract_sha256\":\"{}\",\"source_revision\":\"s\",             \"redistribution_license\":\"MIT\",\"files\":[\"train.py\"]}}",
+            "a".repeat(64)
+        ));
+        assert!(
+            unknown.is_err(),
+            "an unknown schema version must fail closed"
+        );
+    }
+
+    /// Adds one file to a source-only selection, whatever its profile.
+    fn push_source_file(selection: &mut Selection, path: &str) {
+        match selection {
+            Selection::Source(selection) => selection.files.push(path.into()),
+            Selection::Training(selection) => selection
+                .groups
+                .entry(Group::Source)
+                .or_default()
+                .files
+                .push(GroupFile {
+                    path: path.into(),
+                    role: source_role(path).into(),
+                }),
+        }
+    }
+
+    /// The bytes a planned fixture carries, read back from the source tree.
+    fn fixture_payload(root: &Path, manifest: &Manifest) -> Vec<(String, Vec<u8>)> {
+        manifest
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.path.clone(),
+                    fs::read(root.join(&entry.path)).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// The per-file limit of the source group.
+    fn source_file_limit() -> u64 {
+        Group::Source.policy().max_file_bytes
+    }
+
+    /// A reader that yields `count` zero bytes, however many chunks it takes.
+    struct Zeroes {
+        remaining: u64,
+    }
+
+    impl Read for Zeroes {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 {
+                return Ok(0);
+            }
+            let count = buffer.len().min(self.remaining as usize);
+            self.remaining -= count as u64;
+            Ok(count)
+        }
+    }
+
+    /// A streamed read refuses the moment it passes its limit, so a header that
+    /// understates an entry cannot buy more memory than the contract allows.
+    #[test]
+    fn hash_stream_stops_at_its_limit_without_buffering_the_payload() {
+        let limit = Group::Report.policy().max_file_bytes;
+        let error = hash_stream(
+            Zeroes {
+                remaining: u64::MAX,
+            },
+            limit,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("file exceeds size limit"), "{error}");
+        // Exactly one chunk past the limit is the most it ever holds.
+        let (size, sha256) = hash_stream(Zeroes { remaining: limit }, limit).unwrap();
+        assert_eq!(size, limit);
+        assert_eq!(sha256, digest(&vec![0_u8; limit as usize]));
+    }
+
+    /// The group cap and the package ceiling are enforced on the running total,
+    /// so the package — not one group — is what a recipient pays for.
+    #[test]
+    fn tally_enforces_the_group_cap_and_the_package_ceiling() {
+        let mut tally = Tally::default();
+        let report = Group::Report.policy();
+        assert!(tally.add(Group::Report, report.max_group_bytes).is_ok());
+        assert!(
+            tally
+                .add(Group::Report, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("expanded size limit exceeded")
+        );
+
+        // Two groups each inside their own cap can still breach the ceiling.
+        let mut tally = Tally::default();
+        assert!(tally.add(Group::Model, 3 * 1024 * 1024 * 1024).is_ok());
+        assert!(
+            tally
+                .add(Group::Dataset, 2 * 1024 * 1024 * 1024)
+                .unwrap_err()
+                .to_string()
+                .contains("package byte ceiling exceeded")
+        );
+    }
+
+    /// A compressed entry is admitted on its declared ratio, and refused when
+    /// the ratio or the archive's own compressed size disagrees.
+    #[test]
+    fn expansion_ratio_is_enforced_on_the_declared_sizes() {
+        let entry = Entry {
+            path: "models/reference/artifacts/weights.safetensors".into(),
+            size_bytes: 200 * 1024,
+            sha256: "a".repeat(64),
+            group: Some(Group::Model),
+            role: Some("model-artifact".into()),
+            compression: Some("deflated".into()),
+            compressed_size_bytes: Some(1024),
+        };
+        assert!(check_ratio(&entry, 1024).is_ok());
+        assert!(
+            check_ratio(&entry, 512)
+                .unwrap_err()
+                .to_string()
+                .contains("200:1 ratio cap")
+        );
+        // Stored entries declare no compressed size, so the cap cannot fire.
+        let mut stored = entry.clone();
+        stored.compression = Some("stored".into());
+        stored.compressed_size_bytes = None;
+        assert!(check_compression(&stored, stored.size_bytes, stored.size_bytes).is_ok());
     }
 
     #[test]
@@ -1347,7 +2278,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("source.py"), b"pass").unwrap();
         fs::hard_link(root.path().join("source.py"), root.path().join("alias.py")).unwrap();
-        assert!(read_file(&root.path().join("source.py"), MAX_FILE).is_err());
+        assert!(read_file(&root.path().join("source.py"), source_file_limit()).is_err());
         let source = root.path().join("staged");
         let destination = root.path().join("existing");
         fs::create_dir(&source).unwrap();
@@ -1364,7 +2295,8 @@ mod tests {
     fn archive_rejects_unexpected_files_corruption_and_identity_mismatch() {
         let root = tempfile::tempdir().unwrap();
         let selection = fixture(root.path());
-        let (manifest, payload) = plan(root.path(), &selection).unwrap();
+        let (manifest, _) = plan(root.path(), &selection).unwrap();
+        let payload = fixture_payload(root.path(), &manifest);
         for bad_path in ["../escape.py", "unexpected.py", "TRAIN.py"] {
             let path = root.path().join("bad.zip");
             let mut writer = ZipWriter::new(File::create(&path).unwrap());
@@ -1413,7 +2345,8 @@ mod tests {
     fn archive_rejects_symlinks_oversized_entries_and_changed_payload() {
         let root = tempfile::tempdir().unwrap();
         let selection = fixture(root.path());
-        let (manifest, payload) = plan(root.path(), &selection).unwrap();
+        let (manifest, _) = plan(root.path(), &selection).unwrap();
+        let payload = fixture_payload(root.path(), &manifest);
         for mode in ["symlink", "oversized", "corrupt"] {
             let archive = root.path().join(format!("{mode}.zip"));
             let mut writer = ZipWriter::new(File::create(&archive).unwrap());
@@ -1430,7 +2363,9 @@ mod tests {
                 } else {
                     writer.start_file(name, options).unwrap();
                     if name == "train.py" && mode == "oversized" {
-                        writer.write_all(&vec![0; MAX_FILE as usize + 1]).unwrap();
+                        writer
+                            .write_all(&vec![0; source_file_limit() as usize + 1])
+                            .unwrap();
                     } else if name == "train.py" && mode == "corrupt" {
                         writer.write_all(b"changed").unwrap();
                     } else {
