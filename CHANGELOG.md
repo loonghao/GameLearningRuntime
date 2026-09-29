@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.24.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.23.0...v0.24.0) (2026-09-29)
+
+
+### Features
+
+* **package:** admit optional model, dataset, knowledge and report groups ([#191](https://github.com/loonghao/GameLearningRuntime/issues/191)) ([f719ee1](https://github.com/loonghao/GameLearningRuntime/commit/f719ee191a5ae310e4a9720fa802e69ce2969eaa))
+* **web:** drive browser and Three.js games through the contract ([5291135](https://github.com/loonghao/GameLearningRuntime/commit/5291135dd675b70854f9e8733c94529875d6053c))
+
+
+### Bug Fixes
+
+* **web:** sink the validation seed into every episode reset ([961b817](https://github.com/loonghao/GameLearningRuntime/commit/961b817b5103b6fb512eb4099e7c1dbdf8f052b8))
+
+
+### Documentation
+
+* **decisions:** record the episode termination contract as ADR-0047 ([cb43aa4](https://github.com/loonghao/GameLearningRuntime/commit/cb43aa4d0b8ac0d52df57f78ac5773c6ad8cb18d))
+* **package:** align skills and guides with the implemented package contract ([#194](https://github.com/loonghao/GameLearningRuntime/issues/194)) ([f62dd2f](https://github.com/loonghao/GameLearningRuntime/commit/f62dd2f1e442df549f6d9eda39cdac5476806fa1))
+
 ## [0.23.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.22.0...v0.23.0) (2026-09-28)
 
 
