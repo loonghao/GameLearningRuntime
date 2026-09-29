@@ -127,3 +127,10 @@ path = "tools/release/verify_release.py"
 domain = "release"
 purpose = "Verify that a release tag exactly matches the package version."
 entrypoints = ["just release-check"]
+
+[[entries]]
+id = "web.validate-web-rl"
+path = "tools/web/validate_web_rl.py"
+domain = "web"
+purpose = "Train PPO on the bundled Three.js page and report the before/after return."
+entrypoints = ["manual"]
