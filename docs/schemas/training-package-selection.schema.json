@@ -130,8 +130,7 @@
         },
         "max_age_days": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 3650
+          "minimum": 1
         }
       }
     },

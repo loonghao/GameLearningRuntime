@@ -87,7 +87,7 @@ behavior and are never an execution hint.
 | --- | --- |
 | `model` | exactly one `model-manifest` named `manifest.json` at the bundle root, verifying as `glr.model-bundle.v1` for the *same* `environment_id` and `protocol_version`, with non-empty seeds, inputs and artifacts; every other model file must be declared by that bundle, under `inputs/` or `artifacts/` as its role states |
 | `dataset` | a reviewed `glr.dataset-allowlist.v1` naming each exact path (`reviewed_by`, `review_date`, `entries`), **and** a recorded `glr.redistribution-authorization.v1` (`approver`, `scope`, `license`, `date`), **and** a `glr.demonstration-artifact.v1` manifest binding every payload by size and digest with an allowed origin and outcome |
-| `knowledge` | a `glr.knowledge-snapshot.v1` file, validated against the wall clock and a declared `max_age_days` (1–3,650) that the knowledge group must carry; a snapshot stamped in the future is refused, and a group with no declared budget is refused |
+| `knowledge` | a `glr.knowledge-snapshot.v1` file, validated against the wall clock and a declared `max_age_days` that the knowledge group must carry; a snapshot stamped in the future is refused, and a group with no declared budget is refused. `max_age_days` must be a **positive** integer — the CLI refuses `0` and enforces **no upper bound**, so treat an implausibly large budget as a review finding rather than expecting a refusal |
 | `report` | aggregate outputs only (`json`, `md`, `csv`); a path component named `trajectory`, `trajectories`, `episodes`, `episode`, `recordings`, `logs`, `runs` or `raw` is refused by name as well as by type |
 
 Refused for every group: the deserializer-only formats `pkl`, `pickle`,
@@ -227,16 +227,21 @@ Categories you will actually see:
 - `environment or contract fingerprint mismatch` — `--expected-environment` or
   `--expected-contract` disagrees with the package.
 - `destination already exists` — import never replaces a project.
-- `archive size limit exceeded`, `expansion ratio exceeded`, `expanded size
-  limit exceeded` — an archive bomb or an over-cap group, refused before any
-  expanded byte is written.
+- `archive size limit exceeded`, `{path} expands {ratio}x, past the 200:1
+  ratio cap`, and the expanded-size refusals — an archive bomb or an over-cap
+  group, refused before any expanded byte is written. The ratio is computed as
+  `size_bytes / compressed`, so the `200` is `MAX_EXPANSION_RATIO`; a zero
+  compressed size skips the check.
 - `a model group needs exactly one model-manifest`, `is not declared by the
   model bundle`, `was trained for … and cannot join a package for …` — model
   verification failed.
 - `is not on the reviewed dataset allowlist`, `is a dataset payload that no
   demonstration manifest binds` — dataset authorization or provenance failed.
-- `knowledge snapshot …`, `is stamped in the future`, `needs a declared
-  max_age_days` — freshness or snapshot validation failed.
+- `a knowledge group must declare max_age_days so freshness is reviewable`,
+  `knowledge max_age_days must be positive`, `is stamped in the future` —
+  freshness or snapshot validation failed. A `max_age_days` on any group other
+  than `knowledge` is refused with `max_age_days only applies to the knowledge
+  group, not {group}`.
 - `is a raw log, recording or trajectory, not an aggregate` — a `report` path
   component or type is not an aggregate.
 

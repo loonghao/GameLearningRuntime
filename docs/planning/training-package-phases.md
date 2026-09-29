@@ -129,7 +129,8 @@ guarantees.
 `crates/glr-cli/src/package_groups.rs` and the M4 negative corpus in
 `crates/glr-cli/tests/package_group_contract.rs`. ADR-0041 records the naming,
 vocabulary, limit-table and freshness decisions this milestone settled. M6 —
-skills and documentation alignment for the new groups — is still open.
+skills and documentation alignment for the new groups — is implemented; see the
+M6 section below.
 
 **Exit criteria.**
 
