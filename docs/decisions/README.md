@@ -49,6 +49,10 @@
 - [ADR-0044: Bound negative shaping with optional budgets](0044-bound-negative-shaping-budgets.md)
 - [ADR-0045: Admit remote roles with scoped capabilities, epoch-scoped fences, and coordinator-owned checkpoints](0045-remote-role-admission.md)
 - [ADR-0046: Let a project declare the environment its roles receive](0046-declare-the-environment-a-role-receives.md)
+- [ADR-0047: Record why every episode ended, and make an indeterminate outcome absorbing](0047-record-why-every-episode-ended.md)
+
+ADR-0047 is **retrospective**: it records a decision that was already implemented
+and shipped (PR #174, issues #155 and #156) rather than proposing new behavior.
 
 Accepted ADRs describe implemented architecture. Its staged delivery plan for
 issue #116 is [the phased plan](../planning/training-package-phases.md). Proposed future designs belong
