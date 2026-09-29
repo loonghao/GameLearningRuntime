@@ -88,7 +88,7 @@ episode in half.
 ### 5. The learner stays out of the runtime package
 
 Per ADR-0005, the runtime ships objectives, not learners. The PPO update loop
-lives in `tools/web/validate_web_rl.py` and reuses
+lives in `tools/providers/validate_web_rl.py` and reuses
 `integrations.torch_objectives.ppo_loss` and `generalized_advantage_estimate`
 for the reusable parts. The adapters ship in the runtime package; the trainer
 does not.
@@ -150,15 +150,17 @@ than as features.
 
 **Neutral**
 
-* `tools/web/validate_web_rl.py` is registered in `tools/registry.toml` under
-  the `web` domain, so `just layout-check` keeps covering it.
+* `tools/providers/validate_web_rl.py` is registered in `tools/registry.toml` under
+  the `providers` domain, so `just layout-check` keeps covering it. The browser
+  is another game host, which is what that domain already covers for Godot,
+  Unity, Unreal, and CUA; no new domain was warranted.
 
 ## Validation evidence
 
 Produced by:
 
 ```bash
-python tools/web/validate_web_rl.py --train-steps 120000 \
+python tools/providers/validate_web_rl.py --train-steps 120000 \
     --unroll-length 128 --evaluation-episodes 30 --max-steps 256 \
     --seed 7 --output artifacts/web-rl-validation.json
 ```
@@ -202,5 +204,5 @@ score attainable on this toy task".
 ```bash
 pip install '.[torch]' playwright
 playwright install chromium
-python tools/web/validate_web_rl.py --output artifacts/web-rl-validation.json
+python tools/providers/validate_web_rl.py --output artifacts/web-rl-validation.json
 ```

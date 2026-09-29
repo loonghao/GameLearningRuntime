@@ -119,7 +119,7 @@ to learn from and you need a screen encoder instead.
 ## Reproduce the validation
 
 ```bash
-python tools/web/validate_web_rl.py --output artifacts/web-rl-validation.json
+python tools/providers/validate_web_rl.py --output artifacts/web-rl-validation.json
 ```
 
 The tool reports a random-policy baseline and a trained PPO policy measured on

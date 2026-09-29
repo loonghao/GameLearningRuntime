@@ -14,7 +14,7 @@ a random policy and the trained policy on the same seeds and reports both.
 Usage:
 
 ```bash
-python tools/web/validate_web_rl.py --output artifacts/web-rl-validation.json
+python tools/providers/validate_web_rl.py --output artifacts/web-rl-validation.json
 ```
 
 Requires the optional ``playwright`` and ``torch`` dependencies and a Chromium
@@ -272,7 +272,7 @@ class PPOTrainer:
                     entropy_coefficient=self._config.entropy_coefficient,
                 )
                 self._optimizer.zero_grad(set_to_none=True)
-                loss.loss.backward()  # type: ignore[no-untyped-call]
+                loss.loss.backward()
                 torch.nn.utils.clip_grad_norm_(self._parameters(), 0.5)
                 self._optimizer.step()
                 self.updates += 1
