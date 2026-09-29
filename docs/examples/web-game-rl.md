@@ -127,12 +127,26 @@ the same environment, plus a training curve sampled every 2,400 steps over a
 rolling window of 50 episodes. The comparison is the evidence; "it connects" is
 not.
 
-Measured on `web.dodge-instrumented-v1`, 120,000 environment steps, seed 7:
+`--seed` pins the policy RNGs **and** the game world: every episode resets with
+a seed derived from it, and the evaluation episodes come from a range held out of
+training. Two runs with the same seed produce identical reports, so the numbers
+below can be re-derived instead of taken on trust.
+
+Measured on `web.dodge-instrumented-v1`, 120,000 environment steps, seed 7, 30
+evaluation episodes per policy:
 
 | Metric | Random policy | Trained PPO | Change |
 |---|---|---|---|
-| Mean steps survived | 65.8 | 103.9 | 1.58x |
-| Mean episode return | 0.73 | 2.31 | 3.15x |
+| Mean steps survived | 62.7 | 115.3 | **1.84x** |
+| Mean episode return | 0.62 | 2.83 | 4.59x (single sample) |
+
+**Quote the survival ratio as the result and the return ratio as a sample.** The
+baseline return sits near zero (about +/-0.3 SEM at 30 episodes), so its ratio
+swings between roughly 3x and 10x on noise, while the survival ratio replicated
+at **1.58x - 2.51x** across five independent re-runs and returned **1.84x** in
+the run above.
 
 The full report is checked in as
-[web-rl-validation.json](web-rl-validation.json).
+[web-rl-validation.json](web-rl-validation.json). It carries a `seeding` block
+with the seeds it used and a `history.before_seed_sinking` record of the run
+produced before per-episode seeding existed.
