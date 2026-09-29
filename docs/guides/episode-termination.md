@@ -6,6 +6,12 @@ episodes quietly reached the training dataset. GLR makes the reason part of the
 episode: a closed `TerminationReason` plus a free-text `termination_detail`,
 kept in `game_learning_runtime.termination`.
 
+The decision behind this contract — why a missing reason is a violation rather
+than a warning, and why `indeterminate` is absorbing instead of a refusal — is
+[ADR-0047](../decisions/0047-record-why-every-episode-ended.md). This guide is
+the normative usage reference; the ADR is retrospective, so where the two
+disagree the code is authoritative.
+
 ## The closed enum
 
 | Reason | Meaning | Usually attributed by |
