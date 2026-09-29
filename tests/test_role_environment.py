@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from game_learning_runtime.cli import main
+from game_learning_runtime.cli import _process_environment, main
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.project import load_project
 from game_learning_runtime.role_environment import (
@@ -112,17 +112,37 @@ def test_the_capture_recorder_receives_the_project_wide_table(tmp_path: Path) ->
     assert dict(project.declared_environment("runtime")) == {"RENDER_DEVICE": "runtime"}
 
 
-def test_a_capture_declaration_that_cannot_resolve_fails_closed(tmp_path: Path) -> None:
+def test_a_capture_declaration_that_cannot_resolve_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The recorder gets the project table, so an unresolvable one refuses the run."""
 
-    project = load_project(_write_project(tmp_path))
-
-    resolved = resolve_environment(
-        project.declared_environment("capture"), environ={}, role="capture"
+    monkeypatch.delenv("SYNTHETIC_DATASET_ROOT", raising=False)
+    project = load_project(
+        _write_project(tmp_path, environment={"DATASET_ROOT": "${SYNTHETIC_DATASET_ROOT}"})
     )
 
-    assert resolved.ready
+    # The recorder is project-owned but not a role, so its declaration arrives
+    # through the project-wide table; an empty one would resolve vacuously and
+    # prove nothing about the capture path.
+    declared = project.declared_environment("capture")
+    assert dict(declared) == {"DATASET_ROOT": "${SYNTHETIC_DATASET_ROOT}"}
+
+    resolved = resolve_environment(declared, environ={}, role="capture")
+
+    assert not resolved.ready
+    assert [item.name for item in resolved.unresolved] == ["DATASET_ROOT"]
+    assert resolved.unresolved[0].missing == ("SYNTHETIC_DATASET_ROOT",)
     assert resolved.to_mapping()["role"] == "capture"
+    assert "DATASET_ROOT" in resolved.refusal()
+
+    # The recorder is spawned through the same gate as every role: a
+    # declaration the process environment cannot satisfy refuses the child
+    # instead of starting it.
+    with pytest.raises(ContractViolation, match="DATASET_ROOT"):
+        _process_environment(
+            project, run_id="synthetic", run_dir=tmp_path / ".glr/run", role="capture"
+        )
 
 
 def test_a_role_that_names_no_role_declares_nothing(tmp_path: Path) -> None:
