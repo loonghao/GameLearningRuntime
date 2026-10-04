@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.25.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.24.0...v0.25.0) (2026-10-04)
+
+
+### Features
+
+* add local fleet data hub and launcher view ([#204](https://github.com/loonghao/GameLearningRuntime/issues/204)) ([feca029](https://github.com/loonghao/GameLearningRuntime/commit/feca029c466ffa9694705634977ca32d9a4befdd))
+* **telemetry:** record safe decision evidence and read-only timelines ([#202](https://github.com/loonghao/GameLearningRuntime/issues/202)) ([2e01297](https://github.com/loonghao/GameLearningRuntime/commit/2e012972d421be35d7f0d84c5205a991b9648143))
+
+
+### Bug Fixes
+
+* **git:** report bounded probe startup diagnostics ([#199](https://github.com/loonghao/GameLearningRuntime/issues/199)) ([6ea0200](https://github.com/loonghao/GameLearningRuntime/commit/6ea0200049cb1720b8ebdfe142cc1979ba65746d))
+* **runtime:** bind rewards and promotion to verified evidence ([#198](https://github.com/loonghao/GameLearningRuntime/issues/198)) ([49aeaac](https://github.com/loonghao/GameLearningRuntime/commit/49aeaacc27f7e63a39a8ee6969daf2b1ad2fae1f))
+
 ## [0.24.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.23.0...v0.24.0) (2026-09-29)
 
 
