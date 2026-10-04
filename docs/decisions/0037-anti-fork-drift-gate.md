@@ -53,6 +53,34 @@ this gate on purpose. Its interception points are scheduled jobs, pre-training
 checks on long-lived checkouts, and a fork's own CI with
 `--allow-foreign-origin`.
 
+### Local Git probe diagnostics
+
+Completed reports keep the finding policy and `0`/`5` result. Add an optional
+`diagnostic_sink` to `GitRepositoryProbe`, a bounded history of its latest 16
+attempts, and an additive `git_diagnostics` array to the v1 report. Each receipt
+uses `glr.git-probe-diagnostic.v1` and source `glr.fork-gate`. It records the
+resolved executable path, this Python caller's PID, UTC start/end, operation,
+exit code, timeout status, and known or unknown process termination. These are
+local runtime values; examples and tests use synthetic values.
+
+Project stderr into fixed error categories, denying arbitrary text by default.
+Inspect at most 16,384 characters or bytes and 64 lines, and emit at most 2,048
+ASCII bytes. Never include command arguments, environment, stdout, URLs,
+credentials, or exception text in a diagnostic. Nonzero exits, spawn errors,
+and timeouts also emit a warning containing the safe receipt. Sink failures
+emit a constant warning without replacing the original process result.
+
+Git absence is reported as missing data without launching a process; policy
+determines `0`/`5`. This explicitly degrades absence instead of the previous
+`FileNotFoundError`. Nonzero exits retain their `None` return value. Other
+spawn errors and timeouts retain their exceptions after recording a receipt. A default `subprocess.run` timeout
+has killed and waited for its owned child; an injected runner's timeout or a
+spawn error has unknown termination evidence. Diagnostics cover existing probe
+calls only, with no retries, extra Git calls, OS audit, or process sampling.
+They do not establish the cause or caller of an unrelated application crash.
+Invoke the absolute path selected by `which`, preserving a symlink wrapper's
+name; the receipt reports its canonical resolved executable path.
+
 ## Consequences
 
 - Drift is caught while the rebase is still small, and the report names the

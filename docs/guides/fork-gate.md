@@ -109,12 +109,45 @@ upstream. Weakening the gate on the canonical repository defeats its purpose.
       "observed": "github.com/someone/else",
       "expected": "github.com/loonghao/gamelearningruntime"
     }
-  ]
+  ],
+  "git_diagnostics": []
 }
 ```
 
 Every finding carries `observed` and `expected`, so an alert can state the
 remediation without a human opening the code.
+
+### Git probe diagnostics
+
+The report's additive `git_diagnostics` array contains up to the latest 16
+existing Git probe attempts. A receipt has schema
+`glr.git-probe-diagnostic.v1`, source `glr.fork-gate`, and a fixed operation
+(`origin`, `branch`, or `divergence`). It records the resolved executable path,
+this Python caller's PID, UTC start/end, raw exit code, timeout flag, and
+`process_terminal` evidence. The path and PID are local runtime values, not
+inferred parentage or a process inventory.
+
+Stderr contains fixed error categories only. Arbitrary text, arguments,
+environment, stdout, credentials, URLs, and exception text are omitted. Input
+inspection is capped at 16,384 characters or bytes and 64 lines; output is
+capped at 2,048 ASCII bytes with `stderr_truncated` indicating clipping. A
+nonzero exit, spawn error, or timeout emits the same safe receipt as a warning.
+
+SDK callers can pass `diagnostic_sink=callback` to `GitRepositoryProbe` to
+receive every receipt and read `probe.diagnostics` for the latest 16. A failed
+callback emits a constant warning and preserves the original process result.
+Git absence is reported as missing data without starting a process, and policy
+determines `0`/`5`; this replaces the previous `FileNotFoundError` on absence.
+A nonzero exit still returns `None`. Other spawn and timeout exceptions
+propagate after a receipt is recorded. For the default runner a timeout has killed and waited
+for its owned child; termination evidence is unknown for injected-runner
+timeouts and spawn errors.
+
+Diagnostics add no retries or Git calls. They cover this probe's own attempts;
+a passing gate with missing-data allowances does not prove Git executed
+successfully, and a receipt does not attribute an unrelated crash popup.
+The invocation preserves the absolute path selected by `which`; only the
+receipt resolves a symlink wrapper to its canonical executable path.
 
 ## Remediation
 
