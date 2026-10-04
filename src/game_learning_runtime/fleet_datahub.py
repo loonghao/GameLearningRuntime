@@ -8,13 +8,19 @@ import sqlite3
 import stat
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from time import time_ns
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from game_learning_runtime.fleet_measured import (
+    MeasuredAuthority,
+    VerifiedMeasuredShard,
+    verify_measured,
+    verify_measured_manifest,
+)
 from game_learning_runtime.fleet_payload import (
     DEFAULT_LIMITS,
     DecodedShard,
@@ -23,14 +29,19 @@ from game_learning_runtime.fleet_payload import (
     FleetLimits,
     SourceSpec,
     canonical,
+    closed,
     counter,
     decode_shard,
     digest,
+    identifier,
     parse_manifest,
     sha256,
 )
 from game_learning_runtime.offline_parsing import OfflineParseError, parse_json_object
 from game_learning_runtime.serialization import transition_to_record
+
+if TYPE_CHECKING:
+    from game_learning_runtime.fleet_learner import RealTrainingEnablement
 
 
 def utc(value: int | None) -> str | None:
@@ -132,6 +143,174 @@ class SyncReceipt:
     conflicts: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class MeasuredDestination:
+    """An owner named local destination, not a network address or authentication."""
+
+    destination_id: str
+    destination_sha256: str
+
+    def __post_init__(self) -> None:
+        from game_learning_runtime.fleet_payload import identifier
+
+        identifier(self.destination_id)
+        digest(self.destination_sha256)
+
+
+@dataclass(frozen=True, slots=True)
+class MeasuredEvaluationSnapshot:
+    evaluation_id: str
+    suite_sha256: str
+    snapshot_sha256: str
+    source_spec_sha256s: tuple[str, ...]
+    shard_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MeasuredEvaluationCase:
+    case_id: str
+    source_id: str
+    source_epoch: str
+    shard_id: str
+    payload_sha256: str
+    proof_sha256: str
+
+    def __post_init__(self) -> None:
+        for name in ("case_id", "source_id", "source_epoch"):
+            identifier(getattr(self, name))
+        for name in ("shard_id", "payload_sha256", "proof_sha256"):
+            digest(getattr(self, name))
+
+
+@dataclass(frozen=True, slots=True)
+class MeasuredEvaluationMetric:
+    name: str
+    aggregation: str
+    direction: str
+    require_count: int
+
+    def __post_init__(self) -> None:
+        identifier(self.name)
+        if (
+            not isinstance(self.aggregation, str)
+            or not isinstance(self.direction, str)
+            or self.aggregation not in {"sum", "mean", "min", "max"}
+            or self.direction not in {"maximize", "minimize"}
+        ):
+            raise FleetError("invalid_measured_metric")
+        counter(self.require_count, minimum=1, maximum=131072)
+
+
+@dataclass(frozen=True, slots=True)
+class MeasuredEvaluationSuite:
+    """Immutable evaluation definition and artifacts; never executed by the hub."""
+
+    suite_id: str
+    evaluation_domain_id: str
+    evidence_kind: str
+    evaluator_source_commit: str
+    evaluator_artifact: bytes = field(repr=False)
+    cases: tuple[MeasuredEvaluationCase, ...]
+    metrics: tuple[MeasuredEvaluationMetric, ...]
+
+    def __post_init__(self) -> None:
+        identifier(self.suite_id)
+        identifier(self.evaluation_domain_id)
+        digest(self.evaluator_source_commit, 40)
+        if not isinstance(self.evidence_kind, str) or self.evidence_kind not in {
+            "synthetic_contract_fixture",
+            "owner_authorized_local_measured",
+        }:
+            raise FleetError("invalid_measured_evidence_kind")
+        if (
+            not isinstance(self.evaluator_artifact, bytes)
+            or not 1 <= len(self.evaluator_artifact) <= 1048576
+        ):
+            raise FleetError("measured_evaluator_byte_limit")
+        if (
+            not isinstance(self.cases, tuple)
+            or not 1 <= len(self.cases) <= 1024
+            or any(type(item) is not MeasuredEvaluationCase for item in self.cases)
+            or len({item.case_id for item in self.cases}) != len(self.cases)
+            or len({item.shard_id for item in self.cases}) != len(self.cases)
+        ):
+            raise FleetError("invalid_measured_evaluation_cases")
+        if (
+            not isinstance(self.metrics, tuple)
+            or not 1 <= len(self.metrics) <= 32
+            or any(type(item) is not MeasuredEvaluationMetric for item in self.metrics)
+            or len({item.name for item in self.metrics}) != len(self.metrics)
+        ):
+            raise FleetError("invalid_measured_evaluation_metrics")
+
+    def to_record(self) -> dict[str, Any]:
+        return {
+            "schema": "glr.fleet.measured-evaluation-suite.v1",
+            "suite_id": self.suite_id,
+            "evaluation_domain_id": self.evaluation_domain_id,
+            "evidence_kind": self.evidence_kind,
+            "evaluator_source_commit": self.evaluator_source_commit,
+            "evaluator_artifact_sha256": sha256(self.evaluator_artifact),
+            "evaluator_artifact_bytes": len(self.evaluator_artifact),
+            "cases": [asdict(item) for item in self.cases],
+            "metrics": [asdict(item) for item in self.metrics],
+        }
+
+    @property
+    def sha256(self) -> str:
+        return sha256(canonical(self.to_record()))
+
+    @classmethod
+    def from_record(cls, value: object, artifact: bytes) -> MeasuredEvaluationSuite:
+        record = closed(
+            value,
+            {
+                "schema",
+                "suite_id",
+                "evaluation_domain_id",
+                "evidence_kind",
+                "evaluator_source_commit",
+                "evaluator_artifact_sha256",
+                "evaluator_artifact_bytes",
+                "cases",
+                "metrics",
+            },
+        )
+        if (
+            record["schema"] != "glr.fleet.measured-evaluation-suite.v1"
+            or digest(record["evaluator_artifact_sha256"]) != sha256(artifact)
+            or counter(record["evaluator_artifact_bytes"], minimum=1, maximum=1048576)
+            != len(artifact)
+        ):
+            raise FleetError("measured_evaluator_integrity")
+        if (
+            not isinstance(record["cases"], (list, tuple))
+            or not 1 <= len(record["cases"]) <= 1024
+            or not isinstance(record["metrics"], (list, tuple))
+            or not 1 <= len(record["metrics"]) <= 32
+        ):
+            raise FleetError("invalid_measured_evaluation_suite")
+        return cls(
+            record["suite_id"],
+            record["evaluation_domain_id"],
+            record["evidence_kind"],
+            record["evaluator_source_commit"],
+            artifact,
+            tuple(
+                MeasuredEvaluationCase(
+                    **closed(item, set(MeasuredEvaluationCase.__dataclass_fields__))
+                )
+                for item in record["cases"]
+            ),
+            tuple(
+                MeasuredEvaluationMetric(
+                    **closed(item, set(MeasuredEvaluationMetric.__dataclass_fields__))
+                )
+                for item in record["metrics"]
+            ),
+        )
+
+
 class FleetHub:
     """Owns only its directory, receipts and bounded payloads, never learner state."""
 
@@ -144,6 +323,8 @@ class FleetHub:
         self._clock = clock_ms
         self._closed = False
         self._owner_epoch = owner_epoch
+        self._measured_authority: MeasuredAuthority | None = None
+        self._measured_destination: MeasuredDestination | None = None
 
     @classmethod
     def create(
@@ -152,6 +333,8 @@ class FleetHub:
         *,
         limits: FleetLimits = DEFAULT_LIMITS,
         clock_ms: Callable[[], int] = lambda: time_ns() // 1_000_000,
+        measured_authority: MeasuredAuthority | None = None,
+        measured_destination: MeasuredDestination | None = None,
     ) -> FleetHub:
         root = Path(root).absolute()
         if type(limits) is not FleetLimits:
@@ -240,11 +423,17 @@ class FleetHub:
             connection.commit()
         finally:
             connection.close()
+        hub.configure_measured(measured_authority, destination=measured_destination)
         return hub
 
     @classmethod
     def open(
-        cls, root: Path, *, clock_ms: Callable[[], int] = lambda: time_ns() // 1_000_000
+        cls,
+        root: Path,
+        *,
+        clock_ms: Callable[[], int] = lambda: time_ns() // 1_000_000,
+        measured_authority: MeasuredAuthority | None = None,
+        measured_destination: MeasuredDestination | None = None,
     ) -> FleetHub:
         root = Path(root).absolute()
         _directory(root)
@@ -282,7 +471,155 @@ class FleetHub:
                 raise FleetError("unsupported_fleet_schema")
         finally:
             connection.close()
-        return cls(root, limits, clock_ms, owner["epoch"])
+        hub = cls(root, limits, clock_ms, owner["epoch"])
+        hub.configure_measured(measured_authority, destination=measured_destination)
+        return hub
+
+    @property
+    def measured_authority(self) -> MeasuredAuthority | None:
+        return self._measured_authority
+
+    @property
+    def measured_destination(self) -> MeasuredDestination | None:
+        return self._measured_destination
+
+    def configure_measured(
+        self,
+        authority: MeasuredAuthority | None,
+        *,
+        destination: MeasuredDestination | None = None,
+    ) -> None:
+        """Replace caller supplied RAM trust; restart deliberately forgets it.
+
+        This grants proof verification, never permission to invoke a learner.
+        Passing None immediately closes real admission. No keys are persisted.
+        """
+        if authority is not None and type(authority) is not MeasuredAuthority:
+            raise FleetError("invalid_measured_authority")
+        if destination is not None and type(destination) is not MeasuredDestination:
+            raise FleetError("invalid_measured_destination")
+        if authority is not None:
+            with self._connection(write=True) as connection:
+                # An optional extension leaves v1 database/open semantics intact.
+                for statement in (
+                    "CREATE TABLE IF NOT EXISTS measured_proofs(shard_id TEXT PRIMARY KEY,"
+                    "envelope BLOB NOT NULL,envelope_sha256 TEXT NOT NULL,"
+                    "authority_sha256 TEXT NOT NULL,expires_ms INTEGER NOT NULL)",
+                    "CREATE TABLE IF NOT EXISTS measured_reward_tails(episode_id TEXT PRIMARY "
+                    "KEY,tail_json TEXT NOT NULL,shard_id TEXT NOT NULL)",
+                    "CREATE TABLE IF NOT EXISTS measured_actions(run_id TEXT NOT NULL,"
+                    "target_id TEXT NOT NULL,action_id TEXT NOT NULL,shard_id TEXT NOT NULL,"
+                    "PRIMARY KEY(run_id,target_id,action_id))",
+                    "CREATE TABLE IF NOT EXISTS measured_holdout_inputs(domain_id TEXT NOT "
+                    "NULL,input_sha256 TEXT NOT NULL,shard_id TEXT NOT NULL,"
+                    "PRIMARY KEY(domain_id,input_sha256))",
+                    "CREATE TABLE IF NOT EXISTS measured_inputs(domain_id TEXT NOT NULL,"
+                    "input_sha256 TEXT NOT NULL,shard_id TEXT NOT NULL,"
+                    "PRIMARY KEY(domain_id,input_sha256,shard_id))",
+                    "CREATE TABLE IF NOT EXISTS measured_domains(source_spec_sha256 TEXT "
+                    "PRIMARY KEY,domain_id TEXT NOT NULL)",
+                    "CREATE TABLE IF NOT EXISTS measured_domain_semantics(domain_id TEXT "
+                    "PRIMARY KEY,semantic_sha256 TEXT NOT NULL)",
+                    "CREATE TABLE IF NOT EXISTS measured_semantic_domains(semantic_identity TEXT "
+                    "PRIMARY KEY,domain_id TEXT NOT NULL)",
+                    "CREATE TABLE IF NOT EXISTS measured_evaluations(evaluation_id TEXT PRIMARY "
+                    "KEY,suite_sha256 TEXT NOT NULL,snapshot_sha256 TEXT NOT NULL,"
+                    "snapshot_json TEXT NOT NULL,evaluator_artifact BLOB NOT NULL)",
+                    "CREATE TABLE IF NOT EXISTS measured_approvals(approval_id TEXT PRIMARY KEY,"
+                    "approval_sha256 TEXT UNIQUE NOT NULL,enablement_sha256 TEXT NOT NULL,"
+                    "used_transitions INTEGER NOT NULL,used_callback_calls INTEGER NOT NULL)",
+                    "CREATE TABLE IF NOT EXISTS measured_attempts(ticket_id TEXT PRIMARY KEY,"
+                    "approval_id TEXT NOT NULL,enablement_sha256 TEXT NOT NULL,"
+                    "shard_id TEXT NOT NULL,"
+                    "transitions INTEGER NOT NULL)",
+                ):
+                    connection.execute(statement)
+                for grant in authority.grants:
+                    source_sha = sha256(canonical(grant.source.to_record()))
+                    semantic_sha = sha256(canonical(grant.source.compatibility.to_record()))
+                    semantic_identity = self._domain_identity(grant.source)
+                    old = connection.execute(
+                        "SELECT domain_id FROM measured_domains WHERE source_spec_sha256=?",
+                        (source_sha,),
+                    ).fetchone()
+                    if old is not None and old["domain_id"] != grant.evaluation_domain_id:
+                        raise FleetError("evaluation_domain_conflict")
+                    reverse = connection.execute(
+                        "SELECT domain_id FROM measured_semantic_domains WHERE semantic_identity=?",
+                        (semantic_identity,),
+                    ).fetchone()
+                    if reverse is not None and reverse["domain_id"] != grant.evaluation_domain_id:
+                        raise FleetError("evaluation_domain_alias")
+                    semantic = connection.execute(
+                        "SELECT semantic_sha256 FROM measured_domain_semantics WHERE domain_id=?",
+                        (grant.evaluation_domain_id,),
+                    ).fetchone()
+                    if semantic is not None and semantic["semantic_sha256"] != semantic_sha:
+                        raise FleetError("evaluation_domain_semantics_conflict")
+                    if (
+                        old is None
+                        and connection.execute("SELECT COUNT(*) FROM measured_domains").fetchone()[
+                            0
+                        ]
+                        >= self.limits.max_sources
+                    ):
+                        raise FleetError("measured_grant_quota")
+                    connection.execute(
+                        "INSERT OR IGNORE INTO measured_domains VALUES(?,?)",
+                        (source_sha, grant.evaluation_domain_id),
+                    )
+                    connection.execute(
+                        "INSERT OR IGNORE INTO measured_domain_semantics VALUES(?,?)",
+                        (grant.evaluation_domain_id, semantic_sha),
+                    )
+                    connection.execute(
+                        "INSERT OR IGNORE INTO measured_semantic_domains VALUES(?,?)",
+                        (semantic_identity, grant.evaluation_domain_id),
+                    )
+        self._measured_authority = authority
+        self._measured_destination = destination
+
+    @staticmethod
+    def _has_measured(connection: sqlite3.Connection) -> bool:
+        return (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='measured_proofs'"
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def _domain_identity(source: SourceSpec) -> str:
+        return sha256(
+            canonical(
+                {
+                    "game_id": source.game_id,
+                    "environment_id": source.compatibility.environment_id,
+                    "observation": [asdict(item) for item in source.compatibility.observation],
+                    "action": [asdict(item) for item in source.compatibility.action],
+                    "masks": [asdict(item) for item in source.compatibility.masks],
+                    "reward_dtype": source.compatibility.reward_dtype,
+                    "reward_length": source.compatibility.reward_length,
+                }
+            )
+        )
+
+    def _retained_usage(self, connection: sqlite3.Connection) -> int:
+        used = int(
+            connection.execute("SELECT COALESCE(SUM(retained_bytes),0) FROM shards").fetchone()[0]
+        )
+        if self._has_measured(connection):
+            for table, column in (
+                ("measured_evaluations", "snapshot_json"),
+                ("measured_evaluations", "evaluator_artifact"),
+                ("measured_reward_tails", "tail_json"),
+            ):
+                used += int(
+                    connection.execute(
+                        f"SELECT COALESCE(SUM(LENGTH(CAST({column} AS BLOB))),0) FROM {table}"
+                    ).fetchone()[0]
+                )
+        return used
 
     @contextmanager
     def _connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
@@ -420,6 +757,31 @@ class FleetHub:
         return row
 
     def begin_upload(self, manifest: bytes) -> UploadReceipt:
+        return self._begin_upload(manifest)
+
+    def begin_measured_upload(self, manifest: bytes, envelope: bytes) -> UploadReceipt:
+        """Authenticate a complete bounded header before reserving any bytes."""
+        authority = self.measured_authority
+        if authority is None:
+            raise FleetError("measured_authority_missing")
+        if not isinstance(envelope, bytes) or len(envelope) > self.limits.max_shard_bytes:
+            raise FleetError("measured_proof_byte_limit")
+        header = verify_measured_manifest(
+            envelope, manifest, authority, self._now(), limits=self.limits
+        )
+        return self._begin_upload(
+            manifest,
+            measured=(
+                envelope,
+                header.envelope_sha256,
+                header.authority_sha256,
+                header.expires_at_utc_ms,
+            ),
+        )
+
+    def _begin_upload(
+        self, manifest: bytes, *, measured: tuple[bytes, str, str, int] | None = None
+    ) -> UploadReceipt:
         description = parse_manifest(manifest, self.limits)
         utc(description.produced_at_utc_ms)
         if description.produced_at_utc_ms > self._now():
@@ -432,6 +794,13 @@ class FleetHub:
             if old is not None:
                 if old["manifest_sha256"] != description.manifest_sha256:
                     raise FleetError("shard_identity_conflict")
+                if measured is not None:
+                    proof = connection.execute(
+                        "SELECT envelope FROM measured_proofs WHERE shard_id=?",
+                        (description.shard_id,),
+                    ).fetchone()
+                    if proof is None or bytes(proof["envelope"]) != measured[0]:
+                        raise FleetError("measured_proof_conflict")
                 if old["status"] == "uploading":
                     directory = self._artifact(description.shard_id)
                     directory.mkdir(exist_ok=True)
@@ -449,13 +818,9 @@ class FleetHub:
             ):
                 raise FleetError("shard_quota")
             reserved = len(manifest) + description.payload_bytes
-            if (
-                connection.execute("SELECT COALESCE(SUM(retained_bytes),0) FROM shards").fetchone()[
-                    0
-                ]
-                + reserved
-                > self.limits.max_retained_bytes
-            ):
+            if measured is not None:
+                reserved += len(measured[0])
+            if self._retained_usage(connection) + reserved > self.limits.max_retained_bytes:
                 raise FleetError("retained_byte_quota")
             registered = connection.execute(
                 "SELECT * FROM sources WHERE source_id=? AND source_epoch=?",
@@ -489,6 +854,11 @@ class FleetHub:
                 ),
             )
             if valid:
+                if measured is not None:
+                    connection.execute(
+                        "INSERT INTO measured_proofs VALUES(?,?,?,?,?)",
+                        (description.shard_id, *measured),
+                    )
                 connection.execute(
                     "UPDATE sources SET last_shard_seq=? WHERE source_id=? AND source_epoch=?",
                     (description.shard_seq, source.source_id, source.source_epoch),
@@ -559,6 +929,231 @@ class FleetHub:
         payload = b"".join(parts)
         return decode_shard(bytes(row["manifest"]), payload, limits=self.limits)
 
+    def _measurement(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        decoded: DecodedShard | None = None,
+    ) -> VerifiedMeasuredShard | None:
+        if not self._has_measured(connection):
+            return None
+        proof = connection.execute(
+            "SELECT * FROM measured_proofs WHERE shard_id=?", (row["shard_id"],)
+        ).fetchone()
+        if proof is None:
+            return None
+        authority = self.measured_authority
+        if authority is None:
+            raise FleetError("measured_authority_missing")
+        envelope = bytes(proof["envelope"])
+        if (
+            len(envelope) > self.limits.max_shard_bytes
+            or sha256(envelope) != proof["envelope_sha256"]
+        ):
+            raise FleetError("stored_measured_proof_integrity")
+        verified = verify_measured(
+            envelope, decoded or self._decoded(row), authority, self._now(), limits=self.limits
+        )
+        if (
+            verified.envelope_sha256 != proof["envelope_sha256"]
+            or verified.authority_sha256 != proof["authority_sha256"]
+            or verified.expires_at_utc_ms != proof["expires_ms"]
+        ):
+            raise FleetError("measured_authority_drift")
+        return verified
+
+    def _learner_decoded(self, row: sqlite3.Row) -> DecodedShard:
+        decoded = self._decoded(row)
+        with self._connection() as connection:
+            verified = self._measurement(connection, row, decoded)
+        if verified is None:
+            return decoded
+        # Only the queue namespace changes. Signed original actor metadata
+        # stays in the proof; all typed transitions and contexts stay intact.
+        return DecodedShard(
+            verified.decoded.manifest,
+            replace(verified.decoded.unroll, actor_id=verified.carrier_decoded.unroll.actor_id),
+        )
+
+    def _measured_proof_sha(self, connection: sqlite3.Connection, shard_id: str) -> str | None:
+        if not self._has_measured(connection):
+            return None
+        row = connection.execute(
+            "SELECT envelope_sha256 FROM measured_proofs WHERE shard_id=?", (shard_id,)
+        ).fetchone()
+        return None if row is None else str(row["envelope_sha256"])
+
+    def _real_training_reason(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        source: SourceSpec,
+        enablement: RealTrainingEnablement,
+        *,
+        ticket_id: str | None = None,
+    ) -> str:
+        """Recheck current RAM trust, fixed holdout and finite owner permission."""
+        if self._now() >= enablement.expires_at_utc_ms:
+            return "real_enablement_expired"
+        destination = self.measured_destination
+        if (
+            destination is None
+            or destination.destination_id != enablement.destination_id
+            or destination.destination_sha256 != enablement.destination_sha256
+        ):
+            return "real_destination_mismatch"
+        if sha256(canonical(source.to_record())) not in enablement.allowed_source_spec_sha256s:
+            return "real_source_not_allowed"
+        if not self._has_measured(connection):
+            return "real_proof_missing"
+        budget_reason = self._real_budget_reason(connection, row, enablement, ticket_id=ticket_id)
+        if budget_reason != "eligible":
+            return budget_reason
+        try:
+            measurement = self._measurement(connection, row)
+            if measurement is None:
+                return "real_proof_missing"
+            if measurement.authority_sha256 != enablement.authority_sha256:
+                return "measured_authority_drift"
+            evaluation = connection.execute(
+                "SELECT * FROM measured_evaluations WHERE evaluation_id=?",
+                (enablement.evaluation_id,),
+            ).fetchone()
+            if evaluation is None:
+                return "measured_evaluation_missing"
+            encoded = evaluation["snapshot_json"].encode()
+            if (
+                evaluation["suite_sha256"] != enablement.evaluation_suite_sha256
+                or evaluation["snapshot_sha256"] != enablement.evaluation_snapshot_sha256
+                or sha256(encoded) != enablement.evaluation_snapshot_sha256
+            ):
+                return "measured_evaluation_binding"
+            record = _json(encoded, self.limits.max_retained_bytes)
+            suite = MeasuredEvaluationSuite.from_record(
+                record.get("suite"), bytes(evaluation["evaluator_artifact"])
+            )
+            if (
+                suite.sha256 != enablement.evaluation_suite_sha256
+                or suite.evidence_kind != enablement.evidence_kind
+                or measurement.grant.evidence_kind != enablement.evidence_kind
+            ):
+                return "measured_evaluation_kind_or_suite"
+            shards = record.get("shards")
+            if (
+                not isinstance(shards, (list, tuple))
+                or not 1 <= len(shards) <= self.limits.max_shards
+            ):
+                return "measured_evaluation_empty"
+            domains = set()
+            for shard_id, proof_sha in shards:
+                heldout = connection.execute(
+                    "SELECT * FROM shards WHERE shard_id=?", (shard_id,)
+                ).fetchone()
+                if heldout is None or heldout["status"] != "ready":
+                    return "measured_evaluation_unavailable"
+                registered = self._source(connection, heldout["source_id"], heldout["source_epoch"])
+                heldout_source = SourceSpec.from_record(json.loads(registered["spec_json"]))
+                if (
+                    registered["revoked"]
+                    or not registered["eval_frozen"]
+                    or heldout_source.split != "evaluation_holdout"
+                    or heldout_source.simulated
+                ):
+                    return "measured_evaluation_revoked"
+                fixed = self._measurement(connection, heldout)
+                if (
+                    fixed is None
+                    or fixed.envelope_sha256 != proof_sha
+                    or fixed.authority_sha256 != enablement.authority_sha256
+                    or fixed.grant.evidence_kind != suite.evidence_kind
+                ):
+                    return "measured_evaluation_binding"
+                domains.add(fixed.grant.evaluation_domain_id)
+            if measurement.grant.evaluation_domain_id not in domains:
+                return "measured_evaluation_domain"
+            if self._protected_shard(connection, row["shard_id"]):
+                return "holdout_copy"
+        except FleetError as error:
+            return str(error)
+        return "eligible"
+
+    @staticmethod
+    def _real_budget_reason(
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        enablement: RealTrainingEnablement,
+        *,
+        ticket_id: str | None = None,
+    ) -> str:
+        approval = connection.execute(
+            "SELECT * FROM measured_approvals WHERE approval_id=? OR approval_sha256=?",
+            (enablement.approval_id, enablement.approval_sha256),
+        ).fetchone()
+        if approval is not None and (
+            approval["approval_id"] != enablement.approval_id
+            or approval["approval_sha256"] != enablement.approval_sha256
+            or approval["enablement_sha256"] != enablement.binding_sha256
+        ):
+            return "real_approval_binding"
+        if connection.execute(
+            "SELECT 1 FROM measured_attempts a JOIN consumptions c ON c.ticket_id=a.ticket_id "
+            "WHERE a.approval_id=? AND c.status IN ('claimed','calling','unknown_effect') "
+            "AND (? IS NULL OR a.ticket_id!=?) LIMIT 1",
+            (enablement.approval_id, ticket_id, ticket_id),
+        ).fetchone():
+            return "real_approval_effect_unknown"
+        if ticket_id is not None:
+            attempt = connection.execute(
+                "SELECT * FROM measured_attempts WHERE ticket_id=?", (ticket_id,)
+            ).fetchone()
+            if (
+                attempt is None
+                or attempt["approval_id"] != enablement.approval_id
+                or attempt["enablement_sha256"] != enablement.binding_sha256
+                or attempt["shard_id"] != row["shard_id"]
+                or attempt["transitions"] != row["transition_count"]
+            ):
+                return "real_attempt_binding"
+            return "eligible"
+        used_transitions = 0 if approval is None else approval["used_transitions"]
+        used_calls = 0 if approval is None else approval["used_callback_calls"]
+        if (
+            used_transitions + row["transition_count"] > enablement.max_transitions
+            or used_calls + 1 > enablement.max_callback_calls
+        ):
+            return "real_budget_exhausted"
+        return "eligible"
+
+    def _reserve_real_attempt(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        enablement: RealTrainingEnablement,
+        ticket_id: str,
+    ) -> None:
+        reason = self._real_budget_reason(connection, row, enablement)
+        if reason != "eligible":
+            raise FleetError(reason)
+        connection.execute(
+            "INSERT OR IGNORE INTO measured_approvals VALUES(?,?,?,0,0)",
+            (enablement.approval_id, enablement.approval_sha256, enablement.binding_sha256),
+        )
+        connection.execute(
+            "UPDATE measured_approvals SET used_transitions=used_transitions+?,"
+            "used_callback_calls=used_callback_calls+1 WHERE approval_id=?",
+            (row["transition_count"], enablement.approval_id),
+        )
+        connection.execute(
+            "INSERT INTO measured_attempts VALUES(?,?,?,?,?)",
+            (
+                ticket_id,
+                enablement.approval_id,
+                enablement.binding_sha256,
+                row["shard_id"],
+                row["transition_count"],
+            ),
+        )
+
     def finish_upload(self, shard_id: str) -> IngestReceipt:
         with self._connection(write=True) as connection:
             row = connection.execute(
@@ -585,7 +1180,9 @@ class FleetHub:
                 ).fetchone()
             ):
                 raise FleetError("upload_predecessor_incomplete")
-            decoded = self._decoded(row)
+            carrier = self._decoded(row)
+            measurement = self._measurement(connection, row, carrier)
+            decoded = carrier if measurement is None else measurement.decoded
             source = self._source(connection, row["source_id"], row["source_epoch"])
             if source["revoked"]:
                 raise FleetError("revoked")
@@ -599,13 +1196,18 @@ class FleetHub:
                     row["status"],
                     row["transition_count"],
                     True,
-                    "simulated_declared" if decoded.source.simulated else "unknown",
+                    "measured_authenticated"
+                    if measurement is not None
+                    else "simulated_declared"
+                    if decoded.source.simulated
+                    else "unknown",
                 )
             if row["next_chunk_index"] != len(decoded.manifest.chunks):
                 raise FleetError("upload_incomplete")
             status = (
                 "ready"
-                if decoded.source.simulated and decoded.source.split != "quarantine"
+                if (decoded.source.simulated or measurement is not None)
+                and decoded.source.split != "quarantine"
                 else "quarantine"
             )
             now = self._now()
@@ -619,8 +1221,17 @@ class FleetHub:
             if source["data_received_ms"] is not None and now < source["data_received_ms"]:
                 raise FleetError("clock_mismatch")
             status = self._reserve_steps(connection, decoded, status)
+            if status == "ready" and self._has_measured(connection):
+                domain = connection.execute(
+                    "SELECT domain_id FROM measured_semantic_domains WHERE semantic_identity=?",
+                    (self._domain_identity(decoded.source),),
+                ).fetchone()
+                if domain is not None:
+                    status = self._reserve_domain_holdout(connection, decoded, domain["domain_id"])
             if status == "ready":
                 status = self._advance_episode(connection, decoded)
+            if status == "ready" and measurement is not None:
+                self._advance_measured_reward(connection, measurement)
             connection.execute(
                 "UPDATE shards SET status=?,received_ms=? WHERE shard_id=?", (status, now, shard_id)
             )
@@ -639,12 +1250,46 @@ class FleetHub:
             status,
             len(decoded.unroll.transitions),
             duplicate or status == "duplicate",
-            "simulated_declared" if decoded.source.simulated else "unknown",
+            "measured_authenticated"
+            if measurement is not None
+            else "simulated_declared"
+            if decoded.source.simulated
+            else "unknown",
         )
 
     def ingest(self, manifest: bytes, payload: bytes) -> IngestReceipt:
         description = parse_manifest(manifest, self.limits)
         upload = self.begin_upload(manifest)
+        if upload.status == "rejected":
+            raise FleetError("source_not_admitted")
+        if upload.status == "uploading":
+            offset = 0
+            for index, (_, length) in enumerate(description.chunks):
+                part = payload[offset : offset + length]
+                if index >= upload.next_chunk_index:
+                    self.put_chunk(upload.shard_id, index, part)
+                offset += length
+            if offset != len(payload):
+                raise FleetError("payload_integrity")
+        return self.finish_upload(upload.shard_id)
+
+    def ingest_measured(self, manifest: bytes, payload: bytes, envelope: bytes) -> IngestReceipt:
+        """Finite local receive; proof readiness is separate from training permission."""
+        authority = self.measured_authority
+        if authority is None:
+            raise FleetError("measured_authority_missing")
+        if not isinstance(envelope, bytes) or len(envelope) > self.limits.max_shard_bytes:
+            raise FleetError("measured_proof_byte_limit")
+        # Full verification precedes ledger and file mutations in the finite convenience path.
+        verify_measured(
+            envelope,
+            decode_shard(manifest, payload, limits=self.limits),
+            authority,
+            self._now(),
+            limits=self.limits,
+        )
+        description = parse_manifest(manifest, self.limits)
+        upload = self.begin_measured_upload(manifest, envelope)
         if upload.status == "rejected":
             raise FleetError("source_not_admitted")
         if upload.status == "uploading":
@@ -862,6 +1507,240 @@ class FleetHub:
         )
         return "ready"
 
+    def _reserve_domain_holdout(
+        self, connection: sqlite3.Connection, decoded: DecodedShard, domain: str
+    ) -> str:
+        """Protect exact numeric copies across source/build/policy aliases.
+
+        The owner registered semantic domain survives build/source relabels;
+        independent game domains may contain the same numbers. Near copies are
+        not claimed as detected.
+        """
+        inputs = [
+            sha256(canonical(self._input_record(item))) for item in decoded.unroll.transitions
+        ]
+        if decoded.source.split == "evaluation_holdout":
+            matches = set()
+            for input_sha in inputs:
+                for row in connection.execute(
+                    "SELECT DISTINCT s.shard_id,s.status FROM measured_inputs t "
+                    "JOIN shards s ON s.shard_id=t.shard_id JOIN sources p ON "
+                    "p.source_id=s.source_id AND p.source_epoch=s.source_epoch "
+                    "WHERE t.domain_id=? AND t.input_sha256=? "
+                    "AND json_extract(p.spec_json,'$.split')='train'",
+                    (domain, input_sha),
+                ):
+                    if row["status"] in {"claimed", "calling", "consumed", "unknown_effect"}:
+                        return "quarantine"
+                    matches.add(row["shard_id"])
+            for shard_id in matches:
+                connection.execute(
+                    "UPDATE shards SET status='quarantine' WHERE shard_id=? AND status='ready'",
+                    (shard_id,),
+                )
+            for input_sha in inputs:
+                connection.execute(
+                    "INSERT OR IGNORE INTO measured_holdout_inputs VALUES(?,?,?)",
+                    (domain, input_sha, decoded.manifest.shard_id),
+                )
+        elif any(
+            connection.execute(
+                "SELECT 1 FROM measured_holdout_inputs WHERE domain_id=? AND input_sha256=?",
+                (domain, item),
+            ).fetchone()
+            is not None
+            for item in inputs
+        ):
+            return "quarantine"
+        for input_sha in inputs:
+            connection.execute(
+                "INSERT OR IGNORE INTO measured_inputs VALUES(?,?,?)",
+                (domain, input_sha, decoded.manifest.shard_id),
+            )
+        return "ready"
+
+    def _advance_measured_reward(
+        self, connection: sqlite3.Connection, measurement: VerifiedMeasuredShard
+    ) -> None:
+        """Check the signed budget boundary against the durable prior boundary."""
+        first, last = measurement.steps[0], measurement.steps[-1]
+        source = measurement.decoded.source
+        episode_id = str(first.before.episode_id)
+        previous = connection.execute(
+            "SELECT tail_json FROM measured_reward_tails WHERE episode_id=?", (episode_id,)
+        ).fetchone()
+        identity = {
+            "source_spec_sha256": sha256(canonical(source.to_record())),
+            "life_id": first.life_id,
+            "training_config_sha256": measurement.grant.training_config_sha256,
+            "authority_sha256": measurement.authority_sha256,
+        }
+        if previous is None:
+            if first.before.step_id != 0 or first.budget_before.action_count != 0:
+                raise FleetError("measured_reward_tail_missing")
+        else:
+            tail = _json(previous["tail_json"].encode(), self.limits.max_shard_bytes)
+            if (
+                any(tail.get(name) != value for name, value in identity.items())
+                or tail.get("budget_after") != asdict(first.budget_before)
+                or tail.get("after") != first.before.to_mapping()
+                or tail["budget_after"]["closed"]
+            ):
+                raise FleetError("measured_reward_tail_conflict")
+        for step in measurement.steps:
+            if connection.execute(
+                "SELECT 1 FROM measured_actions WHERE run_id=? AND target_id=? AND action_id=?",
+                (source.run_id, step.before.target_id, step.receipt.action_id),
+            ).fetchone():
+                raise FleetError("measured_action_reused")
+            connection.execute(
+                "INSERT INTO measured_actions VALUES(?,?,?,?)",
+                (
+                    source.run_id,
+                    step.before.target_id,
+                    step.receipt.action_id,
+                    measurement.decoded.manifest.shard_id,
+                ),
+            )
+        record = {
+            **identity,
+            "life_id": last.life_id,
+            "after": last.after.to_mapping(),
+            "budget_after": asdict(last.budget_after),
+        }
+        encoded = canonical(record)
+        old_bytes = 0 if previous is None else len(previous["tail_json"].encode())
+        if (
+            self._retained_usage(connection) - old_bytes + len(encoded)
+            > self.limits.max_retained_bytes
+        ):
+            raise FleetError("retained_byte_quota")
+        connection.execute(
+            "INSERT INTO measured_reward_tails VALUES(?,?,?) ON CONFLICT(episode_id) "
+            "DO UPDATE SET tail_json=excluded.tail_json,shard_id=excluded.shard_id",
+            (episode_id, encoded.decode(), measurement.decoded.manifest.shard_id),
+        )
+
+    def freeze_measured_evaluation(
+        self,
+        evaluation_id: str,
+        sources: tuple[tuple[str, str], ...],
+        *,
+        suite: MeasuredEvaluationSuite,
+    ) -> MeasuredEvaluationSnapshot:
+        """Freeze actual admitted measured holdout bytes, never an empty approval."""
+        identifier(evaluation_id)
+        if type(suite) is not MeasuredEvaluationSuite:
+            raise FleetError("invalid_measured_evaluation_suite")
+        suite_sha256 = suite.sha256
+        if (
+            not isinstance(sources, tuple)
+            or not 1 <= len(sources) <= self.limits.max_sources
+            or len(set(sources)) != len(sources)
+        ):
+            raise FleetError("measured_evaluation_sources")
+        shards: list[tuple[str, str]] = []
+        actual_cases = {}
+        spec_shas = []
+        with self._connection(write=True) as connection:
+            if not self._has_measured(connection):
+                raise FleetError("measured_authority_missing")
+            for source_id, epoch in sorted(sources):
+                source_row = self._source(connection, source_id, epoch)
+                source = SourceSpec.from_record(json.loads(source_row["spec_json"]))
+                if (
+                    source.simulated
+                    or source.split != "evaluation_holdout"
+                    or source_row["revoked"]
+                ):
+                    raise FleetError("evaluation_not_eligible")
+                rows = connection.execute(
+                    "SELECT * FROM shards WHERE source_id=? AND source_epoch=? ORDER BY shard_seq",
+                    (source_id, epoch),
+                ).fetchall()
+                if not rows or any(row["status"] != "ready" for row in rows):
+                    raise FleetError("evaluation_incomplete_or_conflicted")
+                for row in rows:
+                    measurement = self._measurement(connection, row)
+                    if measurement is None:
+                        raise FleetError("evaluation_not_measured")
+                    if (
+                        measurement.grant.evaluation_domain_id != suite.evaluation_domain_id
+                        or measurement.grant.evidence_kind != suite.evidence_kind
+                    ):
+                        raise FleetError("measured_evaluation_scope")
+                    shards.append((row["shard_id"], measurement.envelope_sha256))
+                    actual_cases[row["shard_id"]] = (
+                        source_id,
+                        epoch,
+                        row["payload_sha256"],
+                        measurement.envelope_sha256,
+                    )
+                spec_shas.append(sha256(canonical(source.to_record())))
+            if {case.shard_id for case in suite.cases} != set(actual_cases):
+                raise FleetError("measured_evaluation_case_coverage")
+            for case in suite.cases:
+                if actual_cases[case.shard_id] != (
+                    case.source_id,
+                    case.source_epoch,
+                    case.payload_sha256,
+                    case.proof_sha256,
+                ):
+                    raise FleetError("measured_evaluation_case_binding")
+            record = {
+                "schema": "glr.fleet.measured-evaluation.v1",
+                "evaluation_id": evaluation_id,
+                "suite_sha256": suite_sha256,
+                "source_spec_sha256s": sorted(spec_shas),
+                "shards": sorted(shards),
+                "suite": suite.to_record(),
+            }
+            encoded = canonical(record)
+            snapshot_sha = sha256(encoded)
+            old = connection.execute(
+                "SELECT * FROM measured_evaluations WHERE evaluation_id=?", (evaluation_id,)
+            ).fetchone()
+            if old is not None:
+                if (
+                    old["snapshot_sha256"] != snapshot_sha
+                    or old["snapshot_json"] != encoded.decode()
+                    or bytes(old["evaluator_artifact"]) != suite.evaluator_artifact
+                ):
+                    raise FleetError("measured_evaluation_conflict")
+            else:
+                if (
+                    connection.execute("SELECT COUNT(*) FROM measured_evaluations").fetchone()[0]
+                    >= self.limits.max_sources
+                ):
+                    raise FleetError("measured_evaluation_quota")
+                if (
+                    self._retained_usage(connection) + len(encoded) + len(suite.evaluator_artifact)
+                    > self.limits.max_retained_bytes
+                ):
+                    raise FleetError("retained_byte_quota")
+                connection.execute(
+                    "INSERT INTO measured_evaluations VALUES(?,?,?,?,?)",
+                    (
+                        evaluation_id,
+                        suite_sha256,
+                        snapshot_sha,
+                        encoded.decode(),
+                        suite.evaluator_artifact,
+                    ),
+                )
+            for source_id, epoch in sources:
+                connection.execute(
+                    "UPDATE sources SET eval_frozen=1 WHERE source_id=? AND source_epoch=?",
+                    (source_id, epoch),
+                )
+        return MeasuredEvaluationSnapshot(
+            evaluation_id,
+            suite_sha256,
+            snapshot_sha,
+            tuple(sorted(spec_shas)),
+            tuple(item[0] for item in sorted(shards)),
+        )
+
     def freeze_evaluation(self, source_id: str, source_epoch: str) -> None:
         with self._connection(write=True) as connection:
             source_row = self._source(connection, source_id, source_epoch)
@@ -900,11 +1779,24 @@ class FleetHub:
 
     @staticmethod
     def _protected_shard(connection: sqlite3.Connection, shard_id: str) -> bool:
-        return (
+        protected = (
             connection.execute(
                 "SELECT 1 FROM transition_reservations t JOIN holdout_inputs h ON t.cohort_sha2"
                 "56=h.cohort_sha256 AND t.input_sha256=h.input_sha256 WHERE t.shard_id=? AND t."
                 "split='train' LIMIT 1",
+                (shard_id,),
+            ).fetchone()
+            is not None
+        )
+        if protected:
+            return True
+        return (
+            FleetHub._has_measured(connection)
+            and connection.execute(
+                "SELECT 1 FROM measured_inputs t JOIN measured_holdout_inputs h ON "
+                "t.domain_id=h.domain_id AND t.input_sha256=h.input_sha256 "
+                "JOIN transition_reservations r ON r.shard_id=t.shard_id "
+                "WHERE t.shard_id=? AND r.split='train' LIMIT 1",
                 (shard_id,),
             ).fetchone()
             is not None
@@ -950,10 +1842,32 @@ class FleetHub:
                 raise FleetError("unowned_artifact_in_purge")
             directory.rmdir()
         with self._connection(write=True) as connection:
+            if self._has_measured(connection):
+                connection.execute("DELETE FROM measured_proofs WHERE shard_id=?", (shard_id,))
             connection.execute(
                 "UPDATE shards SET retained_bytes=0 WHERE shard_id=? AND status='purged'",
                 (shard_id,),
             )
+
+    @staticmethod
+    def _snapshot_reasons(encoded: str) -> list[str]:
+        # Snapshot v1 is consumed by a closed native enum. Durable SDK
+        # admission details stay in the ledger; additive REAL refusals project
+        # to the existing quarantine value without expanding that wire format.
+        allowed = {
+            "eligible",
+            "revoked",
+            "holdout",
+            "quarantine",
+            "compatibility_mismatch",
+            "simulated_not_allowed",
+            "policy_mismatch",
+            "off_policy_not_allowed",
+            "already_claimed",
+            "no_ready_data",
+        }
+        values = json.loads(encoded)
+        return [value if value in allowed else "quarantine" for value in values]
 
     def snapshot(self) -> dict[str, Any]:
         machines = []
@@ -1022,7 +1936,7 @@ class FleetHub:
                         "last_plan_eligible": None
                         if row["last_plan_eligible"] is None
                         else bool(row["last_plan_eligible"]),
-                        "last_plan_reason_codes": json.loads(row["last_plan_reasons"]),
+                        "last_plan_reason_codes": self._snapshot_reasons(row["last_plan_reasons"]),
                     }
                 )
             for row in connection.execute(

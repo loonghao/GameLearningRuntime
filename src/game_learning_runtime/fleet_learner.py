@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import uuid4
@@ -99,6 +100,58 @@ class TrainingPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class RealTrainingEnablement:
+    """Owner supplied finite local permission; not a claim of production approval."""
+
+    destination_id: str
+    destination_sha256: str
+    authority_sha256: str
+    allowed_source_spec_sha256s: tuple[str, ...]
+    evaluation_id: str
+    evaluation_suite_sha256: str
+    evaluation_snapshot_sha256: str
+    approval_id: str
+    approval_sha256: str
+    expires_at_utc_ms: int
+    evidence_kind: str
+    max_transitions: int
+    max_callback_calls: int
+
+    def __post_init__(self) -> None:
+        for name in ("destination_id", "evaluation_id", "approval_id"):
+            identifier(getattr(self, name))
+        for name in (
+            "destination_sha256",
+            "authority_sha256",
+            "evaluation_suite_sha256",
+            "evaluation_snapshot_sha256",
+            "approval_sha256",
+        ):
+            digest(getattr(self, name))
+        entries = self.allowed_source_spec_sha256s
+        if (
+            not isinstance(entries, tuple)
+            or not 1 <= len(entries) <= 64
+            or len(set(entries)) != len(entries)
+        ):
+            raise FleetError("invalid_real_source_allowlist")
+        for entry in entries:
+            digest(entry)
+        if not isinstance(self.evidence_kind, str) or self.evidence_kind not in {
+            "synthetic_contract_fixture",
+            "owner_authorized_local_measured",
+        }:
+            raise FleetError("invalid_measured_evidence_kind")
+        counter(self.expires_at_utc_ms, minimum=1, maximum=253402300799999)
+        counter(self.max_transitions, minimum=1, maximum=131072)
+        counter(self.max_callback_calls, minimum=1, maximum=1024)
+
+    @property
+    def binding_sha256(self) -> str:
+        return sha256(canonical({name: getattr(self, name) for name in self.__dataclass_fields__}))
+
+
+@dataclass(frozen=True, slots=True)
 class ConsumptionTicket:
     ticket_id: str
     plan_id: str
@@ -106,6 +159,8 @@ class ConsumptionTicket:
     learner_id: str
     source_id: str
     source_epoch: str
+    measured_proof_sha256: str | None = None
+    real_enablement_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +199,7 @@ class FleetConsumer:
         *,
         learner_id: str,
         selection: LearnerSelection,
+        real_enablement: RealTrainingEnablement | None = None,
     ) -> None:
         identifier(learner_id)
         if type(selection) is not LearnerSelection:
@@ -157,6 +213,7 @@ class FleetConsumer:
         self._queue = queue
         self._learner_id = learner_id
         self._selection = selection
+        self.configure_real(real_enablement)
 
     @property
     def hub(self) -> FleetHub:
@@ -174,13 +231,30 @@ class FleetConsumer:
     def selection(self) -> LearnerSelection:
         return self._selection
 
+    @property
+    def real_enablement(self) -> RealTrainingEnablement | None:
+        return self._real_enablement
+
+    def configure_real(self, enablement: RealTrainingEnablement | None) -> None:
+        if enablement is not None and type(enablement) is not RealTrainingEnablement:
+            raise FleetError("invalid_real_enablement")
+        self._real_enablement = enablement
+
+    @property
+    def _binding_sha256(self) -> str:
+        if self.real_enablement is None:
+            return self.selection.binding_sha256
+        return sha256(
+            canonical([self.selection.binding_sha256, self.real_enablement.binding_sha256])
+        )
+
     def _reason(self, source: SourceSpec, revoked: bool) -> str:
         selection = self.selection
         if revoked:
             return "revoked"
         if source.split == "evaluation_holdout":
             return "holdout"
-        if source.split == "quarantine" or not source.simulated:
+        if source.split == "quarantine" or (not source.simulated and self.real_enablement is None):
             return "quarantine"
         if (
             source.compatibility != selection.compatibility
@@ -202,6 +276,24 @@ class FleetConsumer:
         ):
             return "off_policy_not_allowed"
         return "eligible"
+
+    def _real_reason(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        source: SourceSpec,
+        *,
+        ticket_id: str | None = None,
+    ) -> str:
+        # Kept beside the existing selection guard: REAL never passes by changing SIM flags.
+        if source.simulated:
+            return "eligible"
+        enablement = self.real_enablement
+        if enablement is None:
+            return "quarantine"
+        return self.hub._real_training_reason(
+            connection, row, source, enablement, ticket_id=ticket_id
+        )
 
     def plan(self, *, max_shards: int = 1) -> TrainingPlan:
         if counter(max_shards, minimum=1) != 1:
@@ -231,7 +323,7 @@ class FleetConsumer:
                     else:
                         shards = connection.execute(
                             """
-                            SELECT s.shard_id FROM shards s WHERE
+                            SELECT s.* FROM shards s WHERE
                             s.source_id=? AND s.source_epoch=? AND
                             s.status='ready'
                             AND NOT EXISTS(SELECT 1 FROM shards p
@@ -244,7 +336,17 @@ class FleetConsumer:
 """,
                             (source.source_id, source.source_epoch),
                         ).fetchall()
-                        if not shards:
+                        admissible = []
+                        for shard in shards:
+                            real_reason = self._real_reason(connection, shard, source)
+                            if real_reason == "eligible":
+                                admissible.append(shard)
+                            else:
+                                reason = real_reason
+                        shards = admissible
+                        if shards:
+                            reason = "eligible"
+                        if not shards and reason == "eligible":
                             reason = "no_ready_data"
                 connection.execute(
                     "UPDATE sources SET last_plan_eligible=?,last_plan_reasons=? WHERE source_i"
@@ -260,7 +362,7 @@ class FleetConsumer:
                     if len(selected) < max_shards:
                         selected.append(shard["shard_id"])
             if selected:
-                encoded_selection = self.selection.binding_sha256
+                encoded_selection = self._binding_sha256
                 encoded_shards = json.dumps(selected)
                 existing = connection.execute(
                     "SELECT plan_id FROM plans WHERE selection_sha256=? AND shards_json=? LIMIT 1",
@@ -289,7 +391,7 @@ class FleetConsumer:
             raise FleetError("no_ready_data")
         ticket_id = uuid4().hex
         receipt_id = f"receipt-{uuid4().hex}"
-        selection_sha = self.selection.binding_sha256
+        selection_sha = self._binding_sha256
         learner_id = self.learner_id
         with self.hub._connection(write=True) as connection:
             saved = connection.execute(
@@ -297,7 +399,7 @@ class FleetConsumer:
             ).fetchone()
             if (
                 saved is None
-                or saved["selection_sha256"] != self.selection.binding_sha256
+                or saved["selection_sha256"] != self._binding_sha256
                 or tuple(json.loads(saved["shards_json"])) != plan.shard_ids
             ):
                 raise FleetError("plan_binding")
@@ -315,6 +417,8 @@ class FleetConsumer:
             source_row = self.hub._source(connection, row["source_id"], row["source_epoch"])
             source = SourceSpec.from_record(json.loads(source_row["spec_json"]))
             reason = self._reason(source, bool(source_row["revoked"]))
+            if reason == "eligible":
+                reason = self._real_reason(connection, row, source)
             if self.hub._holdout_blocked(connection, source) or self.hub._protected_shard(
                 connection, row["shard_id"]
             ):
@@ -328,7 +432,13 @@ class FleetConsumer:
                 self.learner_id,
                 row["source_id"],
                 row["source_epoch"],
+                self.hub._measured_proof_sha(connection, row["shard_id"]),
+                None if self.real_enablement is None else self.real_enablement.binding_sha256,
             )
+            if not source.simulated:
+                if self.real_enablement is None:
+                    raise FleetError("quarantine")
+                self.hub._reserve_real_attempt(connection, row, self.real_enablement, ticket_id)
             connection.execute(
                 "UPDATE shards SET status='claimed' WHERE shard_id=?", (ticket.shard_id,)
             )
@@ -350,7 +460,7 @@ class FleetConsumer:
         declared: int | None = None
         status = "rejected"
         try:
-            decoded = self.hub._decoded(row)
+            decoded = self.hub._learner_decoded(row)
             if self.queue.metrics().depth or self.queue.metrics().in_flight_unrolls:
                 raise FleetError("queue_not_exclusive")
             self.queue.put_nowait(decoded.unroll)
@@ -360,10 +470,11 @@ class FleetConsumer:
             with self.hub._connection(write=True) as connection:
                 latest = self.hub._source(connection, ticket.source_id, ticket.source_epoch)
                 if (
-                    self.selection.binding_sha256 != selection_sha
+                    self._binding_sha256 != selection_sha
                     or self.learner_id != learner_id
                     or latest["spec_json"] != source_row["spec_json"]
                     or self._reason(source, bool(latest["revoked"])) != "eligible"
+                    or self._real_reason(connection, row, source, ticket_id=ticket_id) != "eligible"
                     or self.hub._holdout_blocked(connection, source)
                     or self.hub._protected_shard(connection, ticket.shard_id)
                 ):
@@ -393,10 +504,12 @@ class FleetConsumer:
                 candidate_status = "unknown_effect"
                 if (
                     declared is not None
-                    and self.selection.binding_sha256 == selection_sha
+                    and self._binding_sha256 == selection_sha
                     and self.learner_id == learner_id
                     and latest["spec_json"] == source_row["spec_json"]
                     and self._reason(source, bool(latest["revoked"])) == "eligible"
+                    and self._real_reason(connection, row, source, ticket_id=ticket_id)
+                    == "eligible"
                     and current["status"] == "calling"
                     and not self.hub._holdout_blocked(connection, source)
                     and not self.hub._protected_shard(connection, ticket.shard_id)

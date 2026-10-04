@@ -45,6 +45,13 @@ purpose = "Collect resumable SIMULATED local shards and exercise actual SDK lear
 entrypoints = ["manual"]
 
 [[entries]]
+id = "demo.measured-fleet-training"
+path = "tools/demo/measured_fleet_demo.py"
+domain = "demo"
+purpose = "Exercise finite synthetic nonSIM measured proofs, fixed holdout and TEST-ONLY learner enablement."
+entrypoints = ["manual"]
+
+[[entries]]
 id = "docs.render-readme-demo"
 path = "tools/docs/render_readme_demo.py"
 domain = "docs"

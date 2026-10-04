@@ -54,6 +54,7 @@
 - [ADR-0050: Correlate action rewards and learner updates](0050-correlate-action-rewards-and-learner-updates.md)
 - [ADR-0051: Record safe decision evidence and read-only timelines](0051-record-safe-decision-evidence-and-readonly-timelines.md)
 - [ADR-0052: Add a local fleet training data hub](0052-local-fleet-training-data-hub.md)
+- [ADR-0053: Admit measured fleet data with local owner proof](0053-admit-measured-fleet-data-with-local-owner-proof.md)
 
 ADR-0047 is **retrospective**: it records a decision that was already implemented
 and shipped (PR #174, issues #155 and #156) rather than proposing new behavior.
