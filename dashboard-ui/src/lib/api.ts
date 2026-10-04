@@ -39,6 +39,78 @@ export interface BridgeState {
   states: Event[];
   truncated: boolean;
 }
+export interface FleetMachine {
+  source_id: string;
+  source_epoch: string;
+  machine_id: string;
+  simulated: boolean;
+  revoked: boolean;
+  declared_status: "unknown" | "running" | "stopped";
+  run_id: string;
+  game_id: string;
+  environment_id: string;
+  source_revision: string;
+  runtime_source_commit: string;
+  adapter_source_sha256: string;
+  behavior_policy_sha256: string;
+  checkpoint_sha256: string | null;
+  heartbeat_declared_at_utc: string | null;
+  heartbeat_received_at_utc: string | null;
+  data_observed_at_utc: string | null;
+  data_received_at_utc: string | null;
+}
+export type FleetPlanReason =
+  | "eligible"
+  | "holdout"
+  | "quarantine"
+  | "revoked"
+  | "compatibility_mismatch"
+  | "policy_mismatch"
+  | "off_policy_not_allowed"
+  | "simulated_not_allowed"
+  | "already_claimed"
+  | "no_ready_data";
+export interface FleetDataset {
+  source_id: string;
+  source_epoch: string;
+  compatibility_group_sha256: string;
+  assignment_id: string;
+  split: "train" | "evaluation_holdout" | "quarantine";
+  quality_status: "empty" | "ready" | "quarantine" | "revoked";
+  accepted_transition_count: number;
+  duplicate_transition_count: number;
+  rejected_shard_count: number;
+  ready_shard_count: number;
+  retained_bytes: number;
+  last_plan_eligible: boolean | null;
+  last_plan_reason_codes: FleetPlanReason[];
+}
+export interface FleetConsumerReceipt {
+  receipt_id: string;
+  plan_id: string;
+  learner_id: string;
+  source_ids: string[];
+  status: "consumed" | "unknown_effect" | "rejected";
+  transition_count: number;
+  callback_completed: boolean;
+  learner_declared_updates: number | null;
+  finished_at_utc: string | null;
+}
+export interface FleetSnapshot {
+  schema_version: "glr.fleet.snapshot.v1";
+  generated_at_utc: string;
+  scope: "local_trusted_sources";
+  heartbeat_ttl_seconds: 120;
+  machines: FleetMachine[];
+  datasets: FleetDataset[];
+  consumer_receipts: FleetConsumerReceipt[];
+}
+export type FleetView = {
+  schema_version: "glr.fleet.view.v1";
+} & (
+  | { status: "available"; snapshot: FleetSnapshot }
+  | { status: "missing" | "invalid" | "unavailable"; snapshot: null }
+);
 export interface LogPage {
   text: string;
   offset: number;

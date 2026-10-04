@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { Activity, Download, Pause, Play, Radio, Terminal } from "lucide-react";
+import {
+  Activity,
+  Download,
+  Monitor,
+  Pause,
+  Play,
+  Radio,
+  Terminal,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +17,7 @@ import { TrainingControls } from "@/components/TrainingControls";
 import { MediaWorkspace } from "@/components/MediaWorkspace";
 import { AgentWorkbench } from "@/components/AgentWorkbench";
 import { ProcessTrace } from "@/components/ProcessTrace";
+import { FleetWorkspace } from "@/components/FleetWorkspace";
 import { StructuredValue } from "@/components/StructuredOutput";
 import {
   BridgePanel,
@@ -213,12 +222,18 @@ export default function App() {
             <TabsTrigger value="observe">
               <Activity size={15} /> Agent activity
             </TabsTrigger>
+            <TabsTrigger value="fleet">
+              <Monitor size={15} /> Fleet
+            </TabsTrigger>
             {health && !health.read_only && (
               <TabsTrigger value="training">
                 <Terminal size={15} /> Training & operations
               </TabsTrigger>
             )}
           </TabsList>
+          <TabsContent value="fleet">
+            <FleetWorkspace />
+          </TabsContent>
           <TabsContent
             value="training"
             forceMount
