@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.26.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.25.0...v0.26.0) (2026-10-04)
+
+
+### Features
+
+* admit signed measured fleet data with owner permission ([#205](https://github.com/loonghao/GameLearningRuntime/issues/205)) ([dcfb49b](https://github.com/loonghao/GameLearningRuntime/commit/dcfb49bcbf9a30b3c2518fdeaa8152e949ae60aa))
+
 ## [0.25.0](https://github.com/loonghao/GameLearningRuntime/compare/v0.24.0...v0.25.0) (2026-10-04)
 
 
