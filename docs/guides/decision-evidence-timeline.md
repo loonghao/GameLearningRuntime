@@ -54,23 +54,34 @@ with TemporaryDirectory() as directory:
         environment_config_digest=hashlib.sha256(b"synthetic-config-v1").hexdigest(),
     )
     receipt = ActionReceipt(
-        "synthetic-action", UUID(int=1), 1, ActionOutcome.ACCEPTED, 100, 110,
+        "synthetic-action",
+        UUID(int=1),
+        1,
+        ActionOutcome.ACCEPTED,
+        100,
+        110,
         authoritative_observation_sequence=11,
         issued_against_observation_sequence=10,
         target_id="synthetic-target",
     )
     transition = Transition(
-        UUID(int=1), 0,
+        UUID(int=1),
+        0,
         {"state": np.array([0], np.float32)},
         {"choice": np.array([1], np.int64)},
         np.array([0.0], np.float32),
         {"state": np.array([1], np.float32)},
-        np.array([False]), np.array([False]),
-        action_receipt=receipt, timestamp_ns=110,
+        np.array([False]),
+        np.array([False]),
+        action_receipt=receipt,
+        timestamp_ns=110,
     )
     evidence = capture_transition(
-        transition, run=run, decision_id="synthetic-decision",
-        policy_version=1, mode="train",
+        transition,
+        run=run,
+        decision_id="synthetic-decision",
+        policy_version=1,
+        mode="train",
     )
     Telemetry(store, run.run_id, console=False).decision_evidence(evidence)
     page = read_timeline(store.path, run.run_id, limit=100)
