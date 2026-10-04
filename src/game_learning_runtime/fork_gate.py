@@ -14,12 +14,23 @@ is still cheap to fix.
 
 from __future__ import annotations
 
+import logging
+import os
 import re
-from collections.abc import Mapping
+from collections import deque
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from subprocess import run
+from shutil import which
+from subprocess import TimeoutExpired, run
 from typing import Protocol
+
+from game_learning_runtime.git_diagnostics import (
+    GitProbeDiagnostic,
+    GitProbeOperation,
+    GitProbeStatus,
+)
 
 FORK_GATE_SCHEMA_VERSION = "glr.fork-gate-report.v1"
 
@@ -29,6 +40,7 @@ FORK_GATE_EXIT_BLOCKED = 5
 
 _RELEASE_MANIFEST = ".release-please-manifest.json"
 _GIT_TIMEOUT_SECONDS = 30.0
+_LOGGER = logging.getLogger(__name__)
 _SCP_LIKE_REMOTE = re.compile(r"^(?P<user>[^@/]+)@(?P<host>[^:/]+):(?P<path>.+)$")
 
 
@@ -104,42 +116,125 @@ class GitRepositoryProbe:
         *,
         schema_versions: Mapping[str, str] | None = None,
         runner: _CommandRunner | None = None,
+        diagnostic_sink: Callable[[GitProbeDiagnostic], None] | None = None,
     ) -> None:
         if not isinstance(root, Path):
             raise ValueError("fork gate root must be a Path")
         self._root = root
         self._schema_versions: Mapping[str, str] = dict(schema_versions or {})
         self._runner = runner
+        self._diagnostic_sink = diagnostic_sink
+        self._diagnostics: deque[GitProbeDiagnostic] = deque(maxlen=16)
+        self._diagnostic_sequence = 0
 
     @property
     def root(self) -> Path:
         return self._root
 
-    def _git(self, *arguments: str) -> str | None:
-        command = ["git", "-C", str(self._root), *arguments]
-        if self._runner is not None:
-            completed = self._runner(command)
-        else:
-            completed = run(
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=_GIT_TIMEOUT_SECONDS,
+    @property
+    def diagnostics(self) -> tuple[GitProbeDiagnostic, ...]:
+        """The latest sixteen local attempts; a sink can retain every receipt."""
+        return tuple(self._diagnostics)
+
+    def _record_git(
+        self,
+        operation: GitProbeOperation,
+        executable_path: str | None,
+        started_utc: str,
+        status: GitProbeStatus,
+        *,
+        exit_code: int | None = None,
+        stderr: str | bytes | None = "",
+        process_terminal: bool | None = True,
+    ) -> None:
+        self._diagnostic_sequence += 1
+        diagnostic = GitProbeDiagnostic(
+            operation=operation,
+            sequence_id=self._diagnostic_sequence,
+            executable_path=executable_path,
+            caller_pid=os.getpid(),
+            started_utc=started_utc,
+            completed_utc=datetime.now(timezone.utc).isoformat(),
+            status=status,
+            exit_code=exit_code,
+            stderr=stderr,
+            process_terminal=process_terminal,
+        )
+        self._diagnostics.append(diagnostic)
+        if status not in {GitProbeStatus.SUCCESS, GitProbeStatus.MISSING_EXECUTABLE}:
+            _LOGGER.warning("Git probe diagnostic: %s", diagnostic.to_mapping())
+        if self._diagnostic_sink is not None:
+            try:
+                self._diagnostic_sink(diagnostic)
+            except Exception:
+                _LOGGER.warning("Git diagnostic sink failed; process result retained")
+
+    def _git(self, operation: GitProbeOperation, *arguments: str) -> str | None:
+        started_utc = datetime.now(timezone.utc).isoformat()
+        resolved = which("git")
+        selected_executable = str(Path(resolved).absolute()) if resolved is not None else None
+        executable_path = str(Path(resolved).resolve()) if resolved is not None else None
+        if executable_path is None and self._runner is None:
+            self._record_git(operation, None, started_utc, GitProbeStatus.MISSING_EXECUTABLE)
+            return None
+        command = [selected_executable or "git", "-C", str(self._root), *arguments]
+        try:
+            if self._runner is not None:
+                completed = self._runner(command)
+            else:
+                completed = run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=_GIT_TIMEOUT_SECONDS,
+                )
+        except TimeoutExpired as error:
+            self._record_git(
+                operation,
+                executable_path,
+                started_utc,
+                GitProbeStatus.TIMEOUT,
+                stderr=error.stderr,
+                process_terminal=True if self._runner is None else None,
             )
+            raise
+        except OSError:
+            self._record_git(
+                operation,
+                executable_path,
+                started_utc,
+                GitProbeStatus.SPAWN_ERROR,
+                process_terminal=None,
+            )
+            raise
+        self._record_git(
+            operation,
+            executable_path,
+            started_utc,
+            GitProbeStatus.SUCCESS if completed.returncode == 0 else GitProbeStatus.NONZERO_EXIT,
+            exit_code=completed.returncode,
+            stderr=getattr(completed, "stderr", ""),
+        )
         if completed.returncode != 0:
             return None
         output = completed.stdout.strip()
         return output or None
 
     def origin_url(self) -> str | None:
-        return self._git("remote", "get-url", "origin")
+        return self._git(GitProbeOperation.ORIGIN, "remote", "get-url", "origin")
 
     def current_branch(self) -> str | None:
-        return self._git("rev-parse", "--abbrev-ref", "HEAD")
+        return self._git(GitProbeOperation.BRANCH, "rev-parse", "--abbrev-ref", "HEAD")
 
     def divergence(self, default_branch: str) -> tuple[int | None, int | None]:
-        output = self._git("rev-list", "--count", "--left-right", f"origin/{default_branch}...HEAD")
+        output = self._git(
+            GitProbeOperation.DIVERGENCE,
+            "rev-list",
+            "--count",
+            "--left-right",
+            f"origin/{default_branch}...HEAD",
+        )
         if output is None:
             return (None, None)
         parts = output.split()
@@ -246,6 +341,7 @@ class ForkGateReport:
     """Complete gate result for one checkout."""
 
     findings: tuple[ForkGateFinding, ...]
+    git_diagnostics: tuple[GitProbeDiagnostic, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.findings, tuple):
@@ -253,6 +349,12 @@ class ForkGateReport:
         for finding in self.findings:
             if not isinstance(finding, ForkGateFinding):
                 raise ValueError("fork gate findings must contain ForkGateFinding values")
+        if (
+            not isinstance(self.git_diagnostics, tuple)
+            or len(self.git_diagnostics) > 16
+            or any(type(item) is not GitProbeDiagnostic for item in self.git_diagnostics)
+        ):
+            raise ValueError("Git diagnostics must be a bounded tuple of GitProbeDiagnostic values")
 
     @property
     def blockers(self) -> tuple[ForkGateFinding, ...]:
@@ -278,6 +380,7 @@ class ForkGateReport:
             "blockers": [f.check for f in self.blockers],
             "advisories": [f.check for f in self.advisories],
             "findings": [f.to_mapping() for f in self.findings],
+            "git_diagnostics": [item.to_mapping() for item in self.git_diagnostics],
         }
 
 
@@ -438,7 +541,8 @@ def evaluate_fork_gate(probe: RepositoryProbe, policy: ForkGatePolicy) -> ForkGa
     findings.extend(_divergence_findings(probe, policy))
     findings.append(_version_finding(probe, policy))
     findings.extend(_schema_findings(probe, policy))
-    return ForkGateReport(tuple(findings))
+    diagnostics = probe.diagnostics if isinstance(probe, GitRepositoryProbe) else ()
+    return ForkGateReport(tuple(findings), diagnostics)
 
 
 __all__ = [
