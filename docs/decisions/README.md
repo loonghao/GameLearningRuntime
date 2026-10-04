@@ -50,6 +50,8 @@
 - [ADR-0045: Admit remote roles with scoped capabilities, epoch-scoped fences, and coordinator-owned checkpoints](0045-remote-role-admission.md)
 - [ADR-0046: Let a project declare the environment its roles receive](0046-declare-the-environment-a-role-receives.md)
 - [ADR-0047: Record why every episode ended, and make an indeterminate outcome absorbing](0047-record-why-every-episode-ended.md)
+- [ADR-0049: Persist bounded learning campaigns](0049-persist-bounded-learning-campaigns.md)
+- [ADR-0050: Correlate action rewards and learner updates](0050-correlate-action-rewards-and-learner-updates.md)
 
 ADR-0047 is **retrospective**: it records a decision that was already implemented
 and shipped (PR #174, issues #155 and #156) rather than proposing new behavior.

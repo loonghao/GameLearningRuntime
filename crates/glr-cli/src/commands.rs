@@ -12,9 +12,9 @@ use crate::args::{
     UpdateArgs,
 };
 use crate::contracts::{
-    AgentGoal, GoalEvaluation, GoalEvidenceBundle, ResearchBundle, SpatialKnowledgeBundle,
-    SpatialKnowledgeGraph, TraversabilityStatus, TrialPlan, read_json, verify_model_bundle,
-    write_json,
+    AgentGoal, Authority, GoalEvaluation, GoalEvidence, GoalEvidenceBundle, ResearchBundle,
+    SpatialKnowledgeBundle, SpatialKnowledgeGraph, TraversabilityStatus, TrialPlan, read_json,
+    sha256_file, verify_model_bundle, write_json,
 };
 use crate::error::{Error, Result};
 use crate::learning_checkpoint::{
@@ -29,7 +29,7 @@ use crate::project::{
 };
 use crate::readiness::{ReadinessAttempt, ReadinessWindowOutcome};
 use crate::report;
-use crate::store::{CheckpointPromotionRequest, EntityQuery, RunRecord, Store, TransactionRefusal};
+use crate::store::{EntityQuery, RunRecord, Store, TransactionRefusal};
 use crate::update::Updater;
 
 pub const CLI_OUTPUT_SCHEMA_VERSION: &str = "glr.cli-output.v1";
@@ -1557,13 +1557,17 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
                 ensure_goal_root(&project.data_dir, &project.environment_id, &goal.goal_id)?;
             context.insert(
                 "checkpoint_path".into(),
-                checkpoint_dir.join("best.checkpoint"),
+                trial_dir.join("checkpoint.baseline"),
             );
+            let live = checkpoint_dir.join("best.checkpoint");
+            if live.is_file() {
+                crate::promotion_journal::validate_ancestors(&live)?;
+                fs::copy(&live, trial_dir.join("checkpoint.baseline"))?;
+            }
             context.insert(
                 "candidate_checkpoint_path".into(),
                 trial_dir.join("checkpoint.candidate"),
             );
-            context.insert("promotion_path".into(), checkpoint_dir.join("best.json"));
         }
         if let Some(previous) = &previous_evaluation {
             context.insert("previous_evaluation_path".into(), previous.clone());
@@ -1731,40 +1735,6 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             continue;
         }
         consecutive_stalled_rounds = observe_stall(consecutive_stalled_rounds, false, 0).0;
-        let promotion = if let Some(config) = &goal.promotion {
-            let candidate = trial_dir.join("checkpoint.candidate");
-            let live = ensure_goal_root(&project.data_dir, &project.environment_id, &goal.goal_id)?
-                .join("best.checkpoint");
-            let metric = store
-                .latest_metric_value(&run.run_id, &config.metric, metric_floor)?
-                .ok_or_else(|| {
-                    Error::Contract(format!(
-                        "checkpoint promotion metric {:?} was not persisted for {trial_id}",
-                        config.metric
-                    ))
-                })?;
-            let (promoted, record) = store.promote_checkpoint(CheckpointPromotionRequest {
-                goal_id: &goal.goal_id,
-                metric: &config.metric,
-                mode: config.mode,
-                value: metric,
-                run_id: &run.run_id,
-                trial_id: &trial_id,
-                candidate: &candidate,
-                live: &live,
-            })?;
-            let output = json!({
-                "promoted": promoted,
-                "metric": metric,
-                "best_metric": record.best_metric,
-                "checkpoint_sha256": record.checkpoint_sha256,
-                "checkpoint_path": record.checkpoint_path,
-            });
-            store.append_event(&run.run_id, "checkpoint.promotion", output.clone())?;
-            Some(output)
-        } else {
-            None
-        };
         if !capture_complete
             && project
                 .capture
@@ -1802,6 +1772,35 @@ fn run_goal_inner(context: GoalRunContext<'_>) -> Result<GoalRunResult> {
             }
         }
         let evaluation = goal.evaluate(&evidence.evidence)?;
+        remaining(deadline)?;
+        let promotion = if goal.promotion.is_some() {
+            let selected = checkpoint_promotion_evidence(goal, &evidence)?;
+            let value = store.promotion_metric_value(&run.run_id, metric_floor, selected)?;
+            let measurement = crate::promotion_host::final_measurement(
+                &store.connect()?,
+                &run.run_id,
+                metric_floor,
+                &selected.metric,
+                &selected.source,
+                value,
+            )?;
+            let candidate = trial_dir.join("checkpoint.candidate");
+            crate::promotion_journal::validate_ancestors(&candidate)?;
+            if !candidate.is_file() {
+                return Err(Error::Missing(candidate));
+            }
+            let output = json!({
+                "schema_version": "glr.checkpoint-proposal.v1", "status": "staged-awaiting-review", "promoted": false,
+                "goal_id": goal.goal_id, "run_id": run.run_id, "trial_id": trial_id,
+                "candidate_path": candidate, "artifact_sha256": sha256_file(&candidate)?,
+                "evaluation_sha256": sha256_file(&evaluation_path)?, "final_measurement": measurement,
+            });
+            write_json(&trial_dir.join("checkpoint.proposal.json"), &output)?;
+            store.append_event(&run.run_id, "checkpoint.staged", output.clone())?;
+            Some(output)
+        } else {
+            None
+        };
         last_promotion = promotion.clone();
         trials_completed = trial_number;
         previous_evaluation = Some(evaluation_path.clone());
@@ -1950,6 +1949,46 @@ fn training_trial_context(trial_id: &str, trial_path: &Path) -> HashMap<String, 
         ("trial_id".into(), PathBuf::from(trial_id)),
         ("trial_path".into(), trial_path.to_path_buf()),
     ])
+}
+
+fn checkpoint_promotion_evidence<'a>(
+    goal: &AgentGoal,
+    bundle: &'a GoalEvidenceBundle,
+) -> Result<&'a GoalEvidence> {
+    let config = goal
+        .promotion
+        .as_ref()
+        .ok_or_else(|| Error::Contract("checkpoint promotion is not configured".into()))?;
+    let sources = goal
+        .success_criteria
+        .iter()
+        .filter(|criterion| criterion.metric == config.metric)
+        .map(|criterion| criterion.source.as_str())
+        .collect::<HashSet<_>>();
+    if sources.len() > 1 {
+        return Err(Error::Contract(format!(
+            "checkpoint promotion metric {:?} has ambiguous goal criterion sources",
+            config.metric
+        )));
+    }
+    let mut matching = bundle.evidence.iter().filter(|item| {
+        item.metric == config.metric
+            && item.authority == Authority::Authoritative
+            && (sources.is_empty() || sources.contains(item.source.as_str()))
+    });
+    let selected = matching.next().ok_or_else(|| {
+        Error::Contract(format!(
+            "checkpoint promotion metric {:?} requires authoritative evaluator evidence from its goal source",
+            config.metric
+        ))
+    })?;
+    if matching.next().is_some() {
+        return Err(Error::Contract(format!(
+            "checkpoint promotion metric {:?} has ambiguous evaluator evidence sources",
+            config.metric
+        )));
+    }
+    Ok(selected)
 }
 
 fn run_goal_role(

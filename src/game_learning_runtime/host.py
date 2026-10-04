@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Protocol, cast
+from typing import IO, Any, NoReturn, Protocol, cast
 from uuid import UUID
 
 import numpy as np
@@ -41,7 +41,12 @@ from game_learning_runtime.contracts import (
     TimeStep,
 )
 from game_learning_runtime.declared_metrics import MetricDeclaration
-from game_learning_runtime.errors import CommandRefusal, HostProtocolError, HostRemoteError
+from game_learning_runtime.errors import (
+    CleanupPendingError,
+    CommandRefusal,
+    HostProtocolError,
+    HostRemoteError,
+)
 from game_learning_runtime.realtime import (
     InputLeaseReceipt,
     InputLeaseRequest,
@@ -57,6 +62,8 @@ from game_learning_runtime.specs import CompositeSpec, EnvironmentSpec, SpaceKin
 HOST_SCHEMA = "glr.host.v1"
 DEFAULT_MAX_FRAME_BYTES = 1_048_576
 HARD_MAX_FRAME_BYTES = 1_048_576
+_HOST_REAP_TIMEOUT_SECONDS = 5.0
+_HOST_READER_JOIN_TIMEOUT_SECONDS = 1.0
 
 _WIRE_TO_DTYPE: Mapping[str, np.dtype[Any]] = {
     "bool": np.dtype(np.bool_),
@@ -135,12 +142,16 @@ class JsonLineHostChannel:
         self._responses: queue.Queue[_ReaderItem] = queue.Queue(maxsize=1)
         self._lock = threading.Lock()
         self._closed = False
+        self._cleanup_complete = False
         self._reader = threading.Thread(
             target=self._read_responses,
             name="glr-host-stdio-reader",
             daemon=True,
         )
-        self._reader.start()
+        try:
+            self._reader.start()
+        except Exception as error:
+            self._fail_locked("Runtime Host reader startup failed", cause=error)
 
     @classmethod
     def open(cls, config: HostProcessConfig) -> JsonLineHostChannel:
@@ -181,37 +192,41 @@ class JsonLineHostChannel:
                 self._stdin.write(frame + b"\n")
                 self._stdin.flush()
             except OSError as error:
-                self._shutdown_locked(force=True)
-                raise HostProtocolError("Runtime Host request write failed") from error
+                self._fail_locked("Runtime Host request write failed", cause=error)
             try:
                 item = self._responses.get(timeout=self._request_timeout_seconds)
             except queue.Empty as error:
-                self._shutdown_locked(force=True)
-                raise HostProtocolError("Runtime Host response deadline expired") from error
+                self._fail_locked("Runtime Host response deadline expired", cause=error)
             if item is None:
-                self._shutdown_locked(force=True)
-                raise HostProtocolError("Runtime Host closed before returning a response")
+                self._fail_locked("Runtime Host closed before returning a response")
             if isinstance(item, BaseException):
-                self._shutdown_locked(force=True)
-                raise HostProtocolError("Runtime Host response stream failed") from item
+                self._fail_locked("Runtime Host response stream failed", cause=item)
             try:
                 response = json.loads(item)
             except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                self._shutdown_locked(force=True)
-                raise HostProtocolError("Runtime Host response is not valid UTF-8 JSON") from error
+                self._fail_locked("Runtime Host response is not valid UTF-8 JSON", cause=error)
             try:
                 return _mapping(response, path="response")
-            except HostProtocolError:
-                self._shutdown_locked(force=True)
-                raise
+            except HostProtocolError as error:
+                self._fail_locked(str(error), cause=error)
 
     def close(self) -> None:
         with self._lock:
-            if self._closed:
+            if self._cleanup_complete:
                 return
-            self._shutdown_locked(force=False)
+            self._shutdown_locked(force=self._closed)
+
+    def _fail_locked(self, message: str, *, cause: BaseException | None = None) -> NoReturn:
+        try:
+            self._shutdown_locked(force=True)
+        except CleanupPendingError as cleanup_error:
+            raise CleanupPendingError(
+                f"{message}; {cleanup_error}", retry_cleanup=self.close
+            ) from cleanup_error
+        raise HostProtocolError(message) from cause
 
     def _shutdown_locked(self, *, force: bool) -> None:
+        # Request fencing does not prove that this original owned handle was reaped.
         self._closed = True
         with suppress(OSError):
             self._stdin.close()
@@ -219,13 +234,30 @@ class JsonLineHostChannel:
             with suppress(OSError):
                 self._process.terminate()
         try:
-            self._process.wait(timeout=self._request_timeout_seconds)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            # A request deadline can be only a few milliseconds. Windows process
-            # teardown is not a protocol request and needs enough time to reap the
-            # killed child under test/coverage load.
-            self._process.wait(timeout=max(self._request_timeout_seconds, 1.0))
+            try:
+                self._process.wait(timeout=self._request_timeout_seconds)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                # Reaping has a separate bounded deadline; requests keep theirs.
+                self._process.wait(timeout=_HOST_REAP_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise CleanupPendingError(
+                "Runtime Host owned process cleanup is unconfirmed", retry_cleanup=self.close
+            ) from error
+        if self._reader.ident is not None:
+            self._reader.join(timeout=_HOST_READER_JOIN_TIMEOUT_SECONDS)
+        if self._reader.is_alive():
+            # A live reader may hold BufferedReader's IO lock; close could block.
+            raise CleanupPendingError(
+                "Runtime Host reader cleanup is unconfirmed", retry_cleanup=self.close
+            )
+        with suppress(OSError):
+            self._stdout.close()
+        if not self._stdin.closed or not self._stdout.closed:
+            raise CleanupPendingError(
+                "Runtime Host stream cleanup is unconfirmed", retry_cleanup=self.close
+            )
+        self._cleanup_complete = True
 
     def _read_responses(self) -> None:
         try:
@@ -259,17 +291,19 @@ class HostBridgeDriver:
         self._channel = channel
         self._request_sequence = 0
         self._closed = False
+        self._cleanup_complete = False
         try:
             result = self._request("describe", {})
             self._spec = _environment_spec_from_wire(result)
-        except Exception:
+        except Exception as error:
             self._closed = True
-            channel.close()
+            self._finish_cleanup(primary_error=error)
             raise
 
     @classmethod
     def from_process(cls, config: HostProcessConfig) -> HostBridgeDriver:
-        return cls(JsonLineHostChannel.open(config))
+        channel = JsonLineHostChannel.open(config)
+        return cls(channel)
 
     def describe(self) -> EnvironmentSpec:
         self._ensure_open()
@@ -387,13 +421,30 @@ class HostBridgeDriver:
         return self._resume_result(self._request("resume", payload))
 
     def close(self) -> None:
-        if self._closed:
+        if self._cleanup_complete:
             return
+        if not self._closed:
+            primary_error: BaseException | None = None
+            try:
+                self._request("close", {})
+            except BaseException as error:
+                primary_error = error
+                raise
+            finally:
+                self._closed = True
+                self._finish_cleanup(primary_error=primary_error)
+        else:
+            self._finish_cleanup()
+
+    def _finish_cleanup(self, *, primary_error: BaseException | None = None) -> None:
         try:
-            self._request("close", {})
-        finally:
-            self._closed = True
             self._channel.close()
+        except Exception as cleanup_error:
+            message = "Runtime Host driver cleanup is unconfirmed"
+            if primary_error is not None:
+                message = f"{primary_error}; {message}"
+            raise CleanupPendingError(message, retry_cleanup=self.close) from cleanup_error
+        self._cleanup_complete = True
 
     def _request(self, operation: str, payload: Mapping[str, object]) -> Mapping[str, object]:
         self._ensure_open()

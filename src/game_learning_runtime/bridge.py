@@ -22,7 +22,7 @@ from game_learning_runtime.contracts import (
     freeze_tree,
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
-from game_learning_runtime.errors import CommandRefusal, ContractViolation
+from game_learning_runtime.errors import CleanupPendingError, CommandRefusal, ContractViolation
 from game_learning_runtime.readiness import (
     EnvironmentReadinessError,
     ReadinessMonitor,
@@ -241,6 +241,7 @@ class EnvironmentBridgeDriver:
         self._refusal_funnel = refusal_funnel
         self._current: TimeStep | None = None
         self._closed = False
+        self._cleanup_complete = False
         self._lease_book = InputLeaseBook()
         self._cancelled_actions: set[str] = set()
         self._lock = RLock()
@@ -357,13 +358,19 @@ class EnvironmentBridgeDriver:
 
     def close(self) -> None:
         with self._lock:
-            if self._closed:
+            if self._cleanup_complete:
                 return
             self._closed = True
+            try:
+                self._environment.close()
+            except Exception as cleanup_error:
+                raise CleanupPendingError(
+                    "Environment bridge driver cleanup is unconfirmed", retry_cleanup=self.close
+                ) from cleanup_error
             self._current = None
             self._lease_book = InputLeaseBook()
             self._cancelled_actions.clear()
-            self._environment.close()
+            self._cleanup_complete = True
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -403,6 +410,7 @@ class BridgeEnvironment(GameEnvironment):
         self._last_readiness_poll_ns: int | None = None
         self._refusal_funnel = refusal_funnel
         self._closed = False
+        self._cleanup_complete = False
         self._current: TimeStep | None = None
         try:
             described = driver.describe()
@@ -435,9 +443,9 @@ class BridgeEnvironment(GameEnvironment):
                     key: value for key, value in described.metadata.items() if key in allowed
                 },
             )
-        except Exception:
+        except Exception as error:
             self._closed = True
-            driver.close()
+            self._finish_cleanup(primary_error=error)
             raise
 
     @property
@@ -619,11 +627,21 @@ class BridgeEnvironment(GameEnvironment):
         cancel(action_id)
 
     def close(self) -> None:
-        if self._closed:
+        if self._cleanup_complete:
             return
         self._closed = True
+        self._finish_cleanup()
+
+    def _finish_cleanup(self, *, primary_error: BaseException | None = None) -> None:
+        try:
+            self._driver.close()
+        except Exception as cleanup_error:
+            message = "Bridge environment cleanup is unconfirmed"
+            if primary_error is not None:
+                message = f"{primary_error}; {message}"
+            raise CleanupPendingError(message, retry_cleanup=self.close) from cleanup_error
         self._current = None
-        self._driver.close()
+        self._cleanup_complete = True
 
     def _accept_start(self, result: TimeStep, *, operation: str) -> TimeStep:
         if not isinstance(result, TimeStep):

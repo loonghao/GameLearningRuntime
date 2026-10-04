@@ -19,6 +19,8 @@ mod package_groups;
 mod plugin;
 mod process;
 mod project;
+pub mod promotion_host;
+mod promotion_journal;
 mod readiness;
 mod recording;
 mod report;
