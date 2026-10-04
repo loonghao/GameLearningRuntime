@@ -3195,7 +3195,11 @@ mod tests {
     #[test]
     #[ignore]
     fn long_worker_fixture() {
-        std::thread::sleep(Duration::from_secs(5));
+        // Only the owning supervisor may terminate this synthetic worker.
+        // Natural completion must not race a deadline/cancellation assertion.
+        loop {
+            std::thread::park();
+        }
     }
 
     #[test]
@@ -3368,7 +3372,6 @@ mod tests {
             json!("promotion_host::tests::long_worker_fixture");
         fs::write(&fixture.config, serde_json::to_vec(&config).unwrap()).unwrap();
         let mut policy = fixture.policy.clone();
-        policy.max_wall_seconds = 1;
         policy.environment_config_sha256 = sha256_file(&fixture.config).unwrap();
         let run = fixture.host.create_run(&policy).unwrap();
         let mut workers = vec![
@@ -3377,11 +3380,19 @@ mod tests {
                 .spawn_worker(&policy, &run, "long-worker", "worker", &fixture.config)
                 .unwrap(),
         ];
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while !fixture.host.poll_worker(&mut workers[0]).unwrap() {
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        assert!(
+            workers[0]
+                .child
+                .as_mut()
+                .unwrap()
+                .try_wait()
+                .unwrap()
+                .is_none()
+        );
+        // Expire the already admitted owned handle, independent of CI hashing
+        // speed. The separate admission test checks an expired run cannot spawn.
+        workers[0].deadline = Instant::now();
+        assert!(fixture.host.poll_worker(&mut workers[0]).unwrap());
         assert!(workers[0].binding.observed_terminal);
         assert_ne!(workers[0].binding.exit_code, Some(0));
         fixture
