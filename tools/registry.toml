@@ -38,6 +38,13 @@ purpose = "Demonstrate the rollout lifecycle and learner queue barriers without 
 entrypoints = ["manual"]
 
 [[entries]]
+id = "demo.fleet-training"
+path = "tools/demo/fleet_training_demo.py"
+domain = "demo"
+purpose = "Collect resumable SIMULATED local shards and exercise actual SDK learner consumption."
+entrypoints = ["manual"]
+
+[[entries]]
 id = "docs.render-readme-demo"
 path = "tools/docs/render_readme_demo.py"
 domain = "docs"

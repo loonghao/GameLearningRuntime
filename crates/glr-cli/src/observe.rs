@@ -626,6 +626,14 @@ fn route(
         })
     };
     let data: Value = match url.path() {
+        "/api/v1/fleet" => {
+            if !query.is_empty() {
+                return Err(Error::Invalid(
+                    "fleet endpoint does not accept query parameters".into(),
+                ));
+            }
+            crate::fleet::snapshot(&observation.data_dir)
+        }
         "/api/v1/media" => crate::media::catalog(
             observation,
             field("run")?,

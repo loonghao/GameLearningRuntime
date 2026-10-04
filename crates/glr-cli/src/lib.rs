@@ -8,6 +8,7 @@ mod dashboard;
 mod entry_point;
 mod error;
 mod filesystem;
+mod fleet;
 mod goal_binding;
 mod instance;
 mod learning_checkpoint;
