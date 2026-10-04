@@ -12,7 +12,7 @@ import os
 import sys
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from game_learning_runtime.correlated_rewards import (
     CorrelatedRewardReceipt,
@@ -21,6 +21,9 @@ from game_learning_runtime.correlated_rewards import (
 )
 from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.run_store import TrainingStore
+
+if TYPE_CHECKING:
+    from game_learning_runtime.decision_evidence import DecisionEvidence
 
 
 class Telemetry:
@@ -71,6 +74,38 @@ class Telemetry:
                     file=sys.stderr,
                     flush=True,
                 )
+
+    def decision_evidence(self, evidence: DecisionEvidence) -> None:
+        """Persist a bounded diagnostic locally; never print or transmit it.
+
+        This is not action dispatch, evaluator authority or a promotion gate.
+        Raw legacy events are not converted into this safe record automatically.
+        """
+        from game_learning_runtime.decision_evidence import (
+            DECISION_EVENT_KIND,
+            DecisionEvidence,
+        )
+
+        if type(evidence) is not DecisionEvidence:
+            raise TypeError("evidence must be a base DecisionEvidence")
+        record = DecisionEvidence(DecisionEvidence.to_mapping(evidence)).to_mapping()
+        identity = record["identity"]
+        run = self.store.get_run(self.run_id)
+        if (
+            identity["run_id"],
+            identity["environment_id"],
+            identity["protocol_version"],
+            identity["environment_config_sha256"],
+        ) != (self.run_id, run.environment_id, run.protocol_version, run.environment_config_digest):
+            raise ContractViolation("decision evidence belongs to another durable run")
+        episode = identity["episode_id"]
+        self.store.append_event(
+            self.run_id,
+            kind=DECISION_EVENT_KIND,
+            payload=record,
+            step_id=identity["step_id"],
+            episode_id=None if episode is None else "episode-" + episode,
+        )
 
     def metric(self, name: str, value: float, *, step_id: int | None = None) -> None:
         self.store.record_metric(
