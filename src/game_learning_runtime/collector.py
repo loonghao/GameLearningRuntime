@@ -19,7 +19,10 @@ from game_learning_runtime.contracts import (
     TimeStep,
     Transition,
     Unroll,
+    environment_config_digest,
+    freeze_tree,
 )
+from game_learning_runtime.correlated_rewards import CorrelatedRewardGuard, CorrelationBudgetError
 from game_learning_runtime.declared_metrics import (
     DeclaredMetricAudit,
     DeclaredMetricLedger,
@@ -27,6 +30,7 @@ from game_learning_runtime.declared_metrics import (
     build_declared_metrics,
 )
 from game_learning_runtime.environment import ContractEnvironment, GameEnvironment
+from game_learning_runtime.errors import ContractViolation
 from game_learning_runtime.learnability import (
     LEARNABILITY_CELL_KEY,
     LearnabilityBudgetError,
@@ -589,6 +593,7 @@ class SyncCollector:
         episode_caps: EpisodeCaps | None = None,
         on_termination: Callable[[EpisodeTermination], None] | None = None,
         learnability: LearnabilityPlan | None = None,
+        correlated_rewards: CorrelatedRewardGuard | None = None,
     ) -> None:
         if not actor_id:
             raise ValueError("actor_id cannot be empty")
@@ -602,12 +607,35 @@ class SyncCollector:
             raise TypeError("on_termination must be callable or None")
         if learnability is not None and not isinstance(learnability, LearnabilityPlan):
             raise TypeError("learnability must be a LearnabilityPlan or None")
+        if correlated_rewards is not None and type(correlated_rewards) is not CorrelatedRewardGuard:
+            raise TypeError("correlated_rewards must be a CorrelatedRewardGuard or None")
         self._environment = (
             environment
             if isinstance(environment, ContractEnvironment)
             else ContractEnvironment(environment)
         )
         self._actor_id = actor_id
+        self._correlated_rewards = correlated_rewards
+        if correlated_rewards is not None:
+            policy = correlated_rewards.policy
+            if (
+                policy.environment_id != self._environment.spec.environment_id
+                or policy.protocol_version != self._environment.spec.protocol_version
+                or (run_id is not None and policy.run_id != run_id)
+            ):
+                raise ContractViolation(
+                    "strict correlation policy does not match the collector run"
+                )
+            if store is not None and run_id is not None:
+                run = store.get_run(run_id)
+                if (
+                    run.environment_id != policy.environment_id
+                    or run.protocol_version != policy.protocol_version
+                    or run.environment_config_digest != policy.environment_config_sha256
+                ):
+                    raise ContractViolation(
+                        "strict correlation policy does not match the durable run identity"
+                    )
         self._start_mode = start_mode
         self._reset_options = reset_options
         self._current: TimeStep | None = None
@@ -710,6 +738,8 @@ class SyncCollector:
             audit.require()
 
     def _start(self, *, seed: int | None = None) -> TimeStep:
+        if self._correlated_rewards is not None:
+            self._correlated_rewards.begin_reset()
         if self._start_mode == "attach":
             if seed is not None:
                 raise ValueError("seed is not supported when start_mode='attach'")
@@ -726,6 +756,26 @@ class SyncCollector:
             timestep.episode_id, caps=self._episode_caps, now_ns=now_ns or timestep.timestamp_ns
         )
         self._guard = guard
+        if self._correlated_rewards is not None:
+            try:
+                if (
+                    environment_config_digest(self._environment_config_snapshot)
+                    != self._correlated_rewards.policy.environment_config_sha256
+                ):
+                    raise ContractViolation(
+                        "strict correlation policy does not match the environment configuration"
+                    )
+                self._correlated_rewards.policy.validate_before(timestep)
+                self._correlated_rewards.reset(timestep.episode_id)
+            except Exception:
+                self._close_episode(
+                    reason=TerminationReason.FAILED,
+                    detail="strict episode evidence validation failed",
+                    step_id=timestep.step_id,
+                    now_ns=timestep.timestamp_ns,
+                )
+                self._current = None
+                raise
         return guard
 
     def _close_episode(
@@ -866,6 +916,8 @@ class SyncCollector:
             raise ValueError("policy_version cannot be negative")
         if on_error not in {"raise", "partial"}:
             raise ValueError("on_error must be 'raise' or 'partial'")
+        if self._correlated_rewards is not None and on_error != "raise":
+            raise ValueError("strict correlated collection requires on_error='raise'")
         if self._guard is not None and self._guard.indeterminate:
             # Absorbing: the host state is unknown, so stepping a fresh episode
             # would attribute its consequences to the wrong episode. The caller
@@ -885,13 +937,36 @@ class SyncCollector:
         transitions: list[Transition] = []
         for _ in range(steps):
             current = self._current
+            if self._correlated_rewards is not None:
+                try:
+                    self._correlated_rewards.check_action(current)
+                except Exception as error:
+                    self._close_episode(
+                        reason=(
+                            TerminationReason.STEP_BUDGET
+                            if isinstance(error, CorrelationBudgetError)
+                            else TerminationReason.FAILED
+                        ),
+                        detail="strict pre-action evidence validation failed",
+                        step_id=current.step_id,
+                        now_ns=current.timestamp_ns,
+                    )
+                    self._close_declared_metrics(
+                        current.episode_id, timestamp_ns=current.timestamp_ns, require=False
+                    )
+                    self._current = None
+                    raise
             action = policy(current)
+            if self._correlated_rewards is not None:
+                action = freeze_tree(action)
             guard.note_step(
                 current.step_id,
                 observation_sequence=_observation_sequence(current),
                 now_ns=current.timestamp_ns,
             )
             try:
+                if self._correlated_rewards is not None:
+                    self._correlated_rewards.begin_action(current)
                 following = self._environment.step(action)
             except Exception as error:
                 # The episode is abandoned, so it still owes a terminal state:
@@ -944,7 +1019,7 @@ class SyncCollector:
                 # untrustworthy, so it is dropped rather than recorded.
                 self._close_episode(step_id=following.step_id, now_ns=following.timestamp_ns)
                 self._current = None
-                if not transitions:
+                if self._correlated_rewards is not None or not transitions:
                     raise IndeterminateOutcomeError(
                         episode_id=guard.episode_id, step_id=following.step_id
                     )
@@ -957,6 +1032,30 @@ class SyncCollector:
                     truncated=np.ones_like(last.truncated, dtype=np.bool_),
                 )
                 break
+            correlated_receipt = None
+            if self._correlated_rewards is not None:
+                try:
+                    correlated_receipt = self._correlated_rewards.compose_timestep(
+                        current, following, action=action
+                    )
+                    if self._store is not None and self._run_id is not None:
+                        from game_learning_runtime.telemetry import Telemetry
+
+                        Telemetry(self._store, self._run_id, console=False).correlated_reward(
+                            correlated_receipt
+                        )
+                except Exception:
+                    self._close_episode(
+                        reason=TerminationReason.FAILED,
+                        detail="strict reward interval validation failed",
+                        step_id=following.step_id,
+                        now_ns=following.timestamp_ns,
+                    )
+                    self._close_declared_metrics(
+                        current.episode_id, timestamp_ns=following.timestamp_ns, require=False
+                    )
+                    self._current = None
+                    raise
             transitions.append(
                 Transition(
                     episode_id=current.episode_id,
@@ -972,6 +1071,14 @@ class SyncCollector:
                     truncated=following.truncated,
                     events=following.events,
                     info=following.info,
+                    provenance=(
+                        None
+                        if correlated_receipt is None
+                        else {
+                            "correlated_reward": correlated_receipt.to_mapping(),
+                            "correlated_reward_sha256": correlated_receipt.sha256,
+                        }
+                    ),
                     timestamp_ns=following.timestamp_ns,
                 )
             )

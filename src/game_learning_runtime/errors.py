@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from time import time_ns
 from uuid import UUID
 
@@ -113,6 +114,32 @@ class OptionalDependencyError(GLRError, ImportError):
 
 class HostProtocolError(GLRError, ValueError):
     """Raised when a Runtime Host violates framing or wire-schema rules."""
+
+
+class CleanupPendingError(HostProtocolError):
+    """Cleanup is unconfirmed; retry only the original local cleanup operation.
+
+    The callback retains its original owner for this exception's lifetime. It
+    does not authorize reconnect, process launch, PID adoption, or serialized
+    recovery. Custom adapter callbacks remain trusted application code.
+    """
+
+    def __init__(self, message: str, *, retry_cleanup: Callable[[], None]) -> None:
+        super().__init__(message)
+        self._retry_cleanup = retry_cleanup
+        self._cleanup_complete = False
+
+    @property
+    def cleanup_complete(self) -> bool:
+        """Whether this recovery callback has returned successfully."""
+        return self._cleanup_complete
+
+    def retry_cleanup(self) -> None:
+        """Retry one original cleanup operation without issuing runtime actions."""
+        if self._cleanup_complete:
+            return
+        self._retry_cleanup()
+        self._cleanup_complete = True
 
 
 class HostRemoteError(GLRError):

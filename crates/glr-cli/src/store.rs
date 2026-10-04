@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::{Type, Value as SqlValue};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -15,6 +15,9 @@ use crate::contracts::{
 };
 use crate::error::{Error, Result};
 use crate::project::validate_identifier;
+use crate::promotion_journal::{
+    Binding as CheckpointBinding, Journal as CheckpointJournal, Phase as CheckpointPhase,
+};
 
 pub const RUN_STORE_SCHEMA_VERSION: i64 = 1;
 // Python v2 adds nullable digest columns and project-owned projections.
@@ -99,7 +102,8 @@ pub struct ArtifactRecord {
     pub metadata: Value,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CheckpointPromotionRecord {
     pub goal_id: String,
     pub metric: String,
@@ -110,17 +114,6 @@ pub struct CheckpointPromotionRecord {
     pub run_id: String,
     pub trial_id: String,
     pub updated_at_ns: i64,
-}
-
-struct StoredCheckpointPromotion {
-    metric: String,
-    mode: String,
-    best_metric: f64,
-    checkpoint_sha256: String,
-    checkpoint_path: String,
-    run_id: String,
-    trial_id: String,
-    updated_at_ns: i64,
 }
 
 pub struct CheckpointPromotionRequest<'a> {
@@ -147,6 +140,7 @@ pub struct EntityQuery<'a> {
 pub struct Store {
     path: PathBuf,
     read_only: bool,
+    _instance: fs::File,
 }
 
 impl Store {
@@ -157,15 +151,46 @@ impl Store {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        crate::promotion_journal::validate_ancestors(&path)?;
+        drop(Connection::open(&path)?);
+        let path = path.canonicalize()?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(0x1 | 0x2); // FILE_SHARE_READ | WRITE; no DELETE
+        }
         let store = Self {
+            _instance: options.open(&path)?,
             path,
             read_only: false,
         };
         store.initialize()?;
+        store.reconcile_checkpoint_promotions()?;
         Ok(store)
     }
 
-    fn connect(&self) -> Result<Connection> {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+    pub(crate) fn instance_guard(&self) -> Result<fs::File> {
+        Ok(self._instance.try_clone()?)
+    }
+
+    pub(crate) fn connect(&self) -> Result<Connection> {
+        crate::promotion_journal::validate_ancestors(&self.path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let pinned = self._instance.metadata()?;
+            let current = fs::metadata(&self.path)?;
+            if pinned.dev() != current.dev() || pinned.ino() != current.ino() {
+                return Err(Error::Contract(
+                    "cached store database instance was replaced".into(),
+                ));
+            }
+        }
         let connection = if self.read_only {
             Connection::open_with_flags(&self.path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?
         } else {
@@ -181,7 +206,17 @@ impl Store {
         if path.is_symlink() || !path.is_file() {
             return Err(Error::Missing(path));
         }
+        crate::promotion_journal::validate_ancestors(&path)?;
+        let path = path.canonicalize()?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(0x1 | 0x2);
+        }
         let store = Self {
+            _instance: options.open(&path)?,
             path,
             read_only: true,
         };
@@ -400,6 +435,16 @@ impl Store {
             );
             CREATE INDEX IF NOT EXISTS research_finding_tags_lookup
                 ON research_finding_tags(tag, finding_id);
+            CREATE TABLE IF NOT EXISTS checkpoint_promotion_locations (
+                goal_id TEXT PRIMARY KEY,
+                environment_id TEXT NOT NULL,
+                protocol_version TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                environment_config_sha256 TEXT NOT NULL,
+                host_fingerprint TEXT NOT NULL, host_epoch TEXT NOT NULL,
+                store_path TEXT NOT NULL,
+                live_path TEXT NOT NULL UNIQUE
+            );
             CREATE TABLE IF NOT EXISTS checkpoint_promotions (
                 goal_id TEXT PRIMARY KEY,
                 metric TEXT NOT NULL,
@@ -415,6 +460,7 @@ impl Store {
         )?;
         connection.pragma_update(None, "user_version", version.max(RUN_STORE_SCHEMA_VERSION))?;
         connection.commit()?;
+        crate::promotion_host::initialize(&mut self.connect()?)?;
         Ok(())
     }
 
@@ -825,125 +871,366 @@ impl Store {
         })
     }
 
-    pub fn latest_metric_value(
+    pub fn promotion_metric_value(
         &self,
         run_id: &str,
-        name: &str,
         after_metric_id: i64,
-    ) -> Result<Option<f64>> {
-        self.connect()?
-            .query_row(
-                "SELECT value FROM metrics WHERE run_id = ? AND metric_id > ? AND name = ? ORDER BY metric_id DESC LIMIT 1",
-                params![run_id, after_metric_id, name],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(Error::from)
+        evidence: &GoalEvidence,
+    ) -> Result<f64> {
+        if evidence.run_id != run_id || evidence.authority != Authority::Authoritative {
+            return Err(Error::Contract(
+                "checkpoint promotion requires authoritative evidence from the current run".into(),
+            ));
+        }
+        Ok(crate::promotion_host::final_measurement(
+            &self.connect()?,
+            run_id,
+            after_metric_id,
+            &evidence.metric,
+            &evidence.source,
+            evidence.value,
+        )?
+        .value)
     }
 
+    fn checkpoint_connection(&self) -> Result<Connection> {
+        let connection = self.connect()?;
+        // A busy worker is refused, never stolen after a lease/TTL expiry.
+        connection.busy_timeout(Duration::from_secs(1))?;
+        connection.pragma_update(None, "synchronous", "FULL")?;
+        Ok(connection)
+    }
+
+    fn checkpoint_environment(connection: &Connection, run_id: &str) -> Result<String> {
+        connection
+            .query_row(
+                "SELECT environment_id FROM runs WHERE run_id = ?",
+                [run_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::Contract("checkpoint journal references an unknown run".into()))
+    }
+
+    fn checkpoint_record(
+        connection: &Connection,
+        goal_id: &str,
+    ) -> Result<Option<CheckpointPromotionRecord>> {
+        Ok(connection.query_row(
+            "SELECT metric, mode, best_metric, checkpoint_sha256, checkpoint_path, run_id, trial_id, updated_at_ns FROM checkpoint_promotions WHERE goal_id = ?",
+            [goal_id], |row| Ok(CheckpointPromotionRecord {
+                goal_id: goal_id.into(), metric: row.get(0)?, mode: row.get(1)?, best_metric: row.get(2)?,
+                checkpoint_sha256: row.get(3)?, checkpoint_path: row.get(4)?,
+                run_id: row.get(5)?, trial_id: row.get(6)?, updated_at_ns: row.get(7)?,
+            }),
+        ).optional()?)
+    }
+
+    fn register_checkpoint_location(
+        &self,
+        request: &CheckpointPromotionRequest<'_>,
+        authorization_id: &str,
+    ) -> Result<CheckpointBinding> {
+        let mut connection = self.checkpoint_connection()?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let environment_id = Self::checkpoint_environment(&transaction, request.run_id)?;
+        let authorization =
+            crate::promotion_host::load_authorization(&transaction, authorization_id)?;
+        let scope = &authorization.binding;
+        let binding = CheckpointBinding::new(
+            &self.path,
+            &environment_id,
+            request.goal_id,
+            request.live,
+            &scope.protocol_version,
+            &scope.target_id,
+            &scope.environment_config_sha256,
+            &scope.host_fingerprint,
+            &scope.host_epoch,
+        )?;
+        let previous: Option<CheckpointBinding> = transaction.query_row(
+            "SELECT environment_id, goal_id, store_path, live_path, protocol_version, target_id, environment_config_sha256, host_fingerprint, host_epoch FROM checkpoint_promotion_locations WHERE goal_id = ?",
+            [request.goal_id], |row| Ok(CheckpointBinding {
+                environment_id: row.get(0)?, goal_id: row.get(1)?, store_path: row.get(2)?, live_path: row.get(3)?, protocol_version: row.get(4)?, target_id: row.get(5)?, environment_config_sha256: row.get(6)?, host_fingerprint: row.get(7)?, host_epoch: row.get(8)?,
+            }),
+        ).optional()?;
+        if previous
+            .as_ref()
+            .is_some_and(|previous| *previous != binding)
+        {
+            return Err(Error::Contract(
+                "checkpoint location/environment/goal binding changed".into(),
+            ));
+        }
+        crate::promotion_journal::claim_location(&binding)?;
+        if previous.is_none() {
+            transaction.execute(
+                "INSERT INTO checkpoint_promotion_locations(goal_id, environment_id, store_path, live_path, protocol_version, target_id, environment_config_sha256, host_fingerprint, host_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![binding.goal_id, binding.environment_id, binding.store_path, binding.live_path, binding.protocol_version, binding.target_id, binding.environment_config_sha256, binding.host_fingerprint, binding.host_epoch],
+            )?;
+        }
+        // Registration is durable before any filesystem work. The mutation
+        // transaction below reacquires the lock and rereads the incumbent.
+        transaction.commit()?;
+        Ok(binding)
+    }
+
+    fn reconcile_checkpoint_binding(
+        &self,
+        connection: &Connection,
+        binding: &CheckpointBinding,
+    ) -> Result<()> {
+        binding.validate(&self.path)?;
+        let host: (String, String) = connection.query_row(
+            "SELECT fingerprint,epoch FROM promotion_host_authority WHERE singleton=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if host != (binding.host_fingerprint.clone(), binding.host_epoch.clone()) {
+            return Err(Error::Contract(
+                "checkpoint owner belongs to another database host instance; bytes retained".into(),
+            ));
+        }
+        crate::promotion_journal::verify_owner(binding)?;
+        if let Some(journal) = CheckpointJournal::load(binding)? {
+            for record in journal
+                .previous
+                .iter()
+                .chain(std::iter::once(&journal.proposed))
+            {
+                if Self::checkpoint_environment(connection, &record.run_id)?
+                    != binding.environment_id
+                {
+                    return Err(Error::Contract(
+                        "checkpoint journal run/environment binding changed; bytes retained".into(),
+                    ));
+                }
+            }
+            let authorization_state = crate::promotion_host::verify_recovery(
+                connection,
+                &journal.authorization_id,
+                &self.path,
+                &journal.proposed,
+                journal.incumbent_sha256.as_deref(),
+            )?;
+            let current = Self::checkpoint_record(connection, &binding.goal_id)?;
+            let committed = if current.as_ref() == Some(&journal.proposed) {
+                true
+            } else if current == journal.previous {
+                false
+            } else {
+                return Err(Error::Contract("checkpoint database is neither journal predecessor nor successor; bytes retained".into()));
+            };
+            if authorization_state != if committed { "installed" } else { "approved" } {
+                return Err(Error::Contract(
+                    "journal/database authorization consumption state conflicts; bytes retained"
+                        .into(),
+                ));
+            }
+            journal.reconcile(committed)?;
+        }
+        if let Some(record) = Self::checkpoint_record(connection, &binding.goal_id)?
+            && (Self::checkpoint_environment(connection, &record.run_id)? != binding.environment_id
+                || crate::promotion_journal::canonical_live_path(Path::new(
+                    &record.checkpoint_path,
+                ))? != Path::new(&binding.live_path)
+                || !Path::new(&binding.live_path).is_file()
+                || sha256_file(Path::new(&binding.live_path))? != record.checkpoint_sha256)
+        {
+            return Err(Error::Contract(
+                "checkpoint incumbent binding/hash is inconsistent; bytes retained".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn reconcile_checkpoint_promotions(&self) -> Result<()> {
+        let mut connection = self.checkpoint_connection()?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let bindings = {
+            let mut statement = transaction.prepare(
+                "SELECT environment_id, goal_id, store_path, live_path, protocol_version, target_id, environment_config_sha256, host_fingerprint, host_epoch FROM checkpoint_promotion_locations ORDER BY goal_id LIMIT 1025",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok(CheckpointBinding {
+                        environment_id: row.get(0)?,
+                        goal_id: row.get(1)?,
+                        store_path: row.get(2)?,
+                        live_path: row.get(3)?,
+                        protocol_version: row.get(4)?,
+                        target_id: row.get(5)?,
+                        environment_config_sha256: row.get(6)?,
+                        host_fingerprint: row.get(7)?,
+                        host_epoch: row.get(8)?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        if bindings.len() > 1024 {
+            return Err(Error::Contract(
+                "checkpoint recovery location bound exceeded".into(),
+            ));
+        }
+        for binding in bindings {
+            self.reconcile_checkpoint_binding(&transaction, &binding)?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
     pub fn promote_checkpoint(
         &self,
-        request: CheckpointPromotionRequest<'_>,
+        _request: CheckpointPromotionRequest<'_>,
     ) -> Result<(bool, CheckpointPromotionRecord)> {
-        let CheckpointPromotionRequest {
-            goal_id,
-            metric,
-            mode,
-            value,
-            run_id,
-            trial_id,
-            candidate,
-            live,
-        } = request;
-        validate_identifier(goal_id, "goal_id")?;
-        validate_identifier(metric, "checkpoint promotion metric")?;
-        if !value.is_finite() {
+        Err(Error::Contract("legacy checkpoint promotion is disabled: persisted host evaluation, supervisor stop and independent review are required".into()))
+    }
+
+    pub(crate) fn install_authorized_checkpoint(
+        &self,
+        request: CheckpointPromotionRequest<'_>,
+        authorization_id: &str,
+    ) -> Result<(bool, CheckpointPromotionRecord)> {
+        match self.promote_checkpoint_inner(request, authorization_id, |_| Ok(())) {
+            Ok(result) => Ok(result),
+            Err(error) => match self.reconcile_checkpoint_promotions() {
+                Ok(()) => Err(error),
+                Err(recovery) => Err(Error::Contract(format!(
+                    "checkpoint promotion failed: {error}; recovery refused: {recovery}; journal and model bytes retained"
+                ))),
+            },
+        }
+    }
+
+    // Fault callbacks are private and supplied only by Rust test fixtures.
+    // Production always passes the no-op above; no environment crash switch.
+    fn promote_checkpoint_inner(
+        &self,
+        request: CheckpointPromotionRequest<'_>,
+        authorization_id: &str,
+        mut observe: impl FnMut(CheckpointPhase) -> Result<()>,
+    ) -> Result<(bool, CheckpointPromotionRecord)> {
+        validate_identifier(request.goal_id, "goal_id")?;
+        validate_identifier(request.metric, "checkpoint promotion metric")?;
+        validate_identifier(request.trial_id, "checkpoint promotion trial_id")?;
+        if !request.value.is_finite() {
             return Err(Error::Invalid(
                 "checkpoint promotion metric must be finite".into(),
             ));
         }
-        if candidate.is_symlink() || !candidate.is_file() {
-            return Err(Error::Missing(candidate.to_path_buf()));
+        {
+            let connection = self.checkpoint_connection()?;
+            crate::promotion_host::verify_authorization(
+                &connection,
+                authorization_id,
+                &self.path,
+                &request,
+            )?;
         }
-        if live.is_symlink() {
-            return Err(Error::Invalid("live checkpoint cannot be a symlink".into()));
+        crate::promotion_journal::validate_ancestors(request.candidate)?;
+        if !request.candidate.is_file() {
+            return Err(Error::Missing(request.candidate.to_path_buf()));
         }
-        if let Some(parent) = live.parent() {
+        crate::promotion_journal::validate_ancestors(request.live)?;
+        if let Some(parent) = request.live.parent() {
             fs::create_dir_all(parent)?;
         }
-        let connection = self.connect()?;
-        let previous: Option<StoredCheckpointPromotion> = connection
-            .query_row(
-                "SELECT metric, mode, best_metric, checkpoint_sha256, checkpoint_path, run_id, trial_id, updated_at_ns FROM checkpoint_promotions WHERE goal_id = ?",
-                [goal_id],
-                |row| {
-                    Ok(StoredCheckpointPromotion {
-                        metric: row.get(0)?,
-                        mode: row.get(1)?,
-                        best_metric: row.get(2)?,
-                        checkpoint_sha256: row.get(3)?,
-                        checkpoint_path: row.get(4)?,
-                        run_id: row.get(5)?,
-                        trial_id: row.get(6)?,
-                        updated_at_ns: row.get(7)?,
-                    })
-                },
-            )
-            .optional()?;
-        let mode_name = match mode {
+        let binding = self.register_checkpoint_location(&request, authorization_id)?;
+        let mut connection = self.checkpoint_connection()?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.reconcile_checkpoint_binding(&transaction, &binding)?;
+        let minimum_improvement = crate::promotion_host::verify_authorization(
+            &transaction,
+            authorization_id,
+            &self.path,
+            &request,
+        )?;
+        let previous = Self::checkpoint_record(&transaction, request.goal_id)?;
+        let mode = match request.mode {
             PromotionMode::Max => "max",
             PromotionMode::Min => "min",
         };
-        let improved = previous.as_ref().is_none_or(|stored| match mode {
-            PromotionMode::Max => value > stored.best_metric,
-            PromotionMode::Min => value < stored.best_metric,
-        });
-        let digest = sha256_file(candidate)?;
-        if improved {
-            let temporary = live.with_extension(format!("tmp-{}", uuid::Uuid::new_v4().simple()));
-            fs::copy(candidate, &temporary)?;
-            if live.exists() {
-                fs::remove_file(live)?;
-            }
-            fs::rename(&temporary, live)?;
-            let updated_at_ns = now_ns()?;
-            connection.execute(
-                "INSERT INTO checkpoint_promotions(goal_id, metric, mode, best_metric, checkpoint_sha256, checkpoint_path, run_id, trial_id, updated_at_ns) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(goal_id) DO UPDATE SET metric=excluded.metric, mode=excluded.mode, best_metric=excluded.best_metric, checkpoint_sha256=excluded.checkpoint_sha256, checkpoint_path=excluded.checkpoint_path, run_id=excluded.run_id, trial_id=excluded.trial_id, updated_at_ns=excluded.updated_at_ns",
-                params![goal_id, metric, mode_name, value, digest, live.to_string_lossy(), run_id, trial_id, updated_at_ns],
-            )?;
-            return Ok((
-                true,
-                CheckpointPromotionRecord {
-                    goal_id: goal_id.into(),
-                    metric: metric.into(),
-                    mode: mode_name.into(),
-                    best_metric: value,
-                    checkpoint_sha256: digest,
-                    checkpoint_path: live.to_string_lossy().into_owned(),
-                    run_id: run_id.into(),
-                    trial_id: trial_id.into(),
-                    updated_at_ns,
-                },
+        if previous
+            .as_ref()
+            .is_some_and(|stored| stored.metric != request.metric || stored.mode != mode)
+        {
+            return Err(Error::Contract(
+                "checkpoint promotion metric or mode differs from the incumbent".into(),
             ));
         }
-        let stored = previous
-            .ok_or_else(|| Error::Contract("checkpoint promotion state disappeared".into()))?;
-        Ok((
-            false,
+        let improved = previous.as_ref().is_none_or(|stored| match request.mode {
+            PromotionMode::Max => request.value - stored.best_metric > minimum_improvement,
+            PromotionMode::Min => stored.best_metric - request.value > minimum_improvement,
+        });
+        if !improved {
+            if transaction.execute("UPDATE host_checkpoint_promotion_trials SET state='declined' WHERE authorization_id=? AND state='approved'", [authorization_id])? != 1 { return Err(Error::Contract("authorization has already been consumed".into())); }
+            transaction.commit()?;
+            return Ok((
+                false,
+                previous.ok_or_else(|| {
+                    Error::Contract("checkpoint promotion state disappeared".into())
+                })?,
+            ));
+        }
+        let journal = CheckpointJournal::stage(
+            binding,
+            authorization_id,
+            request.candidate,
+            previous,
             CheckpointPromotionRecord {
-                goal_id: goal_id.into(),
-                metric: stored.metric,
-                mode: stored.mode,
-                best_metric: stored.best_metric,
-                checkpoint_sha256: stored.checkpoint_sha256,
-                checkpoint_path: stored.checkpoint_path,
-                run_id: stored.run_id,
-                trial_id: stored.trial_id,
-                updated_at_ns: stored.updated_at_ns,
+                goal_id: request.goal_id.into(),
+                metric: request.metric.into(),
+                mode: mode.into(),
+                best_metric: request.value,
+                checkpoint_sha256: String::new(),
+                checkpoint_path: String::new(),
+                run_id: request.run_id.into(),
+                trial_id: request.trial_id.into(),
+                updated_at_ns: now_ns()?,
             },
-        ))
+        )?;
+        crate::promotion_host::verify_recovery(
+            &transaction,
+            authorization_id,
+            &self.path,
+            &journal.proposed,
+            journal.incumbent_sha256.as_deref(),
+        )?;
+        observe(CheckpointPhase::Staged)?;
+        journal.persist()?;
+        observe(CheckpointPhase::Journaled)?;
+        let record = journal.proposed.clone();
+        transaction.execute(
+            "INSERT INTO checkpoint_promotions(goal_id, metric, mode, best_metric, checkpoint_sha256, checkpoint_path, run_id, trial_id, updated_at_ns) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(goal_id) DO UPDATE SET metric=excluded.metric, mode=excluded.mode, best_metric=excluded.best_metric, checkpoint_sha256=excluded.checkpoint_sha256, checkpoint_path=excluded.checkpoint_path, run_id=excluded.run_id, trial_id=excluded.trial_id, updated_at_ns=excluded.updated_at_ns",
+            params![record.goal_id, record.metric, record.mode, record.best_metric, record.checkpoint_sha256,
+                record.checkpoint_path, record.run_id, record.trial_id, record.updated_at_ns],
+        )?;
+        if transaction.execute("UPDATE host_checkpoint_promotion_trials SET state='installed' WHERE authorization_id=? AND state='approved'", [authorization_id])? != 1 { return Err(Error::Contract("authorization has already been consumed".into())); }
+        observe(CheckpointPhase::SqlWritten)?;
+        let actual_live = if request.live.try_exists()? {
+            Some(sha256_file(request.live)?)
+        } else {
+            None
+        };
+        if actual_live != journal.incumbent_sha256 {
+            return Err(Error::Contract(
+                "live checkpoint drifted after staging; unknown bytes retained".into(),
+            ));
+        }
+        journal.install(&record.checkpoint_sha256)?;
+        observe(CheckpointPhase::Replaced)?;
+        observe(CheckpointPhase::BeforeCommit)?;
+        transaction.commit()?;
+        observe(CheckpointPhase::Committed)?;
+        // Reacquire the actual SQLite lock after commit. Another worker may
+        // already have reconciled this intent; recovery is idempotent.
+        self.reconcile_checkpoint_promotions()?;
+        Ok((true, record))
     }
-
     pub fn has_metric_evidence(
         &self,
         run_id: &str,
@@ -1586,89 +1873,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn checkpoint_promotion_keeps_the_best_bytes_and_retains_candidates() {
+    fn legacy_checkpoint_promotion_cannot_install_without_host_authorization() {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::open(temp.path().join("runs.sqlite3")).unwrap();
         let run = store
             .create_run("example.environment-v1", "1.0", "goal", json!({}))
             .unwrap();
-        let live = temp.path().join("checkpoints/policy.checkpoint");
-        let first = temp.path().join("trial-1.checkpoint");
-        fs::write(&first, b"first").unwrap();
-        let (promoted, record) = store
-            .promote_checkpoint(CheckpointPromotionRequest {
-                goal_id: "goal.demo",
-                metric: "victories",
-                mode: PromotionMode::Max,
-                value: 3.0,
-                run_id: &run.run_id,
-                trial_id: "trial-1",
-                candidate: &first,
-                live: &live,
+        let live = temp.path().join("live.checkpoint");
+        let candidate = temp.path().join("candidate.checkpoint");
+        fs::write(&live, b"incumbent").unwrap();
+        fs::write(&candidate, b"candidate").unwrap();
+        assert!(
+            store
+                .promote_checkpoint(CheckpointPromotionRequest {
+                    goal_id: "goal.demo",
+                    metric: "victories",
+                    mode: PromotionMode::Max,
+                    value: 100.0,
+                    run_id: &run.run_id,
+                    trial_id: "trial-1",
+                    candidate: &candidate,
+                    live: &live,
+                })
+                .is_err()
+        );
+        assert_eq!(fs::read(live).unwrap(), b"incumbent");
+        assert_eq!(fs::read(candidate).unwrap(), b"candidate");
+        let count: i64 = store
+            .connect()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM checkpoint_promotions", [], |row| {
+                row.get(0)
             })
             .unwrap();
-        assert!(promoted);
-        assert_eq!(record.best_metric, 3.0);
-        assert_eq!(record.run_id, run.run_id);
-        assert_eq!(record.trial_id, "trial-1");
-        assert_eq!(fs::read(&live).unwrap(), b"first");
-
-        let regression = temp.path().join("trial-2.checkpoint");
-        fs::write(&regression, b"regression").unwrap();
-        let (promoted, record) = store
-            .promote_checkpoint(CheckpointPromotionRequest {
-                goal_id: "goal.demo",
-                metric: "victories",
-                mode: PromotionMode::Max,
-                value: 2.0,
-                run_id: &run.run_id,
-                trial_id: "trial-2",
-                candidate: &regression,
-                live: &live,
-            })
-            .unwrap();
-        assert!(!promoted);
-        assert_eq!(record.best_metric, 3.0);
-        assert_eq!(record.run_id, run.run_id);
-        assert_eq!(record.trial_id, "trial-1");
-        assert_eq!(fs::read(&live).unwrap(), b"first");
-        assert_eq!(fs::read(&regression).unwrap(), b"regression");
-
-        let improvement = temp.path().join("trial-4.checkpoint");
-        fs::write(&improvement, b"improvement").unwrap();
-        let (promoted, record) = store
-            .promote_checkpoint(CheckpointPromotionRequest {
-                goal_id: "goal.demo",
-                metric: "victories",
-                mode: PromotionMode::Max,
-                value: 4.0,
-                run_id: &run.run_id,
-                trial_id: "trial-4",
-                candidate: &improvement,
-                live: &live,
-            })
-            .unwrap();
-        assert!(promoted);
-        assert_eq!(record.best_metric, 4.0);
-        assert_eq!(record.trial_id, "trial-4");
-        assert_eq!(fs::read(&live).unwrap(), b"improvement");
-
-        let tie = temp.path().join("trial-3.checkpoint");
-        fs::write(&tie, b"tie").unwrap();
-        let (promoted, _) = store
-            .promote_checkpoint(CheckpointPromotionRequest {
-                goal_id: "goal.demo",
-                metric: "victories",
-                mode: PromotionMode::Max,
-                value: 3.0,
-                run_id: &run.run_id,
-                trial_id: "trial-3",
-                candidate: &tie,
-                live: &live,
-            })
-            .unwrap();
-        assert!(!promoted);
-        assert_eq!(fs::read(&live).unwrap(), b"improvement");
+        assert_eq!(count, 0);
     }
 
     #[test]
@@ -1801,4 +2039,620 @@ fn sha256_bytes(value: &[u8]) -> String {
     let mut digest = Sha256::new();
     digest.update(value);
     format!("{:x}", digest.finalize())
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod promotion_tests {
+    use super::*;
+    fn test_binding(
+        store: &Path,
+        environment: &str,
+        goal: &str,
+        live: &Path,
+    ) -> Result<CheckpointBinding> {
+        let config = store.parent().unwrap().join("journal-fixture-config.json");
+        if !config.exists() {
+            fs::write(
+                &config,
+                serde_json::to_vec(
+                    &json!({"environment_id":environment,"protocol_version":"1.0","target_id":"fixture-target","evaluator_files":[]}),
+                )?,
+            )?;
+        }
+        let connection = Connection::open(store)?;
+        let fingerprint = format!("{:x}", Sha256::digest([31u8; 32]));
+        connection.execute("INSERT OR IGNORE INTO promotion_host_authority(singleton,fingerprint,epoch) VALUES (1,?,?)",params![fingerprint,"11111111111111111111111111111111"])?;
+        let (fingerprint, epoch): (String, String) = connection.query_row(
+            "SELECT fingerprint,epoch FROM promotion_host_authority WHERE singleton=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        CheckpointBinding::new(
+            store,
+            environment,
+            goal,
+            live,
+            "1.0",
+            "fixture-target",
+            &sha256_file(&config)?,
+            &fingerprint,
+            &epoch,
+        )
+    }
+
+    fn journal_fixture() -> (tempfile::TempDir, Store, String, CheckpointBinding) {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path().join("runs.sqlite3")).unwrap();
+        let run = store
+            .create_run("example.environment-v1", "1.0", "goal", json!({}))
+            .unwrap();
+        let candidate = temp.path().join("incumbent.candidate");
+        let live = temp.path().join("best.checkpoint");
+        fs::write(&candidate, b"incumbent").unwrap();
+        store
+            .test_promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.journal",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 2.0,
+                run_id: &run.run_id,
+                trial_id: "trial-1",
+                candidate: &candidate,
+                live: &live,
+            })
+            .unwrap();
+        fs::write(temp.path().join("new.candidate"), b"candidate").unwrap();
+        let binding =
+            test_binding(&store.path, "example.environment-v1", "goal.journal", &live).unwrap();
+        (temp, store, run.run_id, binding)
+    }
+
+    fn crash_promotion(temp: &Path, run_id: &str, phase: &str) {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "store::promotion_tests::checkpoint_promotion_crash_child",
+            ])
+            .env("JOURNAL_TEST_ROOT", temp)
+            .env("JOURNAL_TEST_RUN", run_id)
+            .env("JOURNAL_TEST_PHASE", phase)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(86),
+            "phase {phase}\nstdout {}\nstderr {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn checkpoint_promotion_crash_child() {
+        let root = PathBuf::from(std::env::var_os("JOURNAL_TEST_ROOT").unwrap());
+        let run_id = std::env::var("JOURNAL_TEST_RUN").unwrap();
+        let phase = std::env::var("JOURNAL_TEST_PHASE").unwrap();
+        let store = Store::open(root.join("runs.sqlite3")).unwrap();
+        let request = CheckpointPromotionRequest {
+            goal_id: "goal.journal",
+            metric: "victories",
+            mode: PromotionMode::Max,
+            value: 4.0,
+            run_id: &run_id,
+            trial_id: "trial-crash",
+            candidate: &root.join("new.candidate"),
+            live: &root.join("best.checkpoint"),
+        };
+        let authorization = crate::promotion_host::fixture_authorization(&store, &request).unwrap();
+        store
+            .promote_checkpoint_inner(request, &authorization, |observed| {
+                if format!("{observed:?}") == phase {
+                    // std::process::exit deliberately bypasses all Rust Drop,
+                    // transaction rollback, and tempfile cleanup in this fixture.
+                    std::process::exit(86);
+                }
+                Ok(())
+            })
+            .unwrap();
+        panic!("unknown fault phase");
+    }
+
+    #[test]
+    fn checkpoint_promotion_recovers_each_abrupt_process_exit_boundary() {
+        for phase in [
+            "Staged",
+            "Journaled",
+            "SqlWritten",
+            "Replaced",
+            "BeforeCommit",
+            "Committed",
+        ] {
+            let (temp, _store, run_id, binding) = journal_fixture();
+            crash_promotion(temp.path(), &run_id, phase);
+            let recovered = Store::open(temp.path().join("runs.sqlite3")).unwrap();
+            let record = Store::checkpoint_record(&recovered.connect().unwrap(), "goal.journal")
+                .unwrap()
+                .unwrap();
+            let committed = phase == "Committed";
+            assert_eq!(
+                record.best_metric,
+                if committed { 4.0 } else { 2.0 },
+                "{phase}"
+            );
+            assert_eq!(
+                fs::read(&binding.live_path).unwrap(),
+                if committed {
+                    b"candidate"
+                } else {
+                    b"incumbent"
+                },
+                "{phase}"
+            );
+            assert_eq!(
+                sha256_file(Path::new(&binding.live_path)).unwrap(),
+                record.checkpoint_sha256
+            );
+            assert!(!binding.pending().exists(), "{phase}");
+            assert_eq!(
+                fs::read(temp.path().join("new.candidate")).unwrap(),
+                b"candidate"
+            );
+            let old_digest = sha256_file(&temp.path().join("incumbent.candidate")).unwrap();
+            assert_eq!(fs::read(binding.blob(&old_digest)).unwrap(), b"incumbent");
+            // A second restart must not replay or reverse the completed decision.
+            Store::open(temp.path().join("runs.sqlite3")).unwrap();
+        }
+    }
+
+    #[test]
+    fn checkpoint_promotion_first_attempt_rolls_back_without_deleting_candidate_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path().join("runs.sqlite3")).unwrap();
+        let run = store
+            .create_run("example.environment-v1", "1.0", "goal", json!({}))
+            .unwrap();
+        fs::write(temp.path().join("new.candidate"), b"candidate").unwrap();
+        crash_promotion(temp.path(), &run.run_id, "Replaced");
+        let recovered = Store::open(store.path.clone()).unwrap();
+        assert!(!temp.path().join("best.checkpoint").exists());
+        assert!(
+            Store::checkpoint_record(&recovered.connect().unwrap(), "goal.journal")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            fs::read(temp.path().join("new.candidate")).unwrap(),
+            b"candidate"
+        );
+        let binding = test_binding(
+            &store.path,
+            "example.environment-v1",
+            "goal.journal",
+            &temp.path().join("best.checkpoint"),
+        )
+        .unwrap();
+        let abandoned = fs::read_dir(binding.directory())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "abandoned")
+            })
+            .unwrap();
+        assert_eq!(fs::read(abandoned).unwrap(), b"candidate");
+    }
+
+    #[test]
+    fn checkpoint_promotion_recovery_reinstalls_missing_live_from_verified_blobs() {
+        for phase in ["Replaced", "Committed"] {
+            let (temp, store, run_id, binding) = journal_fixture();
+            crash_promotion(temp.path(), &run_id, phase);
+            // Only this fixture's replaceable live projection is removed;
+            // both immutable models and original candidates remain present.
+            fs::remove_file(&binding.live_path).unwrap();
+            Store::open(store.path).unwrap();
+            assert_eq!(
+                fs::read(&binding.live_path).unwrap(),
+                if phase == "Committed" {
+                    b"candidate"
+                } else {
+                    b"incumbent"
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_promotion_recovery_refuses_unknown_bindings_hashes_and_database_states() {
+        for tamper in [
+            "environment",
+            "schema",
+            "blob",
+            "live",
+            "database",
+            "run-environment",
+        ] {
+            let (temp, store, run_id, binding) = journal_fixture();
+            crash_promotion(temp.path(), &run_id, "Replaced");
+            let mut journal: Value =
+                serde_json::from_slice(&fs::read(binding.pending()).unwrap()).unwrap();
+            match tamper {
+                "environment" => {
+                    journal["binding"]["environment_id"] = json!("different.environment");
+                    fs::write(binding.pending(), serde_json::to_vec(&journal).unwrap()).unwrap();
+                }
+                "schema" => {
+                    journal["schema_version"] = json!("unknown.v9");
+                    fs::write(binding.pending(), serde_json::to_vec(&journal).unwrap()).unwrap();
+                }
+                "blob" => {
+                    let digest = journal["incumbent_sha256"].as_str().unwrap();
+                    fs::write(binding.blob(digest), b"corrupt").unwrap();
+                }
+                "live" => fs::write(&binding.live_path, b"unknown bytes").unwrap(),
+                "database" => {
+                    store.connect().unwrap().execute("UPDATE checkpoint_promotions SET best_metric = 999 WHERE goal_id = 'goal.journal'", []).unwrap();
+                }
+                "run-environment" => {
+                    store.connect().unwrap().execute("UPDATE runs SET environment_id = 'different.environment' WHERE run_id = ?", [&run_id]).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let before = fs::read(&binding.live_path).unwrap();
+            assert!(
+                Store::open(temp.path().join("runs.sqlite3")).is_err(),
+                "{tamper}"
+            );
+            assert_eq!(fs::read(&binding.live_path).unwrap(), before, "{tamper}");
+            assert!(binding.pending().is_file(), "{tamper}");
+            assert_eq!(
+                fs::read(temp.path().join("incumbent.candidate")).unwrap(),
+                b"incumbent"
+            );
+            assert_eq!(
+                fs::read(temp.path().join("new.candidate")).unwrap(),
+                b"candidate"
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_promotion_copied_store_cannot_recover_another_store_location() {
+        let (temp, store, run_id, binding) = journal_fixture();
+        crash_promotion(temp.path(), &run_id, "Replaced");
+        let copy = temp.path().join("copied.sqlite3");
+        fs::copy(&store.path, &copy).unwrap();
+        assert!(Store::open(copy).is_err());
+        assert!(binding.pending().exists());
+        assert_eq!(fs::read(&binding.live_path).unwrap(), b"candidate");
+        Store::open(store.path).unwrap();
+        assert_eq!(fs::read(&binding.live_path).unwrap(), b"incumbent");
+    }
+
+    #[test]
+    fn checkpoint_promotion_never_steals_an_active_sqlite_worker_lock() {
+        let (temp, store, run_id, binding) = journal_fixture();
+        let mut connection = store.connect().unwrap();
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        let error = store
+            .test_promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.journal",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 4.0,
+                run_id: &run_id,
+                trial_id: "trial-lock",
+                candidate: &temp.path().join("new.candidate"),
+                live: Path::new(&binding.live_path),
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("locked"), "{error}");
+        assert_eq!(fs::read(&binding.live_path).unwrap(), b"incumbent");
+        assert!(!binding.pending().exists());
+        assert_eq!(
+            Store::checkpoint_record(&transaction, "goal.journal")
+                .unwrap()
+                .unwrap()
+                .best_metric,
+            2.0
+        );
+        transaction.rollback().unwrap();
+    }
+
+    #[test]
+    fn checkpoint_promotion_different_store_cannot_claim_the_same_live_path() {
+        let (temp, _store, _run_id, binding) = journal_fixture();
+        let foreign = Store::open(temp.path().join("foreign.sqlite3")).unwrap();
+        let run = foreign
+            .create_run("example.environment-v1", "1.0", "goal", json!({}))
+            .unwrap();
+        let error = foreign
+            .test_promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.journal",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 99.0,
+                run_id: &run.run_id,
+                trial_id: "trial-foreign",
+                candidate: &temp.path().join("new.candidate"),
+                live: Path::new(&binding.live_path),
+            })
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("belongs to another store"),
+            "{error}"
+        );
+        assert_eq!(fs::read(&binding.live_path).unwrap(), b"incumbent");
+        assert!(
+            Store::checkpoint_record(&foreign.connect().unwrap(), "goal.journal")
+                .unwrap()
+                .is_none()
+        );
+        crate::promotion_journal::verify_owner(&binding).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn checkpoint_promotion_case_aliases_share_ownership_before_live_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = Store::open(temp.path().join("first.sqlite3")).unwrap();
+        let second = Store::open(temp.path().join("second.sqlite3")).unwrap();
+        let binding = test_binding(
+            &first.path,
+            "example.environment-v1",
+            "goal.journal",
+            &temp.path().join("best.checkpoint"),
+        )
+        .unwrap();
+        let alias = test_binding(
+            &second.path,
+            "example.environment-v1",
+            "goal.journal",
+            &temp.path().join("BEST.CHECKPOINT"),
+        )
+        .unwrap();
+        assert_eq!(binding.directory(), alias.directory());
+        crate::promotion_journal::claim_location(&binding).unwrap();
+        assert!(crate::promotion_journal::claim_location(&alias).is_err());
+        assert!(!temp.path().join("best.checkpoint").exists());
+    }
+
+    #[test]
+    fn checkpoint_promotion_owner_tampering_fails_closed_without_changing_bytes() {
+        let (temp, store, _run_id, binding) = journal_fixture();
+        let mut owner: Value = serde_json::from_slice(&fs::read(binding.owner()).unwrap()).unwrap();
+        owner["binding"]["goal_id"] = json!("another.goal");
+        fs::write(binding.owner(), serde_json::to_vec(&owner).unwrap()).unwrap();
+        assert!(Store::open(store.path).is_err());
+        assert_eq!(fs::read(&binding.live_path).unwrap(), b"incumbent");
+        assert!(binding.owner().exists());
+        assert_eq!(
+            fs::read(temp.path().join("incumbent.candidate")).unwrap(),
+            b"incumbent"
+        );
+    }
+
+    #[test]
+    fn promotion_metric_is_bound_to_authoritative_persisted_trial_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path().join("runs.sqlite3")).unwrap();
+        let run = store
+            .create_run("example.environment-v1", "1.0", "goal", json!({}))
+            .unwrap();
+        store
+            .append_metric(
+                &run.run_id,
+                "victories",
+                3.0,
+                None,
+                json!({"source": "referee", "authority": "authoritative"}),
+            )
+            .unwrap();
+        let floor = store.latest_metric_id(&run.run_id).unwrap();
+        store
+            .append_metric(
+                &run.run_id,
+                "victories",
+                4.0,
+                None,
+                json!({"source": "referee", "authority": "authoritative"}),
+            )
+            .unwrap();
+        for (source, authority, value) in [
+            ("trainer", "authoritative", 99.0),
+            ("referee", "advisory", 999.0),
+        ] {
+            store
+                .append_metric(
+                    &run.run_id,
+                    "victories",
+                    value,
+                    None,
+                    json!({"source": source, "authority": authority}),
+                )
+                .unwrap();
+        }
+        let evidence = GoalEvidence {
+            metric: "victories".into(),
+            value: 4.0,
+            source: "referee".into(),
+            authority: Authority::Authoritative,
+            run_id: run.run_id.clone(),
+        };
+        assert_eq!(
+            store
+                .promotion_metric_value(&run.run_id, floor, &evidence)
+                .unwrap(),
+            4.0
+        );
+        for invalid in [
+            GoalEvidence {
+                value: 3.0,
+                ..evidence.clone()
+            },
+            GoalEvidence {
+                value: 999.0,
+                ..evidence.clone()
+            },
+            GoalEvidence {
+                authority: Authority::Advisory,
+                ..evidence.clone()
+            },
+            GoalEvidence {
+                run_id: "different-run".into(),
+                ..evidence.clone()
+            },
+        ] {
+            assert!(
+                store
+                    .promotion_metric_value(&run.run_id, floor, &invalid)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_promotion_database_failure_preserves_incumbent_and_candidate() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path().join("runs.sqlite3")).unwrap();
+        let run = store
+            .create_run("example.environment-v1", "1.0", "goal", json!({}))
+            .unwrap();
+        let live = temp.path().join("best.checkpoint");
+        let candidate = temp.path().join("candidate.checkpoint");
+        fs::write(&live, b"incumbent").unwrap();
+        fs::write(&candidate, b"candidate").unwrap();
+        store.connect().unwrap().execute_batch(
+            "CREATE TRIGGER reject_promotion BEFORE INSERT ON checkpoint_promotions BEGIN SELECT RAISE(ABORT, 'test refusal'); END;",
+        ).unwrap();
+        assert!(
+            store
+                .test_promote_checkpoint(CheckpointPromotionRequest {
+                    goal_id: "goal.demo",
+                    metric: "victories",
+                    mode: PromotionMode::Max,
+                    value: 4.0,
+                    run_id: &run.run_id,
+                    trial_id: "trial-1",
+                    candidate: &candidate,
+                    live: &live,
+                })
+                .is_err()
+        );
+        assert_eq!(fs::read(&live).unwrap(), b"incumbent");
+        assert_eq!(fs::read(&candidate).unwrap(), b"candidate");
+        let count: i64 = store
+            .connect()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM checkpoint_promotions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn checkpoint_promotion_keeps_the_best_bytes_and_retains_candidates() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path().join("runs.sqlite3")).unwrap();
+        let run = store
+            .create_run("example.environment-v1", "1.0", "goal", json!({}))
+            .unwrap();
+        let live = temp.path().join("checkpoints/policy.checkpoint");
+        let first = temp.path().join("trial-1.checkpoint");
+        fs::write(&first, b"first").unwrap();
+        let (promoted, record) = store
+            .test_promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 3.0,
+                run_id: &run.run_id,
+                trial_id: "trial-1",
+                candidate: &first,
+                live: &live,
+            })
+            .unwrap();
+        assert!(promoted);
+        assert_eq!(record.best_metric, 3.0);
+        assert_eq!(record.run_id, run.run_id);
+        assert_eq!(record.trial_id, "trial-1");
+        assert_eq!(fs::read(&live).unwrap(), b"first");
+
+        let regression = temp.path().join("trial-2.checkpoint");
+        fs::write(&regression, b"regression").unwrap();
+        let (promoted, record) = store
+            .test_promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 2.0,
+                run_id: &run.run_id,
+                trial_id: "trial-2",
+                candidate: &regression,
+                live: &live,
+            })
+            .unwrap();
+        assert!(!promoted);
+        assert_eq!(record.best_metric, 3.0);
+        assert_eq!(record.run_id, run.run_id);
+        assert_eq!(record.trial_id, "trial-1");
+        assert_eq!(fs::read(&live).unwrap(), b"first");
+        assert_eq!(fs::read(&regression).unwrap(), b"regression");
+
+        let improvement = temp.path().join("trial-4.checkpoint");
+        fs::write(&improvement, b"improvement").unwrap();
+        let (promoted, record) = store
+            .test_promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 4.0,
+                run_id: &run.run_id,
+                trial_id: "trial-4",
+                candidate: &improvement,
+                live: &live,
+            })
+            .unwrap();
+        assert!(promoted);
+        assert_eq!(record.best_metric, 4.0);
+        assert_eq!(record.trial_id, "trial-4");
+        assert_eq!(fs::read(&live).unwrap(), b"improvement");
+
+        let tie = temp.path().join("trial-3.checkpoint");
+        fs::write(&tie, b"tie").unwrap();
+        let (promoted, _) = store
+            .test_promote_checkpoint(CheckpointPromotionRequest {
+                goal_id: "goal.demo",
+                metric: "victories",
+                mode: PromotionMode::Max,
+                value: 3.0,
+                run_id: &run.run_id,
+                trial_id: "trial-3",
+                candidate: &tie,
+                live: &live,
+            })
+            .unwrap();
+        assert!(!promoted);
+        assert_eq!(fs::read(&live).unwrap(), b"improvement");
+    }
+}
+
+#[cfg(test)]
+impl Store {
+    fn test_promote_checkpoint(
+        &self,
+        request: CheckpointPromotionRequest<'_>,
+    ) -> Result<(bool, CheckpointPromotionRecord)> {
+        if let Some(parent) = request.live.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let authorization = crate::promotion_host::fixture_authorization(self, &request)?;
+        self.install_authorized_checkpoint(request, &authorization)
+    }
 }

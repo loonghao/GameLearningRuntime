@@ -32,6 +32,7 @@ from game_learning_runtime.declared_metrics import (
     DECLARED_METRICS_SCHEMA_VERSION,
     MetricDeclaration,
 )
+from game_learning_runtime.errors import CleanupPendingError
 from game_learning_runtime.host import HOST_SCHEMA, HostChannel
 
 
@@ -649,20 +650,47 @@ def test_json_line_channel_fails_on_a_response_deadline_without_retry() -> None:
     )
     channel = JsonLineHostChannel.open(config)
 
-    with pytest.raises(HostProtocolError, match="deadline"):
-        channel.exchange(
-            {
-                "schema": HOST_SCHEMA,
-                "request_id": "timeout-1",
-                "operation": "describe",
-                "payload": {},
-            }
-        )
+    try:
+        with pytest.raises(HostProtocolError, match="deadline"):
+            channel.exchange(
+                {
+                    "schema": HOST_SCHEMA,
+                    "request_id": "timeout-1",
+                    "operation": "describe",
+                    "payload": {},
+                }
+            )
 
-    with pytest.raises(HostProtocolError, match="closed"):
-        channel.exchange({"value": "must-not-follow-an-ambiguous-request"})
+        with pytest.raises(HostProtocolError, match="closed"):
+            channel.exchange({"value": "must-not-follow-an-ambiguous-request"})
 
-    channel.close()
+        try:
+            channel.close()
+        except CleanupPendingError as pending:
+            assert "reader cleanup is unconfirmed" in str(pending)
+            assert not pending.cleanup_complete
+            assert not channel._cleanup_complete
+            assert channel._process.poll() is not None
+            assert not channel._stdout.closed
+            # Test-owner teardown may independently await the original reader.
+            # The SDK's one-second reader deadline must continue to report pending.
+            channel._reader.join(timeout=5.0)
+            assert not channel._reader.is_alive()
+            pending.retry_cleanup()
+            assert pending.cleanup_complete
+        assert channel._cleanup_complete
+        assert channel._process.poll() is not None
+        assert not channel._reader.is_alive()
+        assert channel._stdin.closed and channel._stdout.closed
+    finally:
+        # Retain only this test's original owned handle, even if an assertion fails.
+        if channel._process.poll() is None:
+            channel._process.kill()
+        channel._process.wait(timeout=5.0)
+        channel._reader.join(timeout=5.0)
+        assert not channel._reader.is_alive()
+        channel._stdin.close()
+        channel._stdout.close()
 
 
 @pytest.mark.parametrize(

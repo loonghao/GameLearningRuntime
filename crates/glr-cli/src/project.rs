@@ -34,7 +34,6 @@ const PLACEHOLDERS: &[&str] = &[
     "trainer_result_path",
     "checkpoint_path",
     "candidate_checkpoint_path",
-    "promotion_path",
 ];
 
 #[derive(Debug, Clone, Deserialize)]
@@ -818,5 +817,101 @@ pub(crate) fn validate_text(value: &str, label: &str) -> Result<()> {
         )))
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Publication placeholders are rejected while loading configuration, before
+    //! run storage or any role process exists.
+
+    use std::fs;
+
+    use super::load_project;
+    use serde_json::{Value, json};
+
+    fn manifest() -> Value {
+        json!({
+            "schema_version": "glr.project.v1",
+            "environment_id": "synthetic.config-boundary",
+            "environment_family": "synthetic",
+            "protocol_version": "1.0",
+            "data_dir": ".glr",
+            "bridge_path": "bridge",
+            "runtime": {"argv": ["fixture-not-executed"]},
+            "trainer": {"argv": ["fixture-not-executed"]},
+            "player": {"argv": ["fixture-not-executed"]},
+            "researcher": {"argv": ["fixture-not-executed"]},
+            "planner": {"argv": ["fixture-not-executed"]},
+            "evaluator": {"argv": ["fixture-not-executed"]},
+            "capture": null
+        })
+    }
+
+    #[test]
+    fn obsolete_publication_placeholder_is_rejected_before_any_run_side_effect() {
+        for role in [
+            "runtime",
+            "trainer",
+            "player",
+            "researcher",
+            "planner",
+            "evaluator",
+            "capture",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            fs::create_dir(root.path().join("bridge")).unwrap();
+            let mut value = manifest();
+            if role == "capture" {
+                value[role] = json!({
+                    "argv": ["fixture-not-executed", "{promotion_path}"],
+                    "required": false, "stop": "terminate",
+                    "video_file": "capture.mp4", "index_file": "capture.index.jsonl",
+                    "codec": "h264", "frame_rate": 15.0, "width": 128, "height": 128
+                });
+            } else {
+                value[role]["argv"] = json!(["fixture-not-executed", "{promotion_path}"]);
+            }
+            fs::write(
+                root.path().join("glr-project.json"),
+                serde_json::to_vec(&value).unwrap(),
+            )
+            .unwrap();
+            let error = load_project(root.path()).expect_err("load must refuse");
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsupported command placeholder: {promotion_path}"),
+                "wrong refusal for {role}: {error}"
+            );
+            assert!(!root.path().join(".glr").exists());
+        }
+    }
+
+    #[test]
+    fn loading_retains_baseline_and_staging_placeholders_without_starting_a_run() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("bridge")).unwrap();
+        let mut value = manifest();
+        value["planner"]["argv"] = json!([
+            "fixture-not-executed",
+            "{checkpoint_path}",
+            "{candidate_checkpoint_path}"
+        ]);
+        fs::write(
+            root.path().join("glr-project.json"),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+        let project = load_project(root.path()).unwrap();
+        assert_eq!(
+            project.planner.unwrap().argv,
+            [
+                "fixture-not-executed",
+                "{checkpoint_path}",
+                "{candidate_checkpoint_path}"
+            ]
+        );
+        assert!(!root.path().join(".glr").exists());
     }
 }

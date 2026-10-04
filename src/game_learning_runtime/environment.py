@@ -14,7 +14,7 @@ from game_learning_runtime.contracts import (
     TimeStep,
     normalize_environment_config,
 )
-from game_learning_runtime.errors import CommandRefusal, ContractViolation
+from game_learning_runtime.errors import CleanupPendingError, CommandRefusal, ContractViolation
 from game_learning_runtime.refusals import RefusalFunnel
 from game_learning_runtime.specs import EnvironmentSpec
 
@@ -75,6 +75,7 @@ class ContractEnvironment(GameEnvironment):
         self._current: TimeStep | None = None
         self._previous_episode_id: UUID | None = None
         self._closed = False
+        self._cleanup_complete = False
 
     @property
     def spec(self) -> EnvironmentSpec:
@@ -142,9 +143,16 @@ class ContractEnvironment(GameEnvironment):
         return timestep
 
     def close(self) -> None:
-        if not self._closed:
+        if self._cleanup_complete:
+            return
+        self._closed = True
+        try:
             self._environment.close()
-            self._closed = True
+        except Exception as cleanup_error:
+            raise CleanupPendingError(
+                "Contract environment cleanup is unconfirmed", retry_cleanup=self.close
+            ) from cleanup_error
+        self._cleanup_complete = True
 
     def _validate_timestep(self, timestep: TimeStep) -> None:
         self.spec.observation.validate(timestep.observation, path="observation")
