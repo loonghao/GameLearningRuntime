@@ -52,6 +52,7 @@
 - [ADR-0047: Record why every episode ended, and make an indeterminate outcome absorbing](0047-record-why-every-episode-ended.md)
 - [ADR-0049: Persist bounded learning campaigns](0049-persist-bounded-learning-campaigns.md)
 - [ADR-0050: Correlate action rewards and learner updates](0050-correlate-action-rewards-and-learner-updates.md)
+- [ADR-0051: Record safe decision evidence and read-only timelines](0051-record-safe-decision-evidence-and-readonly-timelines.md)
 
 ADR-0047 is **retrospective**: it records a decision that was already implemented
 and shipped (PR #174, issues #155 and #156) rather than proposing new behavior.
