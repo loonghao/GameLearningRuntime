@@ -23,6 +23,7 @@ from game_learning_runtime.fleet_datahub import (
 )
 from game_learning_runtime.fleet_learner import (
     FleetConsumer,
+    LearnerResult,
     LearnerSelection,
     RealTrainingEnablement,
 )
@@ -32,8 +33,10 @@ from game_learning_runtime.fleet_measured import (
     verify_measured,
 )
 from game_learning_runtime.fleet_payload import (
+    EncodedShard,
     FleetError,
     FleetLimits,
+    SourceSpec,
     decode_shard,
     encode_shard,
     parse_manifest,
@@ -41,6 +44,55 @@ from game_learning_runtime.fleet_payload import (
 )
 
 NOW = 1_700_000_000_000
+
+
+def _legacy_copy(
+    fixture: SyntheticMeasuredFixture,
+    *,
+    split: str = "train",
+    game_id: str | None = None,
+) -> tuple[SourceSpec, EncodedShard]:
+    source = replace(
+        fixture.source,
+        source_id="legacy-numeric-source",
+        source_epoch="legacy-epoch",
+        run_id="legacy-run",
+        assignment_id="legacy-assignment",
+        simulated=True,
+        split=split,
+        runtime_source_commit="a" * 40,
+        adapter_source_sha256="b" * 64,
+        behavior_policy_sha256="c" * 64,
+        game_id=fixture.source.game_id if game_id is None else game_id,
+    )
+    numeric = decode_shard(fixture.shard.manifest, fixture.shard.payload).unroll
+    unroll = Unroll(
+        tuple(
+            replace(item, episode_id=uuid5(NAMESPACE_URL, "synthetic historical numeric copy"))
+            for item in numeric.transitions
+        ),
+        source.source_id,
+        0,
+        source.policy_version,
+        environment_config_digest=source.compatibility.environment_config_sha256,
+    )
+    return source, encode_shard(source, shard_seq=0, unroll=unroll, produced_at_utc_ms=NOW)
+
+
+def _legacy_consumer(hub: FleetHub, source: SourceSpec) -> FleetConsumer:
+    return FleetConsumer(
+        hub,
+        BoundedActorQueue(1, overflow_policy="fail"),
+        learner_id="synthetic-legacy-learner",
+        selection=LearnerSelection(
+            source.compatibility,
+            source.behavior_policy_sha256,
+            source.game_id,
+            source.runtime_source_commit,
+            source.adapter_source_sha256,
+            allow_simulated=True,
+        ),
+    )
 
 
 def _fixture(
@@ -393,3 +445,303 @@ def test_new_internal_real_refusal_projects_to_closed_snapshot_v1_reason(tmp_pat
             == '["measured_evaluation_missing"]'
         )
         assert connection.execute("SELECT COUNT(*) FROM measured_attempts").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("reopen", [False, True])
+def test_registering_domain_protects_legacy_ready_copy_and_stale_plan_after_reopen(
+    tmp_path: Path, reopen: bool
+) -> None:
+    fixture = _fixture(split="evaluation_holdout")
+    source, packet = _legacy_copy(fixture)
+    hub = FleetHub.create(tmp_path / "hub", clock_ms=lambda: NOW)
+    hub.register_source(source)
+    prior = hub.ingest(packet.manifest, packet.payload)
+    assert prior.status == "ready"
+    consumer = _legacy_consumer(hub, source)
+    stale_plan = consumer.plan()
+    assert stale_plan.shard_ids == (prior.shard_id,)
+    if reopen:
+        hub.close()
+        hub = FleetHub.open(tmp_path / "hub", clock_ms=lambda: NOW)
+        consumer = _legacy_consumer(hub, source)
+    hub.configure_measured(fixture.authority, destination=fixture.destination)
+    hub.register_source(fixture.source)
+    heldout = hub.ingest_measured(fixture.shard.manifest, fixture.shard.payload, fixture.envelope)
+    assert heldout.status == "ready"
+    hub.freeze_measured_evaluation(
+        "evaluation-a",
+        ((fixture.source.source_id, fixture.source.source_epoch),),
+        suite=_suite(fixture),
+    )
+    calls: list[int] = []
+
+    def callback(unroll: Unroll, ticket: object) -> LearnerResult:
+        calls.append(len(unroll.transitions))
+        return LearnerResult(0)
+
+    assert consumer.plan().shard_ids == ()
+    with pytest.raises(FleetError, match=r"^(already_claimed|quarantine)$"):
+        consumer.consume_one(stale_plan, callback)
+    assert calls == []
+    with hub._connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT status FROM shards WHERE shard_id=?", (prior.shard_id,)
+            ).fetchone()[0]
+            == "quarantine"
+        )
+        assert hub._protected_shard(connection, prior.shard_id)
+    hub.close()
+    reopened = FleetHub.open(tmp_path / "hub", clock_ms=lambda: NOW)
+    assert reopened.measured_authority is None
+    assert _legacy_consumer(reopened, source).plan().shard_ids == ()
+    with reopened._connection() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert hub._protected_shard(connection, prior.shard_id)
+
+
+@pytest.mark.parametrize("effect", ["consumed", "unknown_effect", "consumed-purged"])
+def test_legacy_actual_callback_history_rejects_later_measured_holdout(
+    tmp_path: Path, effect: str
+) -> None:
+    fixture = _fixture(split="evaluation_holdout")
+    source, packet = _legacy_copy(fixture)
+    hub = FleetHub.create(tmp_path / "hub", clock_ms=lambda: NOW)
+    hub.register_source(source)
+    prior = hub.ingest(packet.manifest, packet.payload)
+    consumer = _legacy_consumer(hub, source)
+    calls: list[int] = []
+
+    def callback(unroll: Unroll, ticket: object) -> LearnerResult:
+        calls.append(len(unroll.transitions))
+        if effect == "unknown_effect":
+            raise RuntimeError("synthetic callback effect cannot be determined")
+        return LearnerResult(0)
+
+    receipt = consumer.consume_one(consumer.plan(), callback)
+    assert receipt.status == ("unknown_effect" if effect == "unknown_effect" else "consumed")
+    assert calls == [3]
+    if effect == "consumed-purged":
+        hub.purge_shard(prior.shard_id)
+        assert not hub._artifact(prior.shard_id).exists()
+    hub.close()
+    hub = FleetHub.open(
+        tmp_path / "hub",
+        clock_ms=lambda: NOW,
+        measured_authority=fixture.authority,
+        measured_destination=fixture.destination,
+    )
+    hub.register_source(fixture.source)
+    heldout = hub.ingest_measured(fixture.shard.manifest, fixture.shard.payload, fixture.envelope)
+    assert heldout.status == "quarantine"
+    with pytest.raises(FleetError):
+        hub.freeze_measured_evaluation(
+            "evaluation-a",
+            ((fixture.source.source_id, fixture.source.source_epoch),),
+            suite=_suite(fixture),
+        )
+    assert calls == [3]
+
+
+@pytest.mark.parametrize("purge", [False, True])
+def test_legacy_numeric_holdout_tombstone_protects_new_measured_training(
+    tmp_path: Path, purge: bool
+) -> None:
+    fixture = _fixture()
+    source, packet = _legacy_copy(fixture, split="evaluation_holdout")
+    hub = FleetHub.create(tmp_path / "hub", clock_ms=lambda: NOW)
+    hub.register_source(source)
+    prior = hub.ingest(packet.manifest, packet.payload)
+    assert prior.status == "ready"
+    hub.freeze_evaluation(source.source_id, source.source_epoch)
+    if purge:
+        hub.purge_shard(prior.shard_id)
+    hub.close()
+    hub = FleetHub.open(
+        tmp_path / "hub",
+        clock_ms=lambda: NOW,
+        measured_authority=fixture.authority,
+        measured_destination=fixture.destination,
+    )
+    hub.register_source(fixture.source)
+    assert (
+        hub.ingest_measured(fixture.shard.manifest, fixture.shard.payload, fixture.envelope).status
+        == "quarantine"
+    )
+    with hub._connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM measured_holdout_inputs").fetchone()[0] == 3
+        assert (
+            connection.execute(
+                "SELECT eval_frozen FROM sources WHERE source_id=?", (source.source_id,)
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize("configure", [False, True])
+def test_legacy_admission_controls_preserve_pure_v1_and_independent_game(
+    tmp_path: Path, configure: bool
+) -> None:
+    fixture = _fixture(split="evaluation_holdout")
+    source, packet = _legacy_copy(fixture, game_id="independent-game" if configure else None)
+    hub = FleetHub.create(tmp_path / "hub", clock_ms=lambda: NOW)
+    hub.register_source(source)
+    assert hub.ingest(packet.manifest, packet.payload).status == "ready"
+    if configure:
+        hub.configure_measured(fixture.authority, destination=fixture.destination)
+        hub.register_source(fixture.source)
+        assert (
+            hub.ingest_measured(
+                fixture.shard.manifest, fixture.shard.payload, fixture.envelope
+            ).status
+            == "ready"
+        )
+    else:
+        hub.configure_measured(None)
+        with hub._connection() as connection:
+            assert not hub._has_measured(connection)
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    consumer = _legacy_consumer(hub, source)
+    calls: list[int] = []
+
+    def callback(unroll: Unroll, ticket: object) -> LearnerResult:
+        calls.append(len(unroll.transitions))
+        return LearnerResult(0)
+
+    assert consumer.consume_one(consumer.plan(), callback).status == "consumed"
+    assert calls == [3]
+
+
+@pytest.mark.parametrize("consume", [False, True])
+def test_registration_reconciles_coexisting_legacy_train_and_frozen_holdout(
+    tmp_path: Path, consume: bool
+) -> None:
+    fixture = _fixture(split="evaluation_holdout")
+    training, packet = _legacy_copy(fixture)
+    hub = FleetHub.create(tmp_path / "hub", clock_ms=lambda: NOW)
+    hub.register_source(training)
+    prior = hub.ingest(packet.manifest, packet.payload)
+    if consume:
+        consumer = _legacy_consumer(hub, training)
+        receipt = consumer.consume_one(consumer.plan(), lambda unroll, ticket: LearnerResult(0))
+        assert receipt.status == "consumed"
+    heldout = replace(
+        training,
+        source_id="legacy-heldout",
+        source_epoch="heldout-epoch",
+        run_id="heldout-run",
+        assignment_id="heldout-assignment",
+        split="evaluation_holdout",
+        runtime_source_commit="d" * 40,
+    )
+    numeric = decode_shard(packet.manifest, packet.payload).unroll
+    heldout_unroll = replace(
+        numeric,
+        actor_id=heldout.source_id,
+        transitions=tuple(
+            replace(item, episode_id=uuid5(NAMESPACE_URL, "synthetic historical holdout"))
+            for item in numeric.transitions
+        ),
+    )
+    heldout_packet = encode_shard(
+        heldout, shard_seq=0, unroll=heldout_unroll, produced_at_utc_ms=NOW
+    )
+    hub.register_source(heldout)
+    heldout_receipt = hub.ingest(heldout_packet.manifest, heldout_packet.payload)
+    assert heldout_receipt.status == "ready"
+    hub.freeze_evaluation(heldout.source_id, heldout.source_epoch)
+    hub.close()
+    hub = FleetHub.open(tmp_path / "hub", clock_ms=lambda: NOW)
+    for _ in range(2):
+        hub.configure_measured(fixture.authority)
+        with hub._connection() as connection:
+            assert connection.execute(
+                "SELECT status FROM shards WHERE shard_id=?", (prior.shard_id,)
+            ).fetchone()[0] == ("consumed" if consume else "quarantine")
+            assert connection.execute(
+                "SELECT status FROM shards WHERE shard_id=?", (heldout_receipt.shard_id,)
+            ).fetchone()[0] == ("quarantine" if consume else "ready")
+            assert (
+                connection.execute(
+                    "SELECT eval_frozen FROM sources WHERE source_id=?", (heldout.source_id,)
+                ).fetchone()[0]
+                == 1
+            )
+    if consume:
+        with pytest.raises(FleetError, match=r"^evaluation_incomplete_or_conflicted$"):
+            hub.freeze_evaluation(heldout.source_id, heldout.source_epoch)
+
+
+def test_legacy_holdout_without_owned_step_reservations_is_backfilled(tmp_path: Path) -> None:
+    fixture = _fixture()
+    original, packet = _legacy_copy(fixture, split="quarantine", game_id="independent-game")
+    hub = FleetHub.create(tmp_path / "hub", clock_ms=lambda: NOW)
+    hub.register_source(original)
+    assert hub.ingest(packet.manifest, packet.payload).status == "quarantine"
+    heldout = replace(
+        original,
+        source_id="legacy-duplicate-heldout",
+        source_epoch="heldout-epoch",
+        run_id="heldout-run",
+        assignment_id="heldout-assignment",
+        split="evaluation_holdout",
+        game_id=fixture.source.game_id,
+    )
+    numeric = decode_shard(packet.manifest, packet.payload).unroll
+    heldout_packet = encode_shard(
+        heldout,
+        shard_seq=0,
+        unroll=replace(numeric, actor_id=heldout.source_id),
+        produced_at_utc_ms=NOW,
+    )
+    hub.register_source(heldout)
+    receipt = hub.ingest(heldout_packet.manifest, heldout_packet.payload)
+    assert receipt.status == "ready"
+    with hub._connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM transition_reservations WHERE shard_id=?", (receipt.shard_id,)
+            ).fetchone()[0]
+            == 0
+        )
+    hub.purge_shard(receipt.shard_id)
+    hub.configure_measured(fixture.authority)
+    hub.register_source(fixture.source)
+    assert (
+        hub.ingest_measured(fixture.shard.manifest, fixture.shard.payload, fixture.envelope).status
+        == "quarantine"
+    )
+
+
+@pytest.mark.parametrize("table", ["transition_reservations", "holdout_inputs"])
+def test_oversize_legacy_history_rolls_back_optional_registration_and_ram_trust(
+    tmp_path: Path, table: str
+) -> None:
+    fixture = _fixture()
+    source, packet = _legacy_copy(fixture, split="evaluation_holdout")
+    hub = FleetHub.create(
+        tmp_path / "hub", clock_ms=lambda: NOW, limits=FleetLimits(max_shards=1, max_transitions=3)
+    )
+    hub.register_source(source)
+    assert hub.ingest(packet.manifest, packet.payload).status == "ready"
+    # Simulate an oversized persisted ledger, not a new producer admission.
+    with sqlite3.connect(hub.database) as connection:
+        if table == "transition_reservations":
+            connection.execute(
+                "INSERT INTO transition_reservations SELECT 'extra-episode',step_id,record_sha256,"
+                "input_sha256,cohort_sha256,run_id,split,shard_id "
+                "FROM transition_reservations LIMIT 1"
+            )
+        else:
+            connection.execute(
+                "INSERT INTO holdout_inputs SELECT ?,input_sha256,shard_id "
+                "FROM holdout_inputs LIMIT 1",
+                ("f" * 64,),
+            )
+    with pytest.raises(FleetError, match=r"^measured_history_quota$"):
+        hub.configure_measured(fixture.authority, destination=fixture.destination)
+    assert hub.measured_authority is None and hub.measured_destination is None
+    with hub._connection() as connection:
+        assert not hub._has_measured(connection)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("SELECT status FROM shards").fetchone()[0] == "ready"

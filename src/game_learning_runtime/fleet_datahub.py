@@ -576,8 +576,96 @@ class FleetHub:
                         "INSERT OR IGNORE INTO measured_semantic_domains VALUES(?,?)",
                         (semantic_identity, grant.evaluation_domain_id),
                     )
+                self._backfill_measured_history(connection)
         self._measured_authority = authority
         self._measured_destination = destination
+
+    def _backfill_measured_history(self, connection: sqlite3.Connection) -> None:
+        """Atomically include pre-extension reservations without reading payloads.
+
+        Reservations, holdout tombstones and callback journals survive purge.
+        Their semantic protection must survive later domain registration too;
+        indexing them never authenticates or promotes an old numeric carrier.
+        """
+        input_limit = self.limits.max_shards * self.limits.max_transitions
+        for table, maximum in (
+            ("sources", self.limits.max_sources),
+            ("shards", self.limits.max_shards),
+            ("consumptions", self.limits.max_shards),
+            ("transition_reservations", input_limit),
+            ("holdout_inputs", input_limit),
+            ("measured_inputs", input_limit),
+            ("measured_holdout_inputs", input_limit),
+        ):
+            count = connection.execute(
+                f"SELECT COUNT(*) FROM (SELECT 1 FROM {table} LIMIT ?)", (maximum + 1,)
+            ).fetchone()[0]
+            if count > maximum:
+                raise FleetError("measured_history_quota")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS measured_inputs_shard ON measured_inputs(shard_id)"
+        )
+        source_domains = {}
+        for row in connection.execute("SELECT source_id,source_epoch,spec_json FROM sources"):
+            source = SourceSpec.from_record(
+                _json(row["spec_json"].encode(), self.limits.max_manifest_bytes)
+            )
+            registered = connection.execute(
+                "SELECT domain_id FROM measured_semantic_domains WHERE semantic_identity=?",
+                (self._domain_identity(source),),
+            ).fetchone()
+            if registered is not None:
+                source_domains[(row["source_id"], row["source_epoch"])] = registered["domain_id"]
+        for table in ("transition_reservations", "holdout_inputs"):
+            for row in connection.execute(
+                f"SELECT t.input_sha256,t.shard_id,s.source_id,s.source_epoch FROM {table} t "
+                "JOIN shards s ON s.shard_id=t.shard_id"
+            ):
+                domain = source_domains.get((row["source_id"], row["source_epoch"]))
+                if domain is None:
+                    continue
+                connection.execute(
+                    "INSERT OR IGNORE INTO measured_inputs VALUES(?,?,?)",
+                    (domain, row["input_sha256"], row["shard_id"]),
+                )
+                if table == "holdout_inputs":
+                    connection.execute(
+                        "INSERT OR IGNORE INTO measured_holdout_inputs VALUES(?,?,?)",
+                        (domain, row["input_sha256"], row["shard_id"]),
+                    )
+        for table in ("measured_inputs", "measured_holdout_inputs"):
+            count = connection.execute(
+                f"SELECT COUNT(*) FROM (SELECT 1 FROM {table} LIMIT ?)", (input_limit + 1,)
+            ).fetchone()[0]
+            if count > input_limit:
+                raise FleetError("measured_history_quota")
+        # A possibly used training copy disqualifies an existing ready holdout.
+        # Frozen definitions remain immutable; their conflicted inputs stop
+        # being eligible instead of being relabelled or silently replaced.
+        connection.execute(
+            "UPDATE shards SET status='quarantine' WHERE status='ready' AND EXISTS("
+            "SELECT 1 FROM sources p WHERE p.source_id=shards.source_id "
+            "AND p.source_epoch=shards.source_epoch "
+            "AND json_extract(p.spec_json,'$.split')='evaluation_holdout') AND EXISTS("
+            "SELECT 1 FROM measured_inputs held JOIN measured_inputs trained "
+            "ON trained.domain_id=held.domain_id AND trained.input_sha256=held.input_sha256 "
+            "JOIN shards prior ON prior.shard_id=trained.shard_id JOIN sources p "
+            "ON p.source_id=prior.source_id AND p.source_epoch=prior.source_epoch "
+            "LEFT JOIN consumptions c ON c.shard_id=prior.shard_id "
+            "WHERE held.shard_id=shards.shard_id AND json_extract(p.spec_json,'$.split')='train' "
+            "AND (prior.status IN ('claimed','calling','consumed','unknown_effect') "
+            "OR c.status IN ('claimed','calling','consumed','unknown_effect') "
+            "OR c.callback_completed=1))"
+        )
+        connection.execute(
+            "UPDATE shards SET status='quarantine' WHERE status='ready' AND EXISTS("
+            "SELECT 1 FROM sources p WHERE p.source_id=shards.source_id "
+            "AND p.source_epoch=shards.source_epoch "
+            "AND json_extract(p.spec_json,'$.split')='train') "
+            "AND EXISTS(SELECT 1 FROM measured_inputs t JOIN measured_holdout_inputs h "
+            "ON t.domain_id=h.domain_id AND t.input_sha256=h.input_sha256 "
+            "WHERE t.shard_id=shards.shard_id)"
+        )
 
     @staticmethod
     def _has_measured(connection: sqlite3.Connection) -> bool:
@@ -1523,14 +1611,21 @@ class FleetHub:
             matches = set()
             for input_sha in inputs:
                 for row in connection.execute(
-                    "SELECT DISTINCT s.shard_id,s.status FROM measured_inputs t "
+                    "SELECT DISTINCT s.shard_id,s.status,c.status AS consumption_status,"
+                    "c.callback_completed FROM measured_inputs t "
                     "JOIN shards s ON s.shard_id=t.shard_id JOIN sources p ON "
                     "p.source_id=s.source_id AND p.source_epoch=s.source_epoch "
+                    "LEFT JOIN consumptions c ON c.shard_id=s.shard_id "
                     "WHERE t.domain_id=? AND t.input_sha256=? "
                     "AND json_extract(p.spec_json,'$.split')='train'",
                     (domain, input_sha),
                 ):
-                    if row["status"] in {"claimed", "calling", "consumed", "unknown_effect"}:
+                    if (
+                        row["status"] in {"claimed", "calling", "consumed", "unknown_effect"}
+                        or row["consumption_status"]
+                        in {"claimed", "calling", "consumed", "unknown_effect"}
+                        or row["callback_completed"]
+                    ):
                         return "quarantine"
                     matches.add(row["shard_id"])
             for shard_id in matches:
