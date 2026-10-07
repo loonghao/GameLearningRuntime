@@ -25,8 +25,10 @@ def test_vx_and_just_pin_the_local_and_ci_toolchain() -> None:
         "just": "1.58.0",
         "rust": "1.29.0",
     }
-    assert config["scripts"]["check"] == "vx just check"
-    assert config["scripts"]["ci"] == "vx just ci"
+    # vx.toml must not mirror justfile recipes: a [scripts] entry that forwards
+    # to `just <recipe>` is a second source of truth for the same task. The
+    # justfile recipes themselves are asserted below.
+    assert not config.get("scripts")
     assert {name: value["version"] for name, value in lock["tools"].items()} == {
         "node": "22.22.0",
         "actionlint": "1.7.12",
