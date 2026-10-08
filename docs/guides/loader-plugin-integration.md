@@ -77,7 +77,7 @@ UE4SS Lua needs no compilation. Stage either loader using the declared relative
 layout:
 
 ```powershell
-vx run package-runtime
+just package-runtime
 ```
 
 The result under `.glr/exports/loader-packages/loader-package` contains `payload/` plus a
@@ -87,9 +87,9 @@ An operator must select the exact authorized target and approve the copy.
 ## Train and reproduce
 
 ```powershell
-vx run check
-vx run train
-vx run reproduce
+just check
+just train
+just reproduce
 ```
 
 The initial trainer is a deterministic synthetic behavior-cloning smoke test.
