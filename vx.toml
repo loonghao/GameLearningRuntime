@@ -15,17 +15,6 @@ rust = "1.29.0"
 UV_PROJECT_ENVIRONMENT = ".venv-glr"
 
 [scripts]
-setup = "vx just setup"
-check = "vx just check"
-test = "vx just test"
-lint = "vx just lint"
-typecheck = "vx just typecheck"
-workflow-check = "vx just workflow-check"
-build = "vx just build"
-ci = "vx just ci"
-rust-check = "vx just rust-check"
-provider-sdk-check = "vx just provider-sdk-check"
-host-smoke = "vx just host-smoke"
 
 [settings]
 auto_install = true
