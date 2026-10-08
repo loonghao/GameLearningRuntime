@@ -225,16 +225,6 @@ just = "1.58.0"
 
 [env]
 UV_PROJECT_ENVIRONMENT = ".venv-glr"
-
-[scripts]
-setup = "vx just setup"
-check = "vx just check"
-ci = "vx just ci"
-package-check = "vx just package-check"
-test = "vx just test"
-train = "vx just train"
-reproduce = "vx just reproduce"
-package-runtime = "vx just package-runtime"
 '''
 
 

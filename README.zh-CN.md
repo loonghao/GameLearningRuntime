@@ -431,14 +431,14 @@ vx uv run python tools/packaging/package_agent_plugin.py --check
 ```
 
 维护者在修改源 Skill 后可明确执行 `--sync` 刷新副本，再运行上述检查和
-`vx run check`。Skill 中的脚本和参考资料均从安装后的 Skill 根目录解析，
+`just check`。Skill 中的脚本和参考资料均从安装后的 Skill 根目录解析，
 因此用户级插件安装不依赖消费项目里的 `.agents/skills` 路径。
 
 ```powershell
 vx setup
-vx run check
-vx run train
-vx run reproduce
+just check
+just train
+just reproduce
 ```
 
 `train` 会输出一个合成 BC 冒烟模型及自包含、带校验和的复现环境。替换真实 Learner
@@ -478,7 +478,7 @@ vx uv run python tools/packaging/package_agent_plugin.py --check
 ```
 
 维护者在修改源 Skill 后可明确执行 `--sync` 刷新副本，再运行上述检查和
-`vx run check`。Skills 中的脚本和参考资料均从安装后的 Skill 根目录解析，
+`just check`。Skills 中的脚本和参考资料均从安装后的 Skill 根目录解析，
 因此用户级插件安装不依赖消费项目里的 `.agents/skills` 路径。
 
 ## TorchRL 与自定义学习器

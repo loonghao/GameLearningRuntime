@@ -19,9 +19,9 @@
 - **测试与回归**：静态检查、单元测试、GLR 契约、安装后测试、确定性训练验证、
   checkpoint 恢复、日志故障测试分别验收；每个修复保留可离线运行的行为回归用例。
 
-新脚手架提供 `vx run package-check`，在临时目录构建 wheel，安装到全新虚拟环境，
-从源码目录外执行包导入与测试。`vx run check` 执行静态和源码项目测试。
-`vx run ci` 将这两组检查组合为 CI 入口。
+新脚手架提供 `just package-check`，在临时目录构建 wheel，安装到全新虚拟环境，
+从源码目录外执行包导入与测试。`just check` 执行静态和源码项目测试。
+`just ci` 将这两组检查组合为 CI 入口。
 脚手架只提供初始基准，不代表已经实现生产日志系统、Sentry 接入或真实学习器。
 
 已有项目按“记录当前行为 → 补离线回归 → 迁移一个完整包及调用者 → 统一日志 →
@@ -30,7 +30,7 @@
 
 ## 交付与移植：包工作流
 
-本地 wheel 通过 `vx run package-check` 只证明“这个包能装、能导入、能跑测试”，
+本地 wheel 通过 `just package-check` 只证明“这个包能装、能导入、能跑测试”，
 不证明项目可移植。跨机器交接走离线包工作流：
 `glr package plan` → `export` → `inspect` → `import` → `conformance`。
 

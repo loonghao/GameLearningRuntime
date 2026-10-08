@@ -72,7 +72,7 @@ dotnet build runtime/bepinex/GlrBridge.csproj -c Release `
 UE4SS Lua 不需要编译。两种 Loader 都使用相同命令生成部署暂存包：
 
 ```powershell
-vx run package-runtime
+just package-runtime
 ```
 
 `.glr/exports/loader-packages/loader-package` 只包含 `payload/` 和校验和清单。打包脚本不会
@@ -81,9 +81,9 @@ vx run package-runtime
 ## 训练和复现
 
 ```powershell
-vx run check
-vx run train
-vx run reproduce
+just check
+just train
+just reproduce
 ```
 
 初始训练器是确定性的合成 BC 冒烟测试，会产出自包含的

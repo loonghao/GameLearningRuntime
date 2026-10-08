@@ -555,7 +555,7 @@ vx uv run python tools/packaging/package_agent_plugin.py --check
 ```
 
 Maintainers can intentionally refresh the payload after editing a source skill
-with `--sync`, then rerun the check and the normal `vx run check` gates. The
+with `--sync`, then rerun the check and the normal `just check` gates. The
 skill's bundled scripts and references are resolved from the installed skill
 root, so user-level plugin installs do not depend on a `.agents/skills` path in
 the consuming project.
@@ -565,9 +565,9 @@ that generated directory, run:
 
 ```powershell
 vx setup
-vx run check
-vx run train
-vx run reproduce
+just check
+just train
+just reproduce
 ```
 
 `train` emits a synthetic BC smoke model plus a self-contained checksummed
@@ -613,7 +613,7 @@ vx uv run python tools/packaging/package_agent_plugin.py --check
 ```
 
 Maintainers can intentionally refresh the payload after editing a source Skill
-with `--sync`, then rerun the check and the normal `vx run check` gates. The
+with `--sync`, then rerun the check and the normal `just check` gates. The
 Skills' bundled scripts and references are resolved from each installed Skill
 root, so user-level plugin installs do not depend on a `.agents/skills` path in
 the consuming project.
