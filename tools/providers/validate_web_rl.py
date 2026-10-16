@@ -362,16 +362,29 @@ def _as_timestep(transition: Transition) -> TimeStep:
     )
 
 
-def episode_seed(base: int, episode_index: int) -> int:
-    """Return the world seed for one episode of a seeded validation run.
+def training_seed(base: int, episode_index: int) -> int:
+    """Return the world seed for training episode ``episode_index`` of a run.
 
-    Episode ``i`` is reset with ``base + i``. Passing the seed on is what makes a
-    run reproducible: an adapter that reseeds itself when the caller passes no
-    seed would replay a different world on every episode, so the same command
-    would report different numbers twice.
+    Training worlds are drawn from ``base`` upwards, one per completed episode.
+    The whole reproducibility contract lives in this function and in
+    :func:`evaluation_seed`: production code and tests both call them, so the
+    seed strategy cannot drift apart from what the tests pin.
     """
 
     return base + episode_index
+
+
+def evaluation_seed(base: int, episode_index: int) -> int:
+    """Return the world seed for evaluation episode ``episode_index`` of a run.
+
+    Evaluation worlds start ``EVALUATION_SEED_OFFSET`` above ``base`` so the
+    range is disjoint from :func:`training_seed`'s. That is the hold-out
+    property ADR-0048 promises: a policy is never scored on a world it trained
+    on. Dropping the offset would silently break it, so it lives here rather
+    than being recomputed at each call site.
+    """
+
+    return base + EVALUATION_SEED_OFFSET + episode_index
 
 
 def evaluate(
@@ -384,13 +397,14 @@ def evaluate(
 ) -> list[EpisodeResult]:
     """Run whole episodes and report length, return, and in-game score.
 
-    ``seed`` is the world seed of episode zero; the random and the trained policy
-    are evaluated with the same seed so they play the same worlds.
+    ``seed`` is the run's base seed; episode ``i`` is reset with the world seed
+    :func:`evaluation_seed` returns for it. The random and the trained policy are
+    evaluated with the same base seed so they play the same worlds.
     """
 
     results: list[EpisodeResult] = []
     for index in range(episodes):
-        timestep = environment.reset(seed=episode_seed(seed, index))
+        timestep = environment.reset(seed=evaluation_seed(seed, index))
         total_reward = 0.0
         steps = 0
         score = 0.0
@@ -440,13 +454,12 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
 
         # Both policies are scored on the same held-out worlds, so the
         # difference between them is the policy and not the sample.
-        evaluation_seed = config.seed + EVALUATION_SEED_OFFSET
         baseline = evaluate(
             environment,
             random_policy,
             episodes=config.evaluation_episodes,
             max_steps=config.max_steps,
-            seed=evaluation_seed,
+            seed=config.seed,
         )
 
         curve: list[dict[str, object]] = []
@@ -456,7 +469,7 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
         window_episodes: list[int] = []
         completed_episodes = 0
         trainer.start_batch()
-        timestep = environment.reset(seed=episode_seed(config.seed, completed_episodes))
+        timestep = environment.reset(seed=training_seed(config.seed, completed_episodes))
         while collected < config.train_steps:
             decision = trainer.act(timestep)
             action = {"choice": decision["choice"]}
@@ -484,7 +497,7 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
                 if len(window_episodes) > 50:
                     window_episodes.pop(0)
                 completed_episodes += 1
-                timestep = environment.reset(seed=episode_seed(config.seed, completed_episodes))
+                timestep = environment.reset(seed=training_seed(config.seed, completed_episodes))
             if collected % config.unroll_length == 0:
                 last_metrics = trainer.update()
                 trainer.start_batch()
@@ -505,7 +518,7 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
             lambda ts: trainer.act(ts, deterministic=True),
             episodes=config.evaluation_episodes,
             max_steps=config.max_steps,
-            seed=evaluation_seed,
+            seed=config.seed,
         )
         curve.append(
             {
@@ -529,7 +542,7 @@ def run_validation(config: ValidationConfig) -> dict[str, Any]:
                     f"base_seed + {EVALUATION_SEED_OFFSET} + episode index"
                 ),
                 "evaluation_seeds": [
-                    episode_seed(evaluation_seed, index)
+                    evaluation_seed(config.seed, index)
                     for index in range(config.evaluation_episodes)
                 ],
                 "evaluation_worlds": "held out from training and shared by both policies",
