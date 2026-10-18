@@ -55,7 +55,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.release-please.outputs.tag_name }}
-      - uses: loonghao/vx@debe4f035713d28366ec0c322e0b87de2a25d2f2 # vx-v0.9.34
+      - uses: loonghao/vx@2589de6521c6bc07cd174b2a4089dd63f4df0fc1 # vx-v0.9.37
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
@@ -84,7 +84,7 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.release-please.outputs.tag_name }}
       - name: Install the pinned vx toolchain
-        uses: loonghao/vx@debe4f035713d28366ec0c322e0b87de2a25d2f2 # vx-v0.9.34
+        uses: loonghao/vx@2589de6521c6bc07cd174b2a4089dd63f4df0fc1 # vx-v0.9.37
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
@@ -161,7 +161,7 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.release-please.outputs.tag_name }}
       - name: Install the pinned vx toolchain
-        uses: loonghao/vx@debe4f035713d28366ec0c322e0b87de2a25d2f2 # vx-v0.9.34
+        uses: loonghao/vx@2589de6521c6bc07cd174b2a4089dd63f4df0fc1 # vx-v0.9.37
         with:
           version: "0.9.30"
           github-token: ${{ github.token }}
