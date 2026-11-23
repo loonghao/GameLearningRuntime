@@ -45,7 +45,7 @@ torch = [
 ]
 torchrl = [
   "torch>=2.8",
-  "torchrl>=0.13,<0.15",
+  "torchrl>=0.13,<0.16",
 ]
 gymnasium = [
   "gymnasium>=1.2,<2",
